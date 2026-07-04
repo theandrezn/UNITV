@@ -239,7 +239,7 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
-  it("hands a free trial to a human without creating a paid order", async () => {
+  it("sends installation instructions for a free trial without creating a paid order", async () => {
     const { service, ordersService, agentActionsService } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -251,10 +251,13 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.requiresHuman).toBe(true);
+    expect(result.requiresHuman).not.toBe(true);
     expect(result.reply).toContain("3 dias");
-    expect(agentActionsService.createAgentAction).toHaveBeenCalledWith(
-      expect.objectContaining({ action_name: "handoff_to_human", requires_human_approval: true })
+    expect(result.reply).toContain("instale o UNiTV");
+    expect(result.menu).toEqual(expect.objectContaining({ id: "install" }));
+    expect(result.sendTextBeforeMenu).toBe(true);
+    expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
     );
   });
 
@@ -559,7 +562,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.menu).toEqual(expect.objectContaining({ id: "plans" }));
   });
 
-  it("offers a selectable device menu for installation", async () => {
+  it("offers the installation menu for installation requests", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -570,8 +573,25 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.menu).toEqual(expect.objectContaining({ id: "devices" }));
-    expect(result.reply).toContain("Smart TV");
+    expect(result.menu).toEqual(expect.objectContaining({ id: "install" }));
+    expect(result.reply).toContain("Instalação UNiTV");
+    expect(result.reply).toContain("Instalar na TV pelo Downloader");
+  });
+
+  it("sends downloader instructions with the current test code and tutorial link", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "instalar na tv pelo downloader",
+      classification: { intent: "technical_support", confidence: 1, summary: "downloader", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("Downloader by AFTVnews");
+    expect(result.reply).toContain("8322904");
+    expect(result.reply).toContain("https://www.youtube.com/watch?v=XlCPDdqnOuI");
   });
 
   it("answers objections from trained knowledge and keeps a next step", async () => {

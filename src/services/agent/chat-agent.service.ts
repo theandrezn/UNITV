@@ -12,7 +12,7 @@ import { PlansService } from "@/services/plans.service";
 import {
   buildPlansMenu,
   CONTINUATION_MENU,
-  DEVICE_MENU,
+  INSTALL_MENU,
   MAIN_MENU,
   PAYMENT_MENU,
   type WhatsAppMenu
@@ -101,6 +101,11 @@ export class ChatAgentService {
     }
 
     if (intent === "human_help") {
+      const installationSupportReply = getInstallationReply(message);
+      if (installationSupportReply?.requiresHuman) {
+        return installationSupportReply;
+      }
+
       return this.handoffToHuman(input, "customer_requested_human", knowledge);
     }
 
@@ -121,12 +126,13 @@ export class ChatAgentService {
     }
 
     if (intent === "free_trial" || isFreeTrialMessage(message)) {
-      return this.handoffToHuman(
-        input,
-        "free_trial_activation",
-        knowledge,
-        "Claro! O teste gratis e de 3 dias. Vou te encaminhar para ativacao do teste agora."
-      );
+      return {
+        reply:
+          "Claro! O teste grátis é de 3 dias.\n\n" +
+          "Para começar, instale o UNiTV no seu aparelho usando uma das opções abaixo.",
+        menu: INSTALL_MENU,
+        sendTextBeforeMenu: true
+      };
     }
 
     if (intent === "ask_price") {
@@ -246,12 +252,17 @@ export class ChatAgentService {
     }
 
     if (intent === "technical_support") {
+      const installationReply = getInstallationReply(message);
+      if (installationReply) {
+        return installationReply;
+      }
+
       const preferredCategory = getSupportKnowledgeCategory(message);
       const supportKnowledge =
         knowledge.find((article) => article.category === preferredCategory) ||
         knowledge.find((article) => article.category === "technical_support");
       if (isInstallationMessage(message)) {
-        return { reply: DEVICE_MENU.fallbackText, menu: DEVICE_MENU };
+        return { reply: INSTALL_MENU.fallbackText, menu: INSTALL_MENU };
       }
 
       const supportReply =
@@ -687,7 +698,82 @@ function isPaymentDoneMessage(message: string) {
 }
 
 function isInstallationMessage(message: string) {
-  return /\b(instalar|instalacao|downloader|aparelho|smart tv|tv box|android|iphone|computador)\b/i.test(message);
+  return /\b(instalar|instalacao|instalação|baixar|download|apk|tutorial|link|downloader|aparelho|smart tv|tv box|android|iphone|computador)\b/i.test(message);
+}
+
+function getInstallationReply(message: string): CommercialReplyResult | null {
+  const normalized = message
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (/\b(suporte|atendente|humano|especialista)\b/.test(normalized) && /\b(instalacao|instalar|apk|download)\b/.test(normalized)) {
+    return {
+      requiresHuman: true,
+      reply:
+        "Claro ✅\n\n" +
+        "Vou te encaminhar para o suporte.\n\n" +
+        "Para agilizar, me envie:\n\n" +
+        "1️⃣ Seu nome\n" +
+        "2️⃣ Qual aparelho você está usando\n" +
+        "3️⃣ Em qual etapa você travou"
+    };
+  }
+
+  if (/\b(video|tutorial)\b/.test(normalized)) {
+    return {
+      reply:
+        "🎥 Tutorial de instalação UNiTV:\n\n" +
+        "https://www.youtube.com/watch?v=XlCPDdqnOuI\n\n" +
+        "Depois de assistir, me diga se você vai instalar na TV ou no celular."
+    };
+  }
+
+  if (/\b(celular|mobile|android)\b/.test(normalized) && /\b(apk|baixar|download|instalar)\b/.test(normalized)) {
+    return {
+      reply:
+        "📱 Download UNiTV para celular Android\n\n" +
+        "Use este link para baixar a versão mobile:\n\n" +
+        "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file\n\n" +
+        "Após instalar, abra o aplicativo e me avise para seguir com a ativação."
+    };
+  }
+
+  if (/\b(tv|tv box|android tv|stb)\b/.test(normalized) && /\b(apk|baixar|download)\b/.test(normalized)) {
+    return {
+      reply:
+        "📺 Download UNiTV para TV\n\n" +
+        "Use este link para baixar a versão de TV:\n\n" +
+        "https://www.mediafire.com/file_premium/tjgxo5756ftbx02/unitv_stb_4.19.apk/file\n\n" +
+        "Essa versão é indicada para TV Box, Android TV ou aparelhos compatíveis.\n\n" +
+        "Depois de instalar, me avise para seguir com a ativação."
+    };
+  }
+
+  if (/\b(downloader|codigo|cod|tv)\b/.test(normalized) && /\b(instalar|instalacao|downloader|codigo|cod|tv)\b/.test(normalized)) {
+    return {
+      reply:
+        "📺 Instalação na TV pelo Downloader\n\n" +
+        "1️⃣ Instale o Downloader\n\n" +
+        "Abra a Play Store da sua TV e pesquise:\n\n" +
+        "Downloader by AFTVnews\n\n" +
+        "O ícone é laranja. Depois clique em instalar.\n\n" +
+        "2️⃣ Ative Fontes Desconhecidas\n\n" +
+        "Vá em:\n\n" +
+        "Configurações → Segurança → Fontes desconhecidas\n\n" +
+        "Ative a permissão para o Downloader.\n\n" +
+        "3️⃣ Instale o UNiTV\n\n" +
+        "Abra o aplicativo Downloader e digite o código:\n\n" +
+        "8322904\n\n" +
+        "Depois siga as instruções na tela.\n\n" +
+        "Tutorial:\n" +
+        "https://www.youtube.com/watch?v=XlCPDdqnOuI\n\n" +
+        "Conseguiu chegar nessa etapa?"
+    };
+  }
+
+  return null;
 }
 
 function getObjectionKnowledgeCategory(message: string) {

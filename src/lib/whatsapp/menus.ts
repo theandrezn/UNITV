@@ -68,6 +68,24 @@ export const DEVICE_MENU: WhatsAppMenu = {
   fallbackText: formatFallback("Qual aparelho voce usa?", deviceRows)
 };
 
+const installRows: WhatsAppMenuRow[] = [
+  { title: "Instalar na TV pelo Downloader", description: "Codigo 8322904 e passo a passo", rowId: "menu:install:downloader_tv" },
+  { title: "Baixar APK para TV", description: "TV Box, Android TV e aparelhos compativeis", rowId: "menu:install:apk_tv" },
+  { title: "Baixar APK para celular Android", description: "Versao mobile para Android", rowId: "menu:install:apk_android" },
+  { title: "Ver video tutorial", description: "Tutorial no YouTube", rowId: "menu:install:video" },
+  { title: "Falar com suporte", description: "Atendimento para instalacao", rowId: "menu:install:support" }
+];
+
+export const INSTALL_MENU: WhatsAppMenu = {
+  id: "install",
+  title: "Instalação UNiTV",
+  description: "Escolha a opção ideal para o seu aparelho",
+  buttonText: "Ver instalação",
+  footerText: "UNiTV",
+  sections: [{ title: "Instalação", rows: installRows }],
+  fallbackText: formatFallback("📥 Instalação UNiTV\n\nEscolha a opção ideal para o seu aparelho 👇", installRows)
+};
+
 const continuationRows: WhatsAppMenuRow[] = [
   { title: "Ver planos", description: "Conheca valores e duracoes", rowId: "menu:continue:view_plans" },
   { title: "Fazer teste grátis", description: "Teste a UNiTV por 3 dias", rowId: "menu:continue:free_trial" },
@@ -148,6 +166,11 @@ const directSelections: Record<string, MenuSelection> = {
   "menu:continue:specialist": { intent: "human_help", message: "quero falar com especialista" },
   "menu:payment:pix": { intent: "pix_payment", message: "quero pagar no pix" },
   "menu:payment:card": { intent: "card_payment", message: "quero pagar com cartao" },
+  "menu:install:downloader_tv": { intent: "technical_support", message: "instalar na tv pelo downloader" },
+  "menu:install:apk_tv": { intent: "technical_support", message: "baixar apk para tv" },
+  "menu:install:apk_android": { intent: "technical_support", message: "baixar apk para celular android" },
+  "menu:install:video": { intent: "technical_support", message: "ver video tutorial de instalacao" },
+  "menu:install:support": { intent: "human_help", message: "quero falar com suporte sobre instalacao" },
   "menu:devices:smart_tv": { intent: "technical_support", message: "quero instalar na Smart TV" },
   "menu:devices:tv_box": { intent: "technical_support", message: "quero instalar na TV Box" },
   "menu:devices:android": { intent: "technical_support", message: "quero instalar no celular Android" },
@@ -160,6 +183,7 @@ const numericSelections: Record<string, MenuSelection[]> = {
   main: mainRows.map((row) => directSelections[row.rowId]),
   plans: ["mensal", "trimestral", "semestral", "anual"].map((slug) => planSelection(slug)),
   devices: deviceRows.map((row) => directSelections[row.rowId]),
+  install: installRows.map((row) => directSelections[row.rowId]),
   continue: continuationRows.map((row) => directSelections[row.rowId]),
   payment: paymentRows.map((row) => directSelections[row.rowId])
 };

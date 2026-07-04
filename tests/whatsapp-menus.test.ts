@@ -4,6 +4,7 @@ import {
   buildPlansMenu,
   CONTINUATION_MENU,
   DEVICE_MENU,
+  INSTALL_MENU,
   MAIN_MENU,
   resolveMenuSelection
 } from "@/lib/whatsapp/menus";
@@ -61,10 +62,23 @@ describe("WhatsApp interactive menus", () => {
       message: "quero comprar o plano 3 meses"
     });
     expect(resolveMenuSelection("1", { last_menu_id: "payment" })).toMatchObject({ intent: "pix_payment" });
+    expect(resolveMenuSelection("1", { last_menu_id: "install" })).toEqual({
+      intent: "technical_support",
+      message: "instalar na tv pelo downloader"
+    });
+    expect(resolveMenuSelection("4", { last_menu_id: "install" })).toEqual({
+      intent: "technical_support",
+      message: "ver video tutorial de instalacao"
+    });
+    expect(resolveMenuSelection("5", { last_menu_id: "install" })).toEqual({
+      intent: "human_help",
+      message: "quero falar com suporte sobre instalacao"
+    });
   });
 
   it("keeps device and continuation menus within six choices", () => {
     expect(DEVICE_MENU.sections[0].rows).toHaveLength(6);
+    expect(INSTALL_MENU.sections[0].rows).toHaveLength(5);
     expect(CONTINUATION_MENU.sections[0].rows).toHaveLength(4);
   });
 });
