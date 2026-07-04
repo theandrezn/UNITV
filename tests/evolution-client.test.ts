@@ -76,7 +76,7 @@ describe("EvolutionClient", () => {
           description: "Escolha uma opcao abaixo",
           buttonText: "Ver opcoes",
           footerText: "UNiTV",
-          sections: [
+          values: [
             {
               title: "Atendimento",
               rows: [

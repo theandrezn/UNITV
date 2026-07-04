@@ -119,7 +119,7 @@ export class EvolutionClient {
         description,
         buttonText,
         footerText,
-        sections
+        values: sections
       })
     });
 
