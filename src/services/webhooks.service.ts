@@ -17,6 +17,10 @@ export class WebhooksService {
     return this.webhookEventsRepository.markWebhookProcessed(id);
   }
 
+  markWebhookIgnored(id: string) {
+    return this.webhookEventsRepository.markWebhookIgnored(id);
+  }
+
   markWebhookFailed(id: string, error: string) {
     return this.webhookEventsRepository.markWebhookFailed(id, error);
   }

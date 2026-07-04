@@ -12,12 +12,22 @@ const serverEnvSchema = z.object({
   OPENAI_MODEL: z.string().optional(),
   APP_ENV: appEnvSchema.default("development"),
   APP_BASE_URL: z.string().url("APP_BASE_URL must be a valid URL").optional().or(z.literal("")),
-  WEBHOOK_SECRET: z.string().optional()
+  WEBHOOK_SECRET: z.string().optional(),
+  EVOLUTION_API_URL: z.string().url("EVOLUTION_API_URL must be a valid URL").optional().or(z.literal("")),
+  EVOLUTION_API_KEY: z.string().optional(),
+  EVOLUTION_INSTANCE_NAME: z.string().optional(),
+  EVOLUTION_WEBHOOK_SECRET: z.string().optional(),
+  EVOLUTION_WEBHOOK_VERIFY_TOKEN: z.string().optional()
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
 export type SupabaseServerEnv = Pick<ServerEnv, "SUPABASE_URL" | "SUPABASE_ANON_KEY" | "SUPABASE_SERVICE_ROLE_KEY">;
 export type OpenAIEnv = ServerEnv & { OPENAI_API_KEY: string };
+export type EvolutionEnv = ServerEnv & {
+  EVOLUTION_API_URL: string;
+  EVOLUTION_API_KEY: string;
+  EVOLUTION_INSTANCE_NAME: string;
+};
 
 export const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
 
@@ -61,6 +71,21 @@ export function getOpenAIEnv(): OpenAIEnv {
   return {
     ...env,
     OPENAI_API_KEY: env.OPENAI_API_KEY
+  };
+}
+
+export function getEvolutionEnv(): EvolutionEnv {
+  const env = getServerEnv();
+
+  if (!env.EVOLUTION_API_URL || !env.EVOLUTION_API_KEY || !env.EVOLUTION_INSTANCE_NAME) {
+    throw new Error("EVOLUTION_API_URL, EVOLUTION_API_KEY, and EVOLUTION_INSTANCE_NAME are required.");
+  }
+
+  return {
+    ...env,
+    EVOLUTION_API_URL: env.EVOLUTION_API_URL,
+    EVOLUTION_API_KEY: env.EVOLUTION_API_KEY,
+    EVOLUTION_INSTANCE_NAME: env.EVOLUTION_INSTANCE_NAME
   };
 }
 

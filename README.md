@@ -96,6 +96,81 @@ curl http://localhost:3000/api/health/ai
 
 `/api/health/ai` valida a configuracao do client OpenAI e retorna o modelo configurado, sem retornar chave.
 
+## Evolution API / WhatsApp
+
+Configure as variaveis server-side:
+
+```env
+EVOLUTION_API_URL=
+EVOLUTION_API_KEY=
+EVOLUTION_INSTANCE_NAME=
+EVOLUTION_WEBHOOK_SECRET=
+EVOLUTION_WEBHOOK_VERIFY_TOKEN=
+```
+
+Essas variaveis nunca devem ser expostas no frontend. `EVOLUTION_WEBHOOK_SECRET` deve ser enviado pela Evolution em um destes headers:
+
+- `x-evolution-webhook-secret`
+- `x-webhook-secret`
+- `authorization: Bearer <secret>`
+
+Endpoint:
+
+```text
+POST /api/webhooks/evolution
+```
+
+Para testar localmente:
+
+```bash
+curl -X POST http://localhost:3000/api/webhooks/evolution \
+  -H "Content-Type: application/json" \
+  -H "x-evolution-webhook-secret: SEU_SEGREDO" \
+  --data @tests/fixtures/evolution-message.json
+```
+
+Fluxo implementado nesta fase:
+
+1. Recebe webhook da Evolution.
+2. Extrai mensagem, telefone, contato, `remoteJid`, `fromMe`, grupo e texto.
+3. Ignora mensagens vazias, mensagens `fromMe=true` e grupos.
+4. Salva `webhook_events.raw_payload`.
+5. Usa `evolution:<external_message_id>` como chave de idempotencia.
+6. Cria/atualiza `customers`.
+7. Cria/encontra `conversations`.
+8. Salva mensagem recebida em `messages`.
+9. Classifica intencao basica com OpenAI.
+10. Gera resposta curta e segura.
+11. Envia resposta pela Evolution API.
+12. Salva resposta enviada em `messages`.
+13. Cria entradas em `audit_logs`.
+
+Para configurar na Evolution, a URL publica depois do deploy e:
+
+```text
+http://SEU_HOST/api/webhooks/evolution
+```
+
+Para verificar no Supabase:
+
+```sql
+select * from public.webhook_events order by created_at desc limit 20;
+select * from public.customers order by created_at desc limit 20;
+select * from public.conversations order by created_at desc limit 20;
+select * from public.messages order by created_at desc limit 20;
+select * from public.audit_logs order by created_at desc limit 20;
+```
+
+Limitacoes desta fase:
+
+- Nao analisa comprovante completo.
+- Nao confirma pagamento.
+- Nao libera codigo de ativacao.
+- Nao responde grupos.
+- Nao faz disparo em massa.
+- Nao envia mensagem para quem nao chamou primeiro.
+- Nao implementa painel admin.
+
 ## Estrutura
 
 ```text

@@ -21,6 +21,16 @@ export class WebhookEventsRepository {
     return assertSupabaseSuccess(data, error);
   }
 
+  async markWebhookIgnored(id: string) {
+    const { data, error } = await this.supabase
+      .from("webhook_events")
+      .update({ status: "ignored", processed_at: new Date().toISOString(), error_message: null })
+      .eq("id", id)
+      .select("*")
+      .single();
+    return assertSupabaseSuccess(data, error);
+  }
+
   async markWebhookProcessed(id: string) {
     const { data, error } = await this.supabase
       .from("webhook_events")

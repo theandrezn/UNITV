@@ -1,0 +1,17 @@
+{
+  "event": "messages.upsert",
+  "instance": "unitv",
+  "data": {
+    "key": {
+      "remoteJid": "5511999998888@s.whatsapp.net",
+      "fromMe": false,
+      "id": "BAE51234567890"
+    },
+    "pushName": "Cliente Teste",
+    "messageType": "conversation",
+    "message": {
+      "conversation": "Oi, quero saber os planos da UniTV"
+    },
+    "messageTimestamp": 1783177200
+  }
+}
