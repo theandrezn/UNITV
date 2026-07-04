@@ -70,8 +70,8 @@ export const DEVICE_MENU: WhatsAppMenu = {
 
 const installRows: WhatsAppMenuRow[] = [
   { title: "Instalar na TV pelo Downloader", description: "Codigo 8322904 e passo a passo", rowId: "menu:install:downloader_tv" },
-  { title: "Baixar APK para TV", description: "TV Box, Android TV e aparelhos compativeis", rowId: "menu:install:apk_tv" },
-  { title: "Baixar APK para celular Android", description: "Versao mobile para Android", rowId: "menu:install:apk_android" },
+  { title: "Quero download no celular", description: "Versao mobile para Android", rowId: "menu:install:apk_android" },
+  { title: "Quero download na TV Box/Televisao Android", description: "TV Box, Android TV e aparelhos compativeis", rowId: "menu:install:apk_tv" },
   { title: "Ver video tutorial", description: "Tutorial no YouTube", rowId: "menu:install:video" },
   { title: "Falar com suporte", description: "Atendimento para instalacao", rowId: "menu:install:support" }
 ];
@@ -167,8 +167,8 @@ const directSelections: Record<string, MenuSelection> = {
   "menu:payment:pix": { intent: "pix_payment", message: "quero pagar no pix" },
   "menu:payment:card": { intent: "card_payment", message: "quero pagar com cartao" },
   "menu:install:downloader_tv": { intent: "technical_support", message: "instalar na tv pelo downloader" },
-  "menu:install:apk_tv": { intent: "technical_support", message: "baixar apk para tv" },
-  "menu:install:apk_android": { intent: "technical_support", message: "baixar apk para celular android" },
+  "menu:install:apk_android": { intent: "technical_support", message: "quero download no celular" },
+  "menu:install:apk_tv": { intent: "technical_support", message: "quero download na tv box televisao android" },
   "menu:install:video": { intent: "technical_support", message: "ver video tutorial de instalacao" },
   "menu:install:support": { intent: "human_help", message: "quero falar com suporte sobre instalacao" },
   "menu:devices:smart_tv": { intent: "technical_support", message: "quero instalar na Smart TV" },

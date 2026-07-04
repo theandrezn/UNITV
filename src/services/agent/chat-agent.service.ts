@@ -730,7 +730,7 @@ function getInstallationReply(message: string): CommercialReplyResult | null {
     };
   }
 
-  if (/\b(celular|mobile|android)\b/.test(normalized) && /\b(apk|baixar|download|instalar)\b/.test(normalized)) {
+  if (/\b(celular|mobile)\b/.test(normalized) && /\b(apk|baixar|download|dowload|instalar)\b/.test(normalized)) {
     return {
       reply:
         "📱 Download UNiTV para celular Android\n\n" +
@@ -740,7 +740,7 @@ function getInstallationReply(message: string): CommercialReplyResult | null {
     };
   }
 
-  if (/\b(tv|tv box|android tv|stb)\b/.test(normalized) && /\b(apk|baixar|download)\b/.test(normalized)) {
+  if (/\b(tv|televisao|tv box|android tv|stb)\b/.test(normalized) && /\b(apk|baixar|download|dowload)\b/.test(normalized)) {
     return {
       reply:
         "📺 Download UNiTV para TV\n\n" +

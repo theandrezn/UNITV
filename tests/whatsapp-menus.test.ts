@@ -66,6 +66,14 @@ describe("WhatsApp interactive menus", () => {
       intent: "technical_support",
       message: "instalar na tv pelo downloader"
     });
+    expect(resolveMenuSelection("2", { last_menu_id: "install" })).toEqual({
+      intent: "technical_support",
+      message: "quero download no celular"
+    });
+    expect(resolveMenuSelection("3", { last_menu_id: "install" })).toEqual({
+      intent: "technical_support",
+      message: "quero download na tv box televisao android"
+    });
     expect(resolveMenuSelection("4", { last_menu_id: "install" })).toEqual({
       intent: "technical_support",
       message: "ver video tutorial de instalacao"
