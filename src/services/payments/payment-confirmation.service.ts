@@ -1,5 +1,6 @@
 import "server-only";
 import { AuditService } from "@/services/audit.service";
+import { ActivationCodesService } from "@/services/activation-codes.service";
 import { EvolutionService } from "@/services/evolution/evolution.service";
 import { OrdersService } from "@/services/orders.service";
 import { PaymentsService } from "@/services/payments.service";
@@ -20,7 +21,8 @@ export class PaymentConfirmationService {
     private readonly paymentsService = new PaymentsService(),
     private readonly webhooksService = new WebhooksService(),
     private readonly auditService = new AuditService(),
-    private readonly evolutionService = new EvolutionService()
+    private readonly evolutionService = new EvolutionService(),
+    private readonly activationCodesService = new ActivationCodesService()
   ) {}
 
   async process(input: ProcessPaymentInput) {
@@ -130,9 +132,20 @@ export class PaymentConfirmationService {
     }
 
     try {
+      const code = await this.releaseActivationCode(order);
+      if (code) {
+        await this.evolutionService.sendTextMessage({
+          phone,
+          text: `Pagamento confirmado. Seu pedido ${String(order.order_number)} foi aprovado.\n\nSeu codigo de recarga UNiTV:\n${code}`
+        });
+        return;
+      }
+
       await this.evolutionService.sendTextMessage({
         phone,
-        text: `Pagamento confirmado. Seu pedido ${String(order.order_number)} foi aprovado. Agora vou encaminhar para liberacao do acesso.`
+        text:
+          `Pagamento confirmado. Seu pedido ${String(order.order_number)} foi aprovado.\n\n` +
+          "Ainda nao encontrei codigo disponivel no estoque para esse plano. Vou encaminhar para atendimento inserir/liberar o codigo."
       });
     } catch (error) {
       await this.auditService.createAuditLog({
@@ -143,6 +156,42 @@ export class PaymentConfirmationService {
         metadata: { error: error instanceof Error ? error.message : "unknown" }
       });
     }
+  }
+
+  private async releaseActivationCode(order: Record<string, unknown>) {
+    const productId = typeof order.product_id === "string" ? order.product_id : null;
+    if (!productId) {
+      return null;
+    }
+
+    const planId = typeof order.plan_id === "string" ? order.plan_id : null;
+    const availableCode = await this.activationCodesService.findAvailableCode(productId, planId);
+    if (!availableCode) {
+      await this.ordersService.transitionStatus(String(order.id), ["paid", "code_reserved"], "waiting_stock");
+      return null;
+    }
+
+    const reservedCode = await this.activationCodesService.reserveCode(
+      String(availableCode.id),
+      String(order.id),
+      String(order.customer_id)
+    );
+    if (!reservedCode) {
+      return null;
+    }
+
+    await this.ordersService.updateOrder(String(order.id), { code_id: String(reservedCode.id), status: "code_reserved" });
+    await this.activationCodesService.markCodeAsSent(String(reservedCode.id));
+    await this.ordersService.updateOrder(String(order.id), { code_id: String(reservedCode.id), status: "code_sent" });
+    await this.auditService.createAuditLog({
+      actor_type: "webhook",
+      action: "activation_code_sent_after_mercado_pago_webhook",
+      entity_type: "orders",
+      entity_id: String(order.id),
+      metadata: { code_id: reservedCode.id }
+    });
+
+    return String(reservedCode.code);
   }
 
   private audit(orderId: string, action: string, order: Record<string, unknown>, payment: PaymentData) {

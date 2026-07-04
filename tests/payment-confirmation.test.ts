@@ -32,6 +32,7 @@ const baseOrder = {
   id: "11111111-1111-4111-8111-111111111111",
   order_number: "UTV-20260704-000100",
   customer_id: "22222222-2222-4222-8222-222222222222",
+  product_id: "44444444-4444-4444-8444-444444444444",
   plan_id: "33333333-3333-4333-8333-333333333333",
   amount_cents: 2500,
   currency: "BRL",
@@ -49,7 +50,8 @@ function createHarness() {
       ...baseOrder,
       status: "paid"
     })),
-    transitionStatus: vi.fn(async (): Promise<typeof baseOrder | null> => ({ ...baseOrder }))
+    transitionStatus: vi.fn(async (): Promise<typeof baseOrder | null> => ({ ...baseOrder })),
+    updateOrder: vi.fn(async (_id, data): Promise<Record<string, unknown>> => ({ ...baseOrder, ...data }))
   };
   const paymentsService = { upsertProviderPayment: vi.fn(async (data) => ({ id: "payment-row", ...data })) };
   const webhooksService = {
@@ -59,13 +61,19 @@ function createHarness() {
   };
   const auditService = { createAuditLog: vi.fn(async () => ({})) };
   const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+  const activationCodesService = {
+    findAvailableCode: vi.fn(async () => null as Record<string, unknown> | null),
+    reserveCode: vi.fn(async () => null as Record<string, unknown> | null),
+    markCodeAsSent: vi.fn(async () => null as Record<string, unknown> | null)
+  };
   const service = new PaymentConfirmationService(
     mercadoPagoService as never,
     ordersService as never,
     paymentsService as never,
     webhooksService as never,
     auditService as never,
-    evolutionService as never
+    evolutionService as never,
+    activationCodesService as never
   );
 
   return {
@@ -75,7 +83,8 @@ function createHarness() {
     paymentsService,
     webhooksService,
     auditService,
-    evolutionService
+    evolutionService,
+    activationCodesService
   };
 }
 
@@ -104,10 +113,37 @@ describe("PaymentConfirmationService", () => {
     );
     expect(harness.evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
-      text: "Pagamento confirmado. Seu pedido UTV-20260704-000100 foi aprovado. Agora vou encaminhar para liberacao do acesso."
+      text:
+        "Pagamento confirmado. Seu pedido UTV-20260704-000100 foi aprovado.\n\n" +
+        "Ainda nao encontrei codigo disponivel no estoque para esse plano. Vou encaminhar para atendimento inserir/liberar o codigo."
     });
     expect(harness.webhooksService.markWebhookProcessed).toHaveBeenCalledWith("webhook-id");
     expect(result).toEqual({ status: "paid", orderId: baseOrder.id });
+  });
+
+  it("sends an available activation code after an approved webhook payment", async () => {
+    const harness = createHarness();
+    harness.activationCodesService.findAvailableCode.mockResolvedValueOnce({
+      id: "code-id",
+      code: "UNITV-CODE-001"
+    });
+    harness.activationCodesService.reserveCode.mockResolvedValueOnce({
+      id: "code-id",
+      code: "UNITV-CODE-001"
+    });
+    harness.activationCodesService.markCodeAsSent.mockResolvedValueOnce({ id: "code-id", status: "sent" });
+
+    await harness.service.process({ webhookEventId: "webhook-id", paymentId: "987654" });
+
+    expect(harness.activationCodesService.reserveCode).toHaveBeenCalledWith("code-id", baseOrder.id, baseOrder.customer_id);
+    expect(harness.ordersService.updateOrder).toHaveBeenCalledWith(
+      baseOrder.id,
+      expect.objectContaining({ code_id: "code-id", status: "code_sent" })
+    );
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "Pagamento confirmado. Seu pedido UTV-20260704-000100 foi aprovado.\n\nSeu codigo de recarga UNiTV:\nUNITV-CODE-001"
+    });
   });
 
   it("does not send a second message when the order was already transitioned", async () => {

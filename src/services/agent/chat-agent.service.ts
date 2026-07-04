@@ -4,6 +4,7 @@ import { sanitizeReply } from "@/lib/agent/reply-safety";
 import { AppSettingsService } from "@/services/app-settings.service";
 import { AgentActionsService } from "@/services/agent-actions.service";
 import { AuditService } from "@/services/audit.service";
+import { ActivationCodesService } from "@/services/activation-codes.service";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import { OrdersService } from "@/services/orders.service";
 import { MercadoPagoService } from "@/services/payments/mercadopago.service";
@@ -53,7 +54,8 @@ export class ChatAgentService {
     private readonly appSettingsService = new AppSettingsService(),
     private readonly agentActionsService = new AgentActionsService(),
     private readonly auditService = new AuditService(),
-    private readonly mercadoPagoService = new MercadoPagoService()
+    private readonly mercadoPagoService = new MercadoPagoService(),
+    private readonly activationCodesService = new ActivationCodesService()
   ) {}
 
   generateReply(input: { message: string; classification: IntentClassification }) {
@@ -343,7 +345,7 @@ export class ChatAgentService {
   }
 
   private async checkPaymentAfterCustomerConfirmation(input: CommercialReplyInput): Promise<CommercialReplyResult> {
-    const order = await this.ordersService.findLatestOrderByCustomerId(input.customer.id);
+    let order = await this.ordersService.findLatestOrderByCustomerId(input.customer.id);
     if (!order) {
       const plans = await this.plansService.listActivePlans();
       const menu = plans.length ? buildPlansMenu(plans) : null;
@@ -355,16 +357,12 @@ export class ChatAgentService {
       };
     }
 
+    order = await this.refreshOrderPaymentFromMercadoPago(order, input.webhookEventId);
     const orderNumber = String(order.order_number || "seu pedido");
     const status = String(order.status || "");
 
     if (status === "paid" || status === "code_reserved") {
-      return {
-        order,
-        reply:
-          `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
-          "Agora vou seguir para a liberacao do acesso. Se o codigo ainda nao estiver disponivel automaticamente, eu encaminho para atendimento finalizar."
-      };
+      return this.releaseActivationCodeForPaidOrder(order, input);
     }
 
     if (status === "code_sent") {
@@ -398,6 +396,128 @@ export class ChatAgentService {
       reply:
         `FEITO. Ainda nao consta pagamento aprovado para o pedido ${orderNumber}.\n\n` +
         "O pedido esta aguardando a confirmacao automatica do Mercado Pago. Assim que o webhook confirmar, eu sigo para a liberacao do acesso."
+    };
+  }
+
+  private async refreshOrderPaymentFromMercadoPago(order: Record<string, unknown>, webhookEventId: string) {
+    if (String(order.status || "") !== "pending_payment") {
+      return order;
+    }
+
+    const metadata = readOrderMetadata(order);
+    const paymentId = readMetadataString(metadata, "mercado_pago_pix_payment_id") || readPixPaymentReference(order);
+    if (!paymentId) {
+      return order;
+    }
+
+    try {
+      const payment = await this.mercadoPagoService.getPayment(paymentId);
+      await this.auditService.createAuditLog({
+        actor_type: "ai_agent",
+        action: "mercado_pago_payment_checked_from_whatsapp",
+        entity_type: "orders",
+        entity_id: String(order.id),
+        metadata: { webhookEventId, payment_id: payment.id, provider_status: payment.status }
+      });
+
+      if (payment.status !== "approved") {
+        return order;
+      }
+
+      const valuesMatch = Number(order.amount_cents) === payment.amountCents && String(order.currency || "BRL") === payment.currency;
+      if (!valuesMatch) {
+        const reviewed = await this.ordersService.transitionStatus(
+          String(order.id),
+          ["pending_payment", "receipt_under_review", "manual_review"],
+          "manual_review",
+          { payment_provider: "mercado_pago", payment_reference: payment.id }
+        );
+        return reviewed || order;
+      }
+
+      const paid = await this.ordersService.transitionToPaid(
+        String(order.id),
+        payment.approvedAt || new Date().toISOString(),
+        payment.id
+      );
+      return paid || { ...order, status: "paid", payment_reference: payment.id };
+    } catch (error) {
+      await this.auditService.createAuditLog({
+        actor_type: "ai_agent",
+        action: "mercado_pago_payment_check_failed_from_whatsapp",
+        entity_type: "orders",
+        entity_id: String(order.id),
+        metadata: { webhookEventId, error: error instanceof Error ? error.message : "unknown_error" }
+      });
+      return order;
+    }
+  }
+
+  private async releaseActivationCodeForPaidOrder(
+    order: Record<string, unknown>,
+    input: CommercialReplyInput
+  ): Promise<CommercialReplyResult> {
+    const orderNumber = String(order.order_number || "seu pedido");
+    const existingCodeId = typeof order.code_id === "string" && order.code_id ? order.code_id : null;
+
+    if (String(order.status || "") === "code_reserved" && existingCodeId) {
+      return {
+        order,
+        reply:
+          `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
+          "O acesso ja esta reservado. Se ele nao aparecer na conversa, fale com especialista para reenviar com seguranca."
+      };
+    }
+
+    const productId = typeof order.product_id === "string" ? order.product_id : null;
+    if (!productId) {
+      return {
+        order,
+        reply:
+          `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
+          "Nao consegui identificar o produto para separar o codigo automaticamente. Vou encaminhar para atendimento finalizar."
+      };
+    }
+
+    const planId = typeof order.plan_id === "string" ? order.plan_id : null;
+    const availableCode = await this.activationCodesService.findAvailableCode(productId, planId);
+    if (!availableCode) {
+      await this.ordersService.transitionStatus(String(order.id), ["paid", "code_reserved"], "waiting_stock");
+      return {
+        order,
+        reply:
+          `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
+          "Ainda nao encontrei codigo disponivel no estoque para esse plano. Vou encaminhar para atendimento inserir/liberar o codigo."
+      };
+    }
+
+    const reservedCode = await this.activationCodesService.reserveCode(String(availableCode.id), String(order.id), input.customer.id);
+    if (!reservedCode) {
+      return {
+        order,
+        reply:
+          `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
+          "O estoque acabou de ser atualizado por outro atendimento. Vou tentar liberar novamente em instantes."
+      };
+    }
+
+    await this.ordersService.updateOrder(String(order.id), { code_id: String(reservedCode.id), status: "code_reserved" });
+    await this.activationCodesService.markCodeAsSent(String(reservedCode.id));
+    const sentOrder = await this.ordersService.updateOrder(String(order.id), { code_id: String(reservedCode.id), status: "code_sent" });
+
+    await this.auditService.createAuditLog({
+      actor_type: "ai_agent",
+      action: "activation_code_sent_after_payment_confirmation",
+      entity_type: "orders",
+      entity_id: String(order.id),
+      metadata: { webhookEventId: input.webhookEventId, code_id: reservedCode.id }
+    });
+
+    return {
+      order: sentOrder,
+      reply:
+        `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
+        `Seu codigo de recarga UNiTV:\n${String(reservedCode.code)}`
     };
   }
 
@@ -613,6 +733,15 @@ function readOrderMetadata(order: Record<string, unknown> | null) {
 function readOrderCheckoutUrl(order: Record<string, unknown> | null) {
   const checkoutUrl = readOrderMetadata(order).mercado_pago_checkout_url;
   return typeof checkoutUrl === "string" && checkoutUrl ? checkoutUrl : undefined;
+}
+
+function readPixPaymentReference(order: Record<string, unknown>) {
+  const reference = order.payment_reference;
+  if (typeof reference !== "string" || !/^\d+$/.test(reference)) {
+    return null;
+  }
+
+  return reference;
 }
 
 function readMetadataString(metadata: Record<string, unknown>, key: string) {

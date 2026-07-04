@@ -408,8 +408,11 @@ export class WhatsappMessageService {
 }
 
 function isReceiptMessage(message: IncomingEvolutionMessage) {
-  const text = message.text.toLowerCase();
-  const receiptText = /\b(comprovante|paguei|pagamento feito|pix enviado|transferencia|transferência)\b/.test(text);
+  const text = message.text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const receiptText = /\b(comprovante|recibo|print do pagamento|transferencia)\b/.test(text);
   const receiptMedia = message.hasMedia && ["imageMessage", "documentMessage"].includes(message.messageType);
 
   return receiptText || receiptMedia;

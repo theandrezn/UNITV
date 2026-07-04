@@ -33,7 +33,9 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
     createOrder: vi.fn(async (data) => ({ ...data, id: "33333333-3333-4333-8333-333333333333", order_number: "UTV-20260704-000001" })),
     findLatestOpenOrderByCustomerId: vi.fn(async () => null as Record<string, unknown> | null),
     findLatestOrderByCustomerId: vi.fn(async () => null as Record<string, unknown> | null),
-    updateOrder: vi.fn(async (_id, data) => data)
+    updateOrder: vi.fn(async (_id, data) => data),
+    transitionStatus: vi.fn(async (_id, _from, status, data = {}) => ({ id: _id, status, ...data })),
+    transitionToPaid: vi.fn(async (_id, paidAt, paymentReference) => ({ id: _id, status: "paid", paid_at: paidAt, payment_reference: paymentReference }))
   };
   const appSettingsService = {
     getPaymentInstructions: vi.fn(async () => "Instrucoes de pagamento cadastradas."),
@@ -58,7 +60,19 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
       ticketUrl: "https://www.mercadopago.com.br/payments/pix-payment-id/ticket",
       expiresAt: "2026-07-05T18:00:00.000Z",
       rawPayload: { id: "pix-payment-id", status: "pending" }
+    })),
+    getPayment: vi.fn(async () => ({
+      id: "pix-payment-id",
+      status: "pending",
+      amountCents: 2500,
+      currency: "BRL",
+      approvedAt: null as string | null
     }))
+  };
+  const activationCodesService = {
+    findAvailableCode: vi.fn(async () => null as Record<string, unknown> | null),
+    reserveCode: vi.fn(async () => null as Record<string, unknown> | null),
+    markCodeAsSent: vi.fn(async () => null as Record<string, unknown> | null)
   };
 
   return {
@@ -69,7 +83,8 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
       appSettingsService as never,
       agentActionsService as never,
       auditService as never,
-      mercadoPagoService as never
+      mercadoPagoService as never,
+      activationCodesService as never
     ),
     plansService,
     knowledgeService,
@@ -78,6 +93,7 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
     agentActionsService,
     auditService,
     mercadoPagoService,
+    activationCodesService,
     ...overrides
   };
 }
@@ -359,6 +375,59 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("PIX do pedido");
   });
 
+  it("checks Mercado Pago and sends an available recharge code after approval", async () => {
+    const { service, ordersService, mercadoPagoService, activationCodesService } = createChatAgent();
+    const pendingOrder = {
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000010",
+      customer_id: "customer-id",
+      product_id: plan.product_id,
+      plan_id: plan.id,
+      amount_cents: 2500,
+      currency: "BRL",
+      status: "pending_payment",
+      metadata: { mercado_pago_pix_payment_id: "123456789" }
+    };
+    const paidOrder = { ...pendingOrder, status: "paid", paid_at: "2026-07-04T22:30:00.000Z", payment_reference: "123456789" };
+    ordersService.findLatestOrderByCustomerId.mockResolvedValueOnce(pendingOrder);
+    ordersService.transitionToPaid.mockResolvedValueOnce(paidOrder);
+    mercadoPagoService.getPayment.mockResolvedValueOnce({
+      id: "123456789",
+      status: "approved",
+      amountCents: 2500,
+      currency: "BRL",
+      approvedAt: "2026-07-04T22:30:00.000Z"
+    });
+    activationCodesService.findAvailableCode.mockResolvedValueOnce({
+      id: "code-id",
+      code: "UNITV-RECARGA-001"
+    });
+    activationCodesService.reserveCode.mockResolvedValueOnce({
+      id: "code-id",
+      code: "UNITV-RECARGA-001"
+    });
+    activationCodesService.markCodeAsSent.mockResolvedValueOnce({ id: "code-id", status: "sent" });
+
+    const result = await service.generateCommercialReply({
+      message: "ja paguei",
+      classification: { intent: "unknown", confidence: 0.99, summary: "pagou", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(mercadoPagoService.getPayment).toHaveBeenCalledWith("123456789");
+    expect(ordersService.transitionToPaid).toHaveBeenCalledWith(
+      pendingOrder.id,
+      "2026-07-04T22:30:00.000Z",
+      "123456789"
+    );
+    expect(activationCodesService.reserveCode).toHaveBeenCalledWith("code-id", pendingOrder.id, "customer-id");
+    expect(activationCodesService.markCodeAsSent).toHaveBeenCalledWith("code-id");
+    expect(result.reply).toContain("Pagamento confirmado");
+    expect(result.reply).toContain("UNITV-RECARGA-001");
+  });
+
   it("creates a dynamic Pix charge without asking the customer for email", async () => {
     const { service, ordersService, mercadoPagoService } = createChatAgent();
     ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce({
@@ -630,6 +699,67 @@ describe("commercial WhatsApp agent", () => {
     const assistantMessage = messages.find((message) => message.role === "assistant");
     expect(String(assistantMessage?.content)).toContain("Recebi o comprovante");
     expect(String(assistantMessage?.content).toLowerCase()).not.toContain("codigo");
+  });
+
+  it("does not treat plain paid text as a manual receipt", async () => {
+    const ordersService = {
+      findLatestOpenOrderByCustomerId: vi.fn(),
+      updateOrder: vi.fn()
+    };
+    const receiptsService = { createReceipt: vi.fn() };
+    const intentClassifier = { classify: vi.fn(async () => ({ intent: "unknown", confidence: 1, summary: "pagou", suggested_reply: "" })) };
+    const chatAgent = {
+      generateCommercialReply: vi.fn(async () => ({ reply: "FEITO. Ainda nao consta pagamento aprovado." }))
+    };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+        createConversation: vi.fn(),
+        touchConversation: vi.fn(async () => ({})),
+        updateConversationMetadata: vi.fn()
+      } as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      ordersService as never,
+      receiptsService as never,
+      { createAgentAction: vi.fn(async (data) => data) } as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "paid-text-message-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Já paguei",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(receiptsService.createReceipt).not.toHaveBeenCalled();
+    expect(ordersService.updateOrder).not.toHaveBeenCalled();
+    expect(chatAgent.generateCommercialReply).toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "FEITO. Ainda nao consta pagamento aprovado."
+    });
   });
 
   it("ignores stale pending Pix email metadata and classifies the message normally", async () => {
