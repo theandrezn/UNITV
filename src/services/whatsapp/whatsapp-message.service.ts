@@ -93,12 +93,13 @@ export class WhatsappMessageService {
     }
 
     const resumeBot = conversation.metadata?.requires_human && isBotResumeRequest(message.text);
-    if (resumeBot) {
+    const staleFreeTrialHandoff = conversation.metadata?.requires_human && isStaleFreeTrialHandoff(conversation.metadata);
+    if (resumeBot || staleFreeTrialHandoff) {
       await this.conversationsRepository.updateConversationMetadata(conversation.id, {
         ...(conversation.metadata || {}),
         requires_human: false,
         handoff_resolved_at: new Date().toISOString(),
-        handoff_resolved_by: "whatsapp_resume_command",
+        handoff_resolved_by: resumeBot ? "whatsapp_resume_command" : "stale_free_trial_handoff_auto_resume",
         handoff_reason: null
       });
       conversation.metadata = {
@@ -416,6 +417,11 @@ function isReceiptMessage(message: IncomingEvolutionMessage) {
   const receiptMedia = message.hasMedia && ["imageMessage", "documentMessage"].includes(message.messageType);
 
   return receiptText || receiptMedia;
+}
+
+function isStaleFreeTrialHandoff(metadata: Record<string, unknown> | null | undefined) {
+  const reason = metadata?.handoff_reason;
+  return reason === "free_trial" || reason === "free_trial_activation";
 }
 
 function isHumanHandoffRequest(text: string) {

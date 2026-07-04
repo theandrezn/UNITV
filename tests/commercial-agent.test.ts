@@ -1127,6 +1127,67 @@ describe("commercial WhatsApp agent", () => {
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
 
+  it("auto-resumes stale free trial handoffs from the old flow", async () => {
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({
+        id: "conversation-id",
+        metadata: { requires_human: true, handoff_reason: "free_trial" }
+      })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const intentClassifier = { classify: vi.fn(async () => ({ intent: "greeting", confidence: 1, summary: "oi", suggested_reply: "" })) };
+    const chatAgent = { generateCommercialReply: vi.fn(async () => ({ reply: "Bot ativo novamente." })) };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      conversationsRepository as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "stale-free-trial-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "oi",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(result.status).toBe("processed");
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        requires_human: false,
+        handoff_reason: null,
+        handoff_resolved_by: "stale_free_trial_handoff_auto_resume"
+      })
+    );
+    expect(chatAgent.generateCommercialReply).toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({ phone: "5511999998888", text: "Bot ativo novamente." });
+  });
+
   it("allows a resume command to reactivate the bot after human takeover", async () => {
     const conversationsRepository = {
       findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: { requires_human: true, handoff_reason: "human_help" } })),
