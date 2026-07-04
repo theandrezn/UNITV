@@ -158,3 +158,29 @@ Tambem cria:
 4. Implementar agente de atendimento com historico de conversa.
 5. Implementar painel admin.
 6. Integrar WhatsApp.
+
+## Deploy na VPS Hostinger
+
+A VPS alvo atual e Ubuntu 24.04 LTS em `76.13.231.244`.
+
+O deploy usa:
+
+- GitHub como origem do codigo
+- Node.js 22
+- PM2 para manter o processo Next.js ativo
+- Nginx como proxy reverso em HTTP porta 80
+- app em `/var/www/unitv`
+
+Primeiro autorize a chave publica SSH desta maquina no painel da Hostinger, em `Chave SSH`:
+
+```text
+ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICf3sldjy6mu4zAY5f+iYW3zPSaY9lLU4/e2Vjc81PIk unitv-hostinger-codex
+```
+
+Depois rode localmente:
+
+```powershell
+.\scripts\deploy-to-hostinger.ps1
+```
+
+O script copia `.env.local` para a VPS. Esse arquivo nunca deve ser commitado.
