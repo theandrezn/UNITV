@@ -149,35 +149,19 @@ describe("commercial WhatsApp agent", () => {
       })
     );
     expect(result.reply).toContain("UTV-20260704-000001");
-    expect(mercadoPagoService.createOrderPreference).toHaveBeenCalledWith({
-      order: expect.objectContaining({
-        id: "33333333-3333-4333-8333-333333333333",
-        order_number: "UTV-20260704-000001",
-        customer_id: "44444444-4444-4444-8444-444444444444",
-        plan_id: plan.id,
-        amount_cents: 2500,
-        currency: "BRL"
-      }),
-      plan: { name: plan.name, slug: plan.slug }
-    });
-    expect(ordersService.updateOrder).toHaveBeenCalledWith(
-      "33333333-3333-4333-8333-333333333333",
-      expect.objectContaining({
-        payment_provider: "mercado_pago",
-        payment_reference: "preference-id",
-        metadata: expect.objectContaining({
-          mercado_pago_checkout_url: "https://www.mercadopago.com.br/checkout/dynamic-order-link"
-        })
-      })
-    );
+    expect(mercadoPagoService.createOrderPreference).not.toHaveBeenCalled();
+    expect(ordersService.updateOrder).not.toHaveBeenCalled();
     expect(appSettingsService.getPixInstructions).not.toHaveBeenCalled();
-    expect(result.reply).toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
+    expect(result.reply).not.toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
+    expect(result.reply).not.toContain("Cartao:");
+    expect(result.reply).not.toContain("Para gerar o Pix Copia e Cola");
     expect(result.reply).toContain("Receber Pix");
+    expect(result.reply).toContain("Pagar com cartao");
     expect(result.menu).toEqual(expect.objectContaining({ id: "payment" }));
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
   });
 
-  it("hands off when the order-specific Checkout Pro preference cannot be created", async () => {
+  it("does not create a card preference while only creating the order", async () => {
     const { service, ordersService, mercadoPagoService, agentActionsService } = createChatAgent();
     mercadoPagoService.createOrderPreference.mockRejectedValueOnce(new Error("Mercado Pago unavailable"));
 
@@ -191,9 +175,10 @@ describe("commercial WhatsApp agent", () => {
 
     expect(ordersService.createOrder).toHaveBeenCalled();
     expect(ordersService.updateOrder).not.toHaveBeenCalled();
-    expect(result.requiresHuman).toBe(true);
-    expect(agentActionsService.createAgentAction).toHaveBeenCalledWith(
-      expect.objectContaining({ action_name: "handoff_to_human", requires_human_approval: true })
+    expect(mercadoPagoService.createOrderPreference).not.toHaveBeenCalled();
+    expect(result.requiresHuman).not.toBe(true);
+    expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
     );
   });
 
@@ -256,8 +241,8 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
-  it("returns the order-specific payment link for later card-payment questions", async () => {
-    const { service, ordersService, appSettingsService } = createChatAgent();
+  it("returns an existing card link only when card is selected", async () => {
+    const { service, ordersService, appSettingsService, mercadoPagoService } = createChatAgent();
     ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce({
       id: "33333333-3333-4333-8333-333333333333",
       metadata: { mercado_pago_checkout_url: "https://www.mercadopago.com.br/checkout/dynamic-order-link" }
@@ -271,8 +256,73 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(appSettingsService.getPixInstructions).not.toHaveBeenCalled();
-    expect(result.reply).toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
+    expect(mercadoPagoService.createOrderPreference).not.toHaveBeenCalled();
+    expect(result.reply).toBe("PAGUE COM CARTAO AQUI ABAIXO\nhttps://www.mercadopago.com.br/checkout/dynamic-order-link");
+    expect(result.reply).not.toContain("Pedido criado");
+    expect(result.reply).not.toContain("Receber Pix");
     expect(appSettingsService.getPaymentInstructions).not.toHaveBeenCalled();
+  });
+
+  it("creates the card link only when card is selected", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    const order = {
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000001",
+      customer_id: "44444444-4444-4444-8444-444444444444",
+      plan_id: plan.id,
+      amount_cents: 2500,
+      currency: "BRL",
+      metadata: {},
+      plans: { name: plan.name, slug: plan.slug }
+    };
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce(order);
+
+    const result = await service.generateCommercialReply({
+      message: "quero pagar no cartao",
+      classification: { intent: "card_payment", confidence: 0.99, summary: "cartao", suggested_reply: "" },
+      customer: { id: order.customer_id },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(mercadoPagoService.createOrderPreference).toHaveBeenCalledWith({
+      order: expect.objectContaining({
+        id: order.id,
+        order_number: order.order_number,
+        customer_id: order.customer_id,
+        plan_id: plan.id,
+        amount_cents: 2500,
+        currency: "BRL"
+      }),
+      plan: { name: plan.name, slug: plan.slug }
+    });
+    expect(ordersService.updateOrder).toHaveBeenCalledWith(
+      order.id,
+      expect.objectContaining({
+        payment_provider: "mercado_pago",
+        payment_reference: "preference-id",
+        metadata: expect.objectContaining({
+          mercado_pago_checkout_url: "https://www.mercadopago.com.br/checkout/dynamic-order-link"
+        })
+      })
+    );
+    expect(result.reply).toBe("PAGUE COM CARTAO AQUI ABAIXO\nhttps://www.mercadopago.com.br/checkout/dynamic-order-link");
+  });
+
+  it("acknowledges payment completion without releasing access before webhook confirmation", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "feito",
+      classification: { intent: "unknown", confidence: 0.99, summary: "feito", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("FEITO");
+    expect(result.reply).toContain("webhook");
+    expect(result.reply.toLowerCase()).not.toContain("codigo");
   });
 
   it("creates a dynamic Pix charge without asking the customer for email", async () => {

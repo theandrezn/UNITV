@@ -140,23 +140,18 @@ export class ChatAgentService {
     }
 
     if (intent === "card_payment") {
-      const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
-      const checkoutUrl = readOrderCheckoutUrl(order);
-
-      if (!checkoutUrl) {
-        return this.handoffToHuman(
-          input,
-          "checkout_link_missing",
-          knowledge,
-          "Ainda nao encontrei um link de cartao para seu pedido. Vou encaminhar para atendimento humano gerar o link correto."
-        );
-      }
-
-      return { reply: `Cartao:\n${checkoutUrl}` };
+      return this.generateCardPayment(input, knowledge);
     }
 
     if (intent === "ask_payment") {
       return { reply: PAYMENT_MENU.fallbackText, menu: PAYMENT_MENU };
+    }
+
+    if (isPaymentDoneMessage(message)) {
+      return {
+        reply:
+          "FEITO. Vou aguardar a confirmacao automatica do Mercado Pago. Assim que o webhook confirmar o pagamento do pedido, sigo para liberacao do acesso."
+      };
     }
 
     if (intent === "receipt_sent") {
@@ -243,54 +238,10 @@ export class ChatAgentService {
         }
       });
 
-      let preference: Awaited<ReturnType<MercadoPagoService["createOrderPreference"]>>;
-      try {
-        preference = await this.mercadoPagoService.createOrderPreference({
-          order: {
-            id: String(order.id),
-            order_number: String(order.order_number),
-            customer_id: String(order.customer_id),
-            plan_id: String(order.plan_id),
-            amount_cents: Number(order.amount_cents),
-            currency: String(order.currency || "BRL")
-          },
-          plan: { name: String(plan.name), slug: String(plan.slug) }
-        });
-      } catch (error) {
-        await this.auditService.createAuditLog({
-          actor_type: "ai_agent",
-          action: "mercado_pago_preference_creation_failed",
-          entity_type: "orders",
-          entity_id: order.id,
-          metadata: {
-            webhookEventId: input.webhookEventId,
-            error: error instanceof Error ? error.message : "unknown_error"
-          }
-        });
-        return this.handoffToHuman(
-          input,
-          "mercado_pago_preference_creation_failed",
-          knowledge,
-          `Seu pedido ${order.order_number} foi criado, mas nao consegui gerar o link do cartao agora. Vou encaminhar para atendimento humano concluir o pagamento.`
-        );
-      }
-
-      const updatedMetadata = {
-        ...readOrderMetadata(order),
-        mercado_pago_preference_id: preference.id,
-        mercado_pago_checkout_url: preference.checkoutUrl
-      };
-      await this.ordersService.updateOrder(String(order.id), {
-        payment_provider: "mercado_pago",
-        payment_reference: preference.id,
-        metadata: updatedMetadata
-      });
-
       return {
         order,
-        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\nCartao:\n${preference.checkoutUrl}\n\nPara gerar o Pix Copia e Cola, selecione Receber Pix abaixo.`,
-        menu: PAYMENT_MENU,
-        sendTextBeforeMenu: true
+        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\n${PAYMENT_MENU.fallbackText}`,
+        menu: PAYMENT_MENU
       };
     }
 
@@ -318,6 +269,79 @@ export class ChatAgentService {
     }
 
     return { reply: this.generateReply(input) };
+  }
+
+  private async generateCardPayment(
+    input: CommercialReplyInput,
+    knowledge: Array<{ category?: string; content?: string }>
+  ): Promise<CommercialReplyResult> {
+    const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+    if (!order) {
+      const plans = await this.plansService.listActivePlans();
+      const menu = plans.length ? buildPlansMenu(plans) : null;
+      return {
+        reply: menu?.fallbackText || "Ainda nao encontrei um pedido aberto. Vou encaminhar para atendimento humano.",
+        menu: menu || undefined
+      };
+    }
+
+    const metadata = readOrderMetadata(order);
+    const checkoutUrl = readOrderCheckoutUrl(order);
+    if (checkoutUrl) {
+      return { order, reply: formatCardReply(checkoutUrl) };
+    }
+
+    if (!order.plan_id) {
+      return this.handoffToHuman(
+        input,
+        "card_order_plan_missing",
+        knowledge,
+        "Encontrei seu pedido, mas nao consegui identificar o plano para gerar o link do cartao. Vou encaminhar para atendimento humano."
+      );
+    }
+
+    try {
+      const preference = await this.mercadoPagoService.createOrderPreference({
+        order: {
+          id: String(order.id),
+          order_number: String(order.order_number),
+          customer_id: String(order.customer_id),
+          plan_id: String(order.plan_id),
+          amount_cents: Number(order.amount_cents),
+          currency: String(order.currency || "BRL")
+        },
+        plan: readOrderPlan(order)
+      });
+
+      await this.ordersService.updateOrder(String(order.id), {
+        payment_provider: "mercado_pago",
+        payment_reference: preference.id,
+        metadata: {
+          ...metadata,
+          mercado_pago_preference_id: preference.id,
+          mercado_pago_checkout_url: preference.checkoutUrl
+        }
+      });
+
+      return { order, reply: formatCardReply(preference.checkoutUrl) };
+    } catch (error) {
+      await this.auditService.createAuditLog({
+        actor_type: "ai_agent",
+        action: "mercado_pago_preference_creation_failed",
+        entity_type: "orders",
+        entity_id: String(order.id),
+        metadata: {
+          webhookEventId: input.webhookEventId,
+          error: error instanceof Error ? error.message : "unknown_error"
+        }
+      });
+      return this.handoffToHuman(
+        input,
+        "mercado_pago_preference_creation_failed",
+        knowledge,
+        `Seu pedido ${String(order.order_number)} esta aberto, mas nao consegui gerar o link do cartao agora. Vou encaminhar para atendimento humano.`
+      );
+    }
   }
 
   private async generatePixPayment(
@@ -469,6 +493,10 @@ function isPixPaymentMessage(message: string) {
   return /\b(pix|chave pix|copia e cola|qr code)\b/i.test(message);
 }
 
+function isPaymentDoneMessage(message: string) {
+  return /^(feito|paguei|pagamento feito|ja paguei|j[aá] paguei)$/i.test(message.trim());
+}
+
 function isInstallationMessage(message: string) {
   return /\b(instalar|instalacao|downloader|aparelho|smart tv|tv box|android|iphone|computador)\b/i.test(message);
 }
@@ -544,6 +572,10 @@ function readOrderPlan(order: Record<string, unknown>) {
 function formatPixReply(order: Record<string, unknown>, qrCode: string, ticketUrl: string | null) {
   const link = ticketUrl ? `\n\nAbrir instrucoes e QR Code:\n${ticketUrl}` : "";
   return `PIX do pedido ${String(order.order_number)}:\n\nCopia e Cola:\n${qrCode}${link}\n\nA confirmacao e automatica pelo Mercado Pago. Nao precisa enviar comprovante.`;
+}
+
+function formatCardReply(checkoutUrl: string) {
+  return `PAGUE COM CARTAO AQUI ABAIXO\n${checkoutUrl}`;
 }
 
 function buildMercadoPagoPixEmail(order: Record<string, unknown>, customerId: string) {
