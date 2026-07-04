@@ -9,9 +9,11 @@ export const dynamic = "force-dynamic";
 function isAuthorized(request: NextRequest) {
   const env = getServerEnv();
   const secret = env.EVOLUTION_WEBHOOK_SECRET;
+  const verifyToken = env.EVOLUTION_WEBHOOK_VERIFY_TOKEN;
+  const queryToken = request.nextUrl.searchParams.get("token") || request.nextUrl.searchParams.get("verify_token");
 
-  if (!secret) {
-    return false;
+  if (verifyToken && queryToken === verifyToken) {
+    return true;
   }
 
   const headerSecret =
@@ -19,17 +21,10 @@ function isAuthorized(request: NextRequest) {
     request.headers.get("x-webhook-secret") ||
     request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
 
-  return headerSecret === secret;
+  return Boolean(secret && headerSecret === secret);
 }
 
-export function GET(request: NextRequest) {
-  const env = getServerEnv();
-  const token = request.nextUrl.searchParams.get("token") || request.nextUrl.searchParams.get("verify_token");
-
-  if (env.EVOLUTION_WEBHOOK_VERIFY_TOKEN && token !== env.EVOLUTION_WEBHOOK_VERIFY_TOKEN) {
-    return NextResponse.json({ status: "error", message: "invalid verify token" }, { status: 401 });
-  }
-
+export function GET() {
   return NextResponse.json({ status: "ok", webhook: "evolution" });
 }
 
