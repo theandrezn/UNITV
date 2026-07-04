@@ -40,6 +40,14 @@ type SendListMessageInput = {
   }>;
 };
 
+type SendButtonMessageInput = {
+  phone: string;
+  title: string;
+  description: string;
+  footerText: string;
+  buttons: Array<{ id: string; displayText: string }>;
+};
+
 export class EvolutionClient {
   private readonly apiUrl: string;
   private readonly apiKey: string;
@@ -119,13 +127,41 @@ export class EvolutionClient {
         description,
         buttonText,
         footerText,
-        values: sections
+        sections
       })
     });
 
     if (!response.ok) {
       const body = await response.text();
       throw new Error(`Evolution sendListMessage failed: ${response.status} ${body}`);
+    }
+
+    return response.json().catch(() => ({}));
+  }
+
+  async sendButtonMessage({ phone, title, description, footerText, buttons }: SendButtonMessageInput) {
+    const response = await fetch(`${this.apiUrl}/message/sendButtons/${encodeURIComponent(this.instanceName)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: this.apiKey
+      },
+      body: JSON.stringify({
+        number: normalizePhone(phone),
+        title,
+        description,
+        footer: footerText,
+        buttons: buttons.map((button) => ({
+          type: "reply",
+          displayText: button.displayText,
+          id: button.id
+        }))
+      })
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Evolution sendButtonMessage failed: ${response.status} ${body}`);
     }
 
     return response.json().catch(() => ({}));

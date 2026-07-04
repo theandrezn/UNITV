@@ -76,13 +76,51 @@ describe("EvolutionClient", () => {
           description: "Escolha uma opcao abaixo",
           buttonText: "Ver opcoes",
           footerText: "UNiTV",
-          values: [
+          sections: [
             {
               title: "Atendimento",
               rows: [
                 { title: "Ver planos", description: "Conheca os valores", rowId: "menu:main:view_plans" }
               ]
             }
+          ]
+        })
+      })
+    );
+  });
+
+  it("sends quick reply buttons through Evolution sendButtons", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ key: { id: "button-message-id" } }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new EvolutionClient({
+      apiUrl: "https://evolution.example.com",
+      apiKey: "evolution-key",
+      instanceName: "unitv"
+    });
+
+    await client.sendButtonMessage({
+      phone: "5511999998888",
+      title: "Como posso te ajudar?",
+      description: "Escolha uma opcao abaixo",
+      footerText: "UNiTV",
+      buttons: [
+        { id: "menu:main:view_plans", displayText: "Ver planos" },
+        { id: "menu:main:specialist", displayText: "Especialista" }
+      ]
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://evolution.example.com/message/sendButtons/unitv",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          number: "5511999998888",
+          title: "Como posso te ajudar?",
+          description: "Escolha uma opcao abaixo",
+          footer: "UNiTV",
+          buttons: [
+            { type: "reply", displayText: "Ver planos", id: "menu:main:view_plans" },
+            { type: "reply", displayText: "Especialista", id: "menu:main:specialist" }
           ]
         })
       })

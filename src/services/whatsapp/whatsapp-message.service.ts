@@ -12,6 +12,8 @@ import { ReceiptsService } from "@/services/receipts.service";
 import type { IncomingEvolutionMessage } from "@/lib/evolution/client";
 import { resolveMenuSelection, type WhatsAppMenu } from "@/lib/whatsapp/menus";
 
+const HUMAN_NOTIFICATION_PHONE = "558699802602";
+
 type ProcessIncomingMessageInput = {
   webhookEventId: string;
   message: IncomingEvolutionMessage;
@@ -90,15 +92,34 @@ export class WhatsappMessageService {
       return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification: { intent: "receipt_sent" } });
     }
 
+    if (conversation.metadata?.requires_human) {
+      await this.auditService.createAuditLog({
+        actor_type: "ai_agent",
+        action: "human_takeover_active_auto_reply_skipped",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, externalMessageId: message.externalMessageId }
+      });
+      return { status: "ignored" as const };
+    }
+
     let effectiveMessage = message.text;
     let classification: IntentClassification;
-    const selection = resolveMenuSelection(message.text, conversation.metadata);
+    const directHumanRequest = isHumanHandoffRequest(message.text);
+    const selection = directHumanRequest ? null : resolveMenuSelection(message.text, conversation.metadata);
     if (selection) {
       effectiveMessage = selection.message;
       classification = {
         intent: selection.intent,
         confidence: 1,
         summary: `Selecao direta do menu: ${message.text}`,
+        suggested_reply: ""
+      };
+    } else if (directHumanRequest) {
+      classification = {
+        intent: "human_help",
+        confidence: 1,
+        summary: "Cliente pediu atendimento humano.",
         suggested_reply: ""
       };
     } else {
@@ -126,12 +147,21 @@ export class WhatsappMessageService {
     }
 
     if (commercialReply.requiresHuman) {
-      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
+      const handoffMetadata = {
         ...(conversation.metadata || {}),
         requires_human: true,
         handoff_reason: classification.intent,
         handoff_requested_at: new Date().toISOString()
-      });
+      };
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, handoffMetadata);
+      if (classification.intent === "human_help") {
+        await this.notifyHumanOwner({
+          webhookEventId,
+          customer,
+          conversationId: conversation.id,
+          message
+        });
+      }
     }
 
     if (commercialReply.menu) {
@@ -186,28 +216,55 @@ export class WhatsappMessageService {
       }
 
       try {
-        const listResult = await this.evolutionService.sendListMessage({
-          phone: message.phone,
-          title: menu.title,
-          description: menu.description,
-          buttonText: menu.buttonText,
-          footerText: menu.footerText,
-          sections: menu.sections
-        });
-        sendResult = sendTextBeforeMenu ? { text: sendResult, list: listResult } : listResult;
+        const buttonResults = [];
+        const rows = menu.sections.flatMap((section) => section.rows);
+        const chunks = chunkRows(rows, 3);
+        for (const [index, chunk] of chunks.entries()) {
+          buttonResults.push(
+            await this.evolutionService.sendButtonMessage({
+              phone: message.phone,
+              title: index === 0 ? menu.title : "Mais opcoes",
+              description: index === 0 ? menu.description : "Escolha uma opcao abaixo",
+              footerText: menu.footerText,
+              buttons: chunk.map((row) => ({
+                id: row.rowId,
+                displayText: toButtonDisplayText(row.title)
+              }))
+            })
+          );
+        }
+        sendResult = sendTextBeforeMenu ? { text: sendResult, buttons: buttonResults } : { buttons: buttonResults };
       } catch (error) {
-        const fallbackResult = await this.evolutionService.sendTextMessage({
-          phone: message.phone,
-          text: sendTextBeforeMenu ? menu.fallbackText : reply
-        });
-        sendResult = sendTextBeforeMenu ? { text: sendResult, fallback: fallbackResult } : fallbackResult;
-        await this.auditService.createAuditLog({
-          actor_type: "system",
-          action: "evolution_interactive_menu_fallback",
-          entity_type: "conversations",
-          entity_id: conversation.id,
-          metadata: { webhookEventId, menu_id: menu.id, error: error instanceof Error ? error.message : "unknown_error" }
-        });
+        let listResult: unknown = null;
+        try {
+          listResult = await this.evolutionService.sendListMessage({
+            phone: message.phone,
+            title: menu.title,
+            description: menu.description,
+            buttonText: menu.buttonText,
+            footerText: menu.footerText,
+            sections: menu.sections
+          });
+          sendResult = sendTextBeforeMenu ? { text: sendResult, list: listResult } : listResult;
+        } catch (listError) {
+          const fallbackResult = await this.evolutionService.sendTextMessage({
+            phone: message.phone,
+            text: sendTextBeforeMenu ? menu.fallbackText : reply
+          });
+          sendResult = sendTextBeforeMenu ? { text: sendResult, fallback: fallbackResult } : fallbackResult;
+          await this.auditService.createAuditLog({
+            actor_type: "system",
+            action: "evolution_interactive_menu_fallback",
+            entity_type: "conversations",
+            entity_id: conversation.id,
+            metadata: {
+              webhookEventId,
+              menu_id: menu.id,
+              buttons_error: error instanceof Error ? error.message : "unknown_error",
+              list_error: listError instanceof Error ? listError.message : "unknown_error"
+            }
+          });
+        }
       }
     } else {
       sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
@@ -265,6 +322,47 @@ export class WhatsappMessageService {
     });
 
     return { status: "processed" as const, reply };
+  }
+
+  private async notifyHumanOwner({
+    webhookEventId,
+    customer,
+    conversationId,
+    message
+  }: {
+    webhookEventId: string;
+    customer: { id: string; name?: string | null; phone?: string | null };
+    conversationId: string;
+    message: IncomingEvolutionMessage;
+  }) {
+    const customerName = message.contactName || customer.name || "Cliente";
+    const customerPhone = message.phone || customer.phone || "sem telefone";
+    const notification = [
+      "Um cliente quer falar com voce.",
+      `Cliente: ${customerName}`,
+      `WhatsApp: +${customerPhone}`,
+      `Mensagem: ${message.text || "(sem texto)"}`,
+      `Conversa: ${conversationId}`
+    ].join("\n");
+
+    try {
+      await this.evolutionService.sendTextMessage({ phone: HUMAN_NOTIFICATION_PHONE, text: notification });
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "human_handoff_owner_notified",
+        entity_type: "conversations",
+        entity_id: conversationId,
+        metadata: { webhookEventId, ownerPhone: HUMAN_NOTIFICATION_PHONE }
+      });
+    } catch (error) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "human_handoff_owner_notification_failed",
+        entity_type: "conversations",
+        entity_id: conversationId,
+        metadata: { webhookEventId, error: error instanceof Error ? error.message : "unknown_error" }
+      });
+    }
   }
 
   private async handleReceiptMessage({
@@ -347,4 +445,26 @@ function isReceiptMessage(message: IncomingEvolutionMessage) {
   const receiptMedia = message.hasMedia && ["imageMessage", "documentMessage"].includes(message.messageType);
 
   return receiptText || receiptMedia;
+}
+
+function isHumanHandoffRequest(text: string) {
+  return /\b(falar|fala|conversar|chamar|atendente|humano|pessoa|especialista|suporte humano|vendedor|consultor|responsavel)\b/i.test(text) &&
+    /\b(humano|atendente|especialista|pessoa|alguem|algu[eé]m|vendedor|consultor|responsavel)\b/i.test(text);
+}
+
+function chunkRows<T>(rows: T[], size: number) {
+  const chunks: T[][] = [];
+  for (let index = 0; index < rows.length; index += size) {
+    chunks.push(rows.slice(index, index + size));
+  }
+  return chunks;
+}
+
+function toButtonDisplayText(title: string) {
+  const replacements: Record<string, string> = {
+    "Falar com especialista": "Especialista",
+    "Fazer teste gratis": "Teste gratis",
+    "Aprender a instalar": "Instalar"
+  };
+  return (replacements[title] || title).slice(0, 20);
 }

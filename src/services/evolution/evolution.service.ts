@@ -32,6 +32,16 @@ export class EvolutionService {
     return this.evolutionClient.sendListMessage(input);
   }
 
+  sendButtonMessage(input: {
+    phone: string;
+    title: string;
+    description: string;
+    footerText: string;
+    buttons: Array<{ id: string; displayText: string }>;
+  }) {
+    return this.evolutionClient.sendButtonMessage(input);
+  }
+
   getInstanceStatus() {
     return this.evolutionClient.getInstanceStatus();
   }
