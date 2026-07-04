@@ -580,5 +580,5 @@ function formatCardReply(checkoutUrl: string) {
 
 function buildMercadoPagoPixEmail(order: Record<string, unknown>, customerId: string) {
   const reference = String(order.order_number || order.id || customerId).toLowerCase().replace(/[^a-z0-9]+/g, "-");
-  return `pix-${reference}@unitv.local`;
+  return `pix-${reference}@unitv.com.br`;
 }

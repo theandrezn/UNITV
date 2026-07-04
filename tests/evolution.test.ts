@@ -48,7 +48,7 @@ describe("Evolution webhook helpers", () => {
     payload.data.message = {
       buttonsResponseMessage: {
         selectedButtonId: "menu:payment:pix",
-        selectedDisplayText: "Receber Pix"
+        selectedDisplayText: "Pagar com Pix"
       }
     };
     payload.data.messageType = "buttonsResponseMessage";

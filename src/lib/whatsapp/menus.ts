@@ -83,7 +83,7 @@ export const CONTINUATION_MENU: WhatsAppMenu = {
 };
 
 const paymentRows: WhatsAppMenuRow[] = [
-  { title: "Receber Pix", description: "QR Code e Copia e Cola", rowId: "menu:payment:pix" },
+  { title: "Pagar com Pix", description: "QR Code e Copia e Cola", rowId: "menu:payment:pix" },
   { title: "Pagar com cartao", description: "Link seguro do Mercado Pago", rowId: "menu:payment:card" }
 ];
 

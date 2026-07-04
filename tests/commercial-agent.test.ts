@@ -127,7 +127,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.menu).toEqual(expect.objectContaining({ id: "payment" }));
-    expect(result.reply).toContain("Receber Pix");
+    expect(result.reply).toContain("Pagar com Pix");
   });
 
   it("creates an order when the requested plan is clear", async () => {
@@ -155,7 +155,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(result.reply).not.toContain("Cartao:");
     expect(result.reply).not.toContain("Para gerar o Pix Copia e Cola");
-    expect(result.reply).toContain("Receber Pix");
+    expect(result.reply).toContain("Pagar com Pix");
     expect(result.reply).toContain("Pagar com cartao");
     expect(result.menu).toEqual(expect.objectContaining({ id: "payment" }));
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
@@ -259,7 +259,7 @@ describe("commercial WhatsApp agent", () => {
     expect(mercadoPagoService.createOrderPreference).not.toHaveBeenCalled();
     expect(result.reply).toBe("PAGUE COM CARTAO AQUI ABAIXO\nhttps://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(result.reply).not.toContain("Pedido criado");
-    expect(result.reply).not.toContain("Receber Pix");
+    expect(result.reply).not.toContain("Pagar com Pix");
     expect(appSettingsService.getPaymentInstructions).not.toHaveBeenCalled();
   });
 
@@ -350,7 +350,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("e-mail");
     expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith(
       expect.objectContaining({
-        payer: { email: "pix-utv-20260704-000001@unitv.local" }
+        payer: { email: "pix-utv-20260704-000001@unitv.com.br" }
       })
     );
   });
@@ -380,7 +380,7 @@ describe("commercial WhatsApp agent", () => {
     expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith({
       order: expect.objectContaining({ id: order.id, order_number: order.order_number, amount_cents: 2500 }),
       plan: { name: plan.name, slug: plan.slug },
-      payer: { email: "pix-utv-20260704-000001@unitv.local" }
+      payer: { email: "pix-utv-20260704-000001@unitv.com.br" }
     });
     expect(ordersService.updateOrder).toHaveBeenCalledWith(
       order.id,
