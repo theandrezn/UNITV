@@ -39,12 +39,22 @@ export class KnowledgeArticlesRepository {
       return this.getActiveKnowledge();
     }
 
-    const pattern = terms.map((term) => `%${term}%`).join("");
+    const filters = terms.flatMap((term) => {
+      const safeTerm = term.replace(/[^a-zA-Z0-9\u00c0-\u024f_-]/g, "");
+      return safeTerm
+        ? [`title.ilike.%${safeTerm}%`, `category.ilike.%${safeTerm}%`, `content.ilike.%${safeTerm}%`]
+        : [];
+    });
+
+    if (!filters.length) {
+      return this.getActiveKnowledge();
+    }
+
     const { data, error } = await this.supabase
       .from("knowledge_articles")
       .select("*")
       .eq("status", "active")
-      .or(`title.ilike.${pattern},category.ilike.${pattern},content.ilike.${pattern}`)
+      .or(filters.join(","))
       .order("created_at", { ascending: true })
       .limit(8);
 

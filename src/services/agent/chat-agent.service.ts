@@ -83,6 +83,15 @@ export class ChatAgentService {
       };
     }
 
+    if (intent === "free_trial" || isFreeTrialMessage(message)) {
+      return this.handoffToHuman(
+        input,
+        "free_trial_activation",
+        knowledge,
+        "Claro! O teste gratis e de 3 dias. Vou te encaminhar para ativacao do teste agora."
+      );
+    }
+
     if (intent === "ask_price") {
       const plans = await this.plansService.listActivePlans();
       return {
@@ -92,7 +101,7 @@ export class ChatAgentService {
       };
     }
 
-    if (intent === "ask_payment") {
+    if (intent === "ask_payment" || intent === "card_payment") {
       return { reply: await this.appSettingsService.getPaymentInstructions() };
     }
 
@@ -183,7 +192,10 @@ export class ChatAgentService {
     }
 
     if (intent === "technical_support") {
-      const supportKnowledge = knowledge.find((article) => article.category === "technical_support");
+      const preferredCategory = getSupportKnowledgeCategory(message);
+      const supportKnowledge =
+        knowledge.find((article) => article.category === preferredCategory) ||
+        knowledge.find((article) => article.category === "technical_support");
       return {
         reply:
           supportKnowledge?.content ||
@@ -201,7 +213,8 @@ export class ChatAgentService {
   private async handoffToHuman(
     input: CommercialReplyInput,
     reason: string,
-    knowledge: Array<{ category?: string; content?: string }> = []
+    knowledge: Array<{ category?: string; content?: string }> = [],
+    reply = "Vou encaminhar para atendimento humano te ajudar melhor. Enquanto isso, pode me mandar mais detalhes por aqui."
   ): Promise<CommercialReplyResult> {
     await this.agentActionsService.createAgentAction({
       conversation_id: input.conversation.id,
@@ -223,7 +236,7 @@ export class ChatAgentService {
 
     return {
       requiresHuman: true,
-      reply: "Vou encaminhar para atendimento humano te ajudar melhor. Enquanto isso, pode me mandar mais detalhes por aqui."
+      reply
     };
   }
 }
@@ -237,6 +250,26 @@ function formatMoney(priceCents: number, currency = "BRL") {
 
 function formatPlan(plan: { name: string; price_cents: number; currency?: string; duration_days?: number | null }) {
   const duration = plan.duration_days ? ` (${plan.duration_days} dias)` : "";
-  const price = Number(plan.price_cents) > 0 ? formatMoney(plan.price_cents, plan.currency) : "preco sob consulta";
+  const price = Number(plan.price_cents) > 0 ? formatMoney(plan.price_cents, plan.currency) : "gratis";
   return `- ${plan.name}${duration}: ${price}`;
+}
+
+function isFreeTrialMessage(message: string) {
+  return /\b(teste|gratis|gratuito|free trial)\b/i.test(message);
+}
+
+function getSupportKnowledgeCategory(message: string) {
+  if (/\b(video|vídeo|tutorial)\b/i.test(message)) {
+    return "tutorial";
+  }
+
+  if (/\b(codigo|código)\b/i.test(message) && /\b(downloader|instalacao|instalação)\b/i.test(message)) {
+    return "codigo_instalacao";
+  }
+
+  if (/\b(instalar|instalacao|instalação|downloader)\b/i.test(message)) {
+    return "instalacao";
+  }
+
+  return "technical_support";
 }

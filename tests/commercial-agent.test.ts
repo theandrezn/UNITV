@@ -13,7 +13,7 @@ const plan = {
   name: "Plano Mensal",
   slug: "mensal",
   duration_days: 30,
-  price_cents: 3990,
+  price_cents: 2500,
   currency: "BRL"
 };
 
@@ -73,7 +73,7 @@ describe("commercial WhatsApp agent", () => {
 
     expect(plansService.listActivePlans).toHaveBeenCalled();
     expect(result.reply).toContain("Plano Mensal");
-    expect(result.reply).toMatch(/R\$\s*39,90/);
+    expect(result.reply).toMatch(/R\$\s*25,00/);
   });
 
   it("creates an order when the requested plan is clear", async () => {
@@ -116,6 +116,59 @@ describe("commercial WhatsApp agent", () => {
     expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(result.requiresHuman).toBe(true);
     expect(result.reply).toContain("valor ainda precisa ser confirmado");
+  });
+
+  it("creates the six-month order with the official amount", async () => {
+    const { service, ordersService, plansService } = createChatAgent();
+    plansService.findPlanMentionedInText.mockResolvedValueOnce({
+      plan: { ...plan, id: "semestral-id", name: "6 meses", slug: "semestral", duration_days: 180, price_cents: 12000 },
+      plans: []
+    });
+
+    await service.generateCommercialReply({
+      message: "quero o de 6 meses",
+      classification: { intent: "buy_plan", confidence: 0.99, summary: "semestral", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444" },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).toHaveBeenCalledWith(
+      expect.objectContaining({ plan_id: "semestral-id", amount_cents: 12000, status: "pending_payment" })
+    );
+  });
+
+  it("hands a free trial to a human without creating a paid order", async () => {
+    const { service, ordersService, agentActionsService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "tem teste gratis?",
+      classification: { intent: "free_trial", confidence: 0.99, summary: "teste", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444" },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.requiresHuman).toBe(true);
+    expect(result.reply).toContain("3 dias");
+    expect(agentActionsService.createAgentAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human", requires_human_approval: true })
+    );
+  });
+
+  it("returns the configured payment instructions for card payments", async () => {
+    const { service, appSettingsService } = createChatAgent();
+    const result = await service.generateCommercialReply({
+      message: "quero pagar no cartao",
+      classification: { intent: "card_payment", confidence: 0.99, summary: "cartao", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444" },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(appSettingsService.getPaymentInstructions).toHaveBeenCalled();
+    expect(result.reply).toBe("Instrucoes de pagamento cadastradas.");
   });
 
   it("asks for clarification when purchase intent has no clear plan", async () => {
