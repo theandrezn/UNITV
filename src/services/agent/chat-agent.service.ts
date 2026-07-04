@@ -36,6 +36,7 @@ type CommercialReplyResult = {
   requiresHuman?: boolean;
   menu?: WhatsAppMenu;
   sendTextBeforeMenu?: boolean;
+  copyText?: string;
   media?: {
     base64: string;
     mimetype: string;
@@ -364,7 +365,8 @@ export class ChatAgentService {
     if (existingQrCode) {
       return {
         order,
-        reply: formatPixReply(order, existingQrCode, existingTicketUrl)
+        reply: formatPixReply(order, existingQrCode, existingTicketUrl),
+        copyText: existingQrCode
       };
     }
 
@@ -414,6 +416,7 @@ export class ChatAgentService {
       return {
         order,
         reply: formatPixReply(order, pix.qrCode, pix.ticketUrl),
+        copyText: pix.qrCode,
         media: {
           base64: pix.qrCodeBase64,
           mimetype: "image/png",
@@ -569,9 +572,13 @@ function readOrderPlan(order: Record<string, unknown>) {
   return { name: "Plano UNiTV", slug: "unitv" };
 }
 
-function formatPixReply(order: Record<string, unknown>, qrCode: string, ticketUrl: string | null) {
-  const link = ticketUrl ? `\n\nAbrir instrucoes e QR Code:\n${ticketUrl}` : "";
-  return `PIX do pedido ${String(order.order_number)}:\n\nCopia e Cola:\n${qrCode}${link}\n\nA confirmacao e automatica pelo Mercado Pago. Nao precisa enviar comprovante.`;
+function formatPixReply(order: Record<string, unknown>, _qrCode: string, _ticketUrl: string | null) {
+  return [
+    `PIX do pedido ${String(order.order_number)}`,
+    "Vou enviar o Pix Copia e Cola na proxima mensagem para facilitar a copia.",
+    "Toque e segure na proxima mensagem e escolha copiar.",
+    "A confirmacao e automatica pelo Mercado Pago. Nao precisa enviar comprovante."
+  ].join("\n\n");
 }
 
 function formatCardReply(checkoutUrl: string) {

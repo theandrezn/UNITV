@@ -346,7 +346,10 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("000201-pix-copy-paste");
+    expect(result.reply).toContain("proxima mensagem");
+    expect(result.reply).not.toContain("000201-pix-copy-paste");
+    expect(result.copyText).toBe("000201-pix-copy-paste");
+    expect(result.reply).not.toContain("mercadopago.com.br/payments");
     expect(result.reply).not.toContain("e-mail");
     expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -393,7 +396,10 @@ describe("commercial WhatsApp agent", () => {
         })
       })
     );
-    expect(result.reply).toContain("000201-pix-copy-paste");
+    expect(result.reply).toContain("proxima mensagem");
+    expect(result.reply).not.toContain("000201-pix-copy-paste");
+    expect(result.copyText).toBe("000201-pix-copy-paste");
+    expect(result.reply).not.toContain("mercadopago.com.br/payments");
     expect(result.reply).toContain("confirmacao e automatica");
     expect(result.media).toEqual(
       expect.objectContaining({
@@ -429,7 +435,9 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(mercadoPagoService.createPixPayment).not.toHaveBeenCalled();
-    expect(result.reply).toContain("existing-pix-copy-paste");
+    expect(result.reply).not.toContain("existing-pix-copy-paste");
+    expect(result.copyText).toBe("existing-pix-copy-paste");
+    expect(result.reply).not.toContain("mercadopago.com.br/payments");
   });
 
   it("asks for clarification when purchase intent has no clear plan", async () => {
@@ -612,6 +620,7 @@ describe("commercial WhatsApp agent", () => {
     const chatAgent = {
       generateCommercialReply: vi.fn(async () => ({
         reply: "PIX do pedido UTV-1:\n000201-pix-copy-paste",
+        copyText: "000201-pix-copy-paste",
         media: {
           base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
           mimetype: "image/png",
@@ -672,6 +681,10 @@ describe("commercial WhatsApp agent", () => {
         base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
       })
     );
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "000201-pix-copy-paste"
+    });
     expect(result.status).toBe("processed");
   });
 

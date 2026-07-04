@@ -150,6 +150,7 @@ export class WhatsappMessageService {
       reply,
       classification,
       media: commercialReply.media,
+      copyText: commercialReply.copyText,
       menu: commercialReply.menu,
       sendTextBeforeMenu: commercialReply.sendTextBeforeMenu
     });
@@ -163,6 +164,7 @@ export class WhatsappMessageService {
     reply,
     classification,
     media,
+    copyText,
     menu,
     sendTextBeforeMenu
   }: {
@@ -173,6 +175,7 @@ export class WhatsappMessageService {
     reply: string;
     classification: Record<string, unknown>;
     media?: { base64: string; mimetype: string; fileName: string; caption: string };
+    copyText?: string;
     menu?: WhatsAppMenu;
     sendTextBeforeMenu?: boolean;
   }) {
@@ -209,6 +212,11 @@ export class WhatsappMessageService {
     } else {
       sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
     }
+    let copyTextSendResult: unknown = null;
+    if (copyText) {
+      copyTextSendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: copyText });
+    }
+
     let mediaSendResult: unknown = null;
     if (media) {
       try {
@@ -235,6 +243,7 @@ export class WhatsappMessageService {
         webhookEventId,
         classification,
         sendResult,
+        copyTextSendResult,
         mediaSendResult,
         media: media ? { mimetype: media.mimetype, fileName: media.fileName, caption: media.caption } : null,
         menu: menu ? { id: menu.id, title: menu.title } : null
