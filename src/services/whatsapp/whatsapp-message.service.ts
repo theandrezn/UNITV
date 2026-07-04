@@ -89,11 +89,40 @@ export class WhatsappMessageService {
       return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification: { intent: "receipt_sent" } });
     }
 
-    const classification = await this.intentClassifier.classify({ message: message.text });
+    let currentCustomer = customer;
+    let classification;
+    if (conversation.metadata?.awaiting_pix_email) {
+      const email = extractEmail(message.text);
+      if (!email) {
+        return this.sendAndStoreAssistantReply({
+          webhookEventId,
+          message,
+          customer,
+          conversation,
+          reply: "Envie um e-mail valido para eu gerar seu Pix Copia e Cola.",
+          classification: { intent: "pix_payment", confidence: 1, summary: "invalid_payer_email" }
+        });
+      }
+
+      currentCustomer = await this.customersRepository.updateCustomer(customer.id, { email });
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
+        ...(conversation.metadata || {}),
+        awaiting_pix_email: false,
+        awaiting_pix_order_id: null
+      });
+      classification = {
+        intent: "pix_payment" as const,
+        confidence: 1,
+        summary: "E-mail recebido para gerar Pix.",
+        suggested_reply: ""
+      };
+    } else {
+      classification = await this.intentClassifier.classify({ message: message.text });
+    }
     const commercialReply = await this.chatAgent.generateCommercialReply({
       message: message.text,
       classification,
-      customer,
+      customer: currentCustomer,
       conversation,
       webhookEventId
     });
@@ -119,7 +148,24 @@ export class WhatsappMessageService {
       });
     }
 
-    return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification });
+    if (commercialReply.awaitingPixEmail) {
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
+        ...(conversation.metadata || {}),
+        awaiting_pix_email: true,
+        awaiting_pix_order_id: commercialReply.order?.id || null,
+        awaiting_pix_requested_at: new Date().toISOString()
+      });
+    }
+
+    return this.sendAndStoreAssistantReply({
+      webhookEventId,
+      message,
+      customer: currentCustomer,
+      conversation,
+      reply,
+      classification,
+      media: commercialReply.media
+    });
   }
 
   private async sendAndStoreAssistantReply({
@@ -128,7 +174,8 @@ export class WhatsappMessageService {
     customer,
     conversation,
     reply,
-    classification
+    classification,
+    media
   }: {
     webhookEventId: string;
     message: IncomingEvolutionMessage;
@@ -136,11 +183,26 @@ export class WhatsappMessageService {
     conversation: { id: string };
     reply: string;
     classification: Record<string, unknown>;
+    media?: { base64: string; mimetype: string; fileName: string; caption: string };
   }) {
     const sendResult = await this.evolutionService.sendTextMessage({
       phone: message.phone,
       text: reply
     });
+    let mediaSendResult: unknown = null;
+    if (media) {
+      try {
+        mediaSendResult = await this.evolutionService.sendMediaMessage({ phone: message.phone, ...media });
+      } catch (error) {
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "evolution_pix_qr_send_failed",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: { webhookEventId, error: error instanceof Error ? error.message : "unknown_error" }
+        });
+      }
+    }
 
     await this.messagesRepository.createMessage({
       conversation_id: conversation.id,
@@ -152,7 +214,9 @@ export class WhatsappMessageService {
       metadata: {
         webhookEventId,
         classification,
-        sendResult
+        sendResult,
+        mediaSendResult,
+        media: media ? { mimetype: media.mimetype, fileName: media.fileName, caption: media.caption } : null
       }
     });
 
@@ -253,4 +317,9 @@ function isReceiptMessage(message: IncomingEvolutionMessage) {
   const receiptMedia = message.hasMedia && ["imageMessage", "documentMessage"].includes(message.messageType);
 
   return receiptText || receiptMedia;
+}
+
+function extractEmail(message: string) {
+  const match = message.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  return match?.[0].toLowerCase() || null;
 }

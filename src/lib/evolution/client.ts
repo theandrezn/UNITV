@@ -20,6 +20,14 @@ type SendTextMessageInput = {
   text: string;
 };
 
+type SendMediaMessageInput = {
+  phone: string;
+  base64: string;
+  mimetype: string;
+  fileName: string;
+  caption: string;
+};
+
 export class EvolutionClient {
   private readonly apiUrl: string;
   private readonly apiKey: string;
@@ -56,6 +64,31 @@ export class EvolutionClient {
     if (!response.ok) {
       const body = await response.text();
       throw new Error(`Evolution sendTextMessage failed: ${response.status} ${body}`);
+    }
+
+    return response.json().catch(() => ({}));
+  }
+
+  async sendMediaMessage({ phone, base64, mimetype, fileName, caption }: SendMediaMessageInput) {
+    const response = await fetch(`${this.apiUrl}/message/sendMedia/${encodeURIComponent(this.instanceName)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: this.apiKey
+      },
+      body: JSON.stringify({
+        number: normalizePhone(phone),
+        mediatype: "image",
+        mimetype,
+        caption,
+        media: base64.replace(/^data:[^;]+;base64,/, ""),
+        fileName
+      })
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Evolution sendMediaMessage failed: ${response.status} ${body}`);
     }
 
     return response.json().catch(() => ({}));

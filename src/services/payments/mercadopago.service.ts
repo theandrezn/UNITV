@@ -23,16 +23,37 @@ const paymentResponseSchema = z.object({
   metadata: z.record(z.unknown()).default({})
 }).passthrough();
 
+const pixPaymentResponseSchema = z
+  .object({
+    id: z.union([z.string(), z.number()]),
+    status: z.string().min(1),
+    date_of_expiration: z.string().nullable().optional(),
+    point_of_interaction: z.object({
+      transaction_data: z.object({
+        qr_code: z.string().min(1),
+        qr_code_base64: z.string().min(1),
+        ticket_url: z.string().url()
+      })
+    })
+  })
+  .passthrough();
+
+type MercadoPagoOrderInput = {
+  id: string;
+  order_number: string;
+  customer_id: string;
+  plan_id: string;
+  amount_cents: number;
+  currency: string;
+};
+
 type CreateOrderPreferenceInput = {
-  order: {
-    id: string;
-    order_number: string;
-    customer_id: string;
-    plan_id: string;
-    amount_cents: number;
-    currency: string;
-  };
+  order: MercadoPagoOrderInput;
   plan: { name: string; slug: string };
+};
+
+type CreatePixPaymentInput = CreateOrderPreferenceInput & {
+  payer: { email: string };
 };
 
 export class MercadoPagoService {
@@ -74,6 +95,41 @@ export class MercadoPagoService {
     );
 
     return { id: response.id, checkoutUrl: response.init_point };
+  }
+
+  async createPixPayment(input: CreatePixPaymentInput) {
+    const response = pixPaymentResponseSchema.parse(
+      await this.client.requestJson("/v1/payments", {
+        method: "POST",
+        headers: { "x-idempotency-key": input.order.id },
+        body: JSON.stringify({
+          transaction_amount: input.order.amount_cents / 100,
+          description: `UNiTV - ${input.plan.name}`,
+          payment_method_id: "pix",
+          external_reference: input.order.order_number,
+          notification_url: this.webhookUrl,
+          payer: { email: input.payer.email },
+          metadata: {
+            order_id: input.order.id,
+            order_number: input.order.order_number,
+            customer_id: input.order.customer_id,
+            plan_id: input.order.plan_id,
+            plan_slug: input.plan.slug
+          }
+        })
+      })
+    );
+    const transactionData = response.point_of_interaction.transaction_data;
+
+    return {
+      id: String(response.id),
+      status: response.status,
+      qrCode: transactionData.qr_code,
+      qrCodeBase64: transactionData.qr_code_base64,
+      ticketUrl: transactionData.ticket_url,
+      expiresAt: response.date_of_expiration || null,
+      rawPayload: response
+    };
   }
 
   async getPayment(paymentId: string) {

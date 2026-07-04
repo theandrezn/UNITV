@@ -9,6 +9,7 @@ export const intentSchema = z.enum([
   "ask_price",
   "ask_payment",
   "card_payment",
+  "pix_payment",
   "free_trial",
   "support",
   "activation_help",
@@ -43,7 +44,7 @@ export class IntentClassifierService {
         {
           role: "system",
           content:
-            "Classifique a intencao do cliente UniTV usando apenas: greeting, buy_plan, renew_plan, ask_price, ask_payment, card_payment, free_trial, receipt_sent, activation_help, technical_support, human_help, unknown. Use card_payment quando pedir pagamento por cartao ou link de pagamento. Use free_trial quando pedir teste gratis. Responda somente JSON valido com intent, confidence, summary e suggested_reply. Nunca ofereca codigo de ativacao."
+            "Classifique a intencao do cliente UniTV usando apenas: greeting, buy_plan, renew_plan, ask_price, ask_payment, card_payment, pix_payment, free_trial, receipt_sent, activation_help, technical_support, human_help, unknown. Use card_payment quando pedir pagamento por cartao ou link de pagamento. Use pix_payment quando pedir Pix, chave Pix, QR Code ou Pix Copia e Cola. Use free_trial quando pedir teste gratis. Responda somente JSON valido com intent, confidence, summary e suggested_reply. Nunca ofereca codigo de ativacao."
         },
         {
           role: "user",

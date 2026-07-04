@@ -17,7 +17,7 @@ const LOW_CONFIDENCE_REPLY = "Entendi. Voce quer comprar um plano, renovar um ac
 type CommercialReplyInput = {
   message: string;
   classification: IntentClassification;
-  customer: { id: string };
+  customer: { id: string; email?: string | null };
   conversation: { id: string; metadata?: Record<string, unknown> | null };
   webhookEventId: string;
 };
@@ -26,6 +26,13 @@ type CommercialReplyResult = {
   reply: string;
   order?: Record<string, unknown>;
   requiresHuman?: boolean;
+  awaitingPixEmail?: boolean;
+  media?: {
+    base64: string;
+    mimetype: string;
+    fileName: string;
+    caption: string;
+  };
 };
 
 export class ChatAgentService {
@@ -103,25 +110,28 @@ export class ChatAgentService {
       };
     }
 
+    if (intent === "pix_payment" || isPixPaymentMessage(message)) {
+      return this.generatePixPayment(input, knowledge);
+    }
+
     if (intent === "card_payment") {
       const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
       const checkoutUrl = readOrderCheckoutUrl(order);
-      const pixInstructions = await this.appSettingsService.getPixInstructions();
 
       if (!checkoutUrl) {
         return this.handoffToHuman(
           input,
           "checkout_link_missing",
           knowledge,
-          `${pixInstructions}\n\nAinda nao encontrei um link de cartao para seu pedido. Vou encaminhar para atendimento humano gerar o link correto.`
+          "Ainda nao encontrei um link de cartao para seu pedido. Vou encaminhar para atendimento humano gerar o link correto."
         );
       }
 
-      return { reply: `${pixInstructions}\n\nCartao:\n${checkoutUrl}` };
+      return { reply: `Cartao:\n${checkoutUrl}` };
     }
 
     if (intent === "ask_payment") {
-      return { reply: await this.appSettingsService.getPaymentInstructions() };
+      return { reply: "Voce pode pagar por Pix ou cartao. Para Pix, responda PIX. Para cartao, responda CARTAO." };
     }
 
     if (intent === "buy_plan" || intent === "renew_plan") {
@@ -243,13 +253,9 @@ export class ChatAgentService {
         metadata: updatedMetadata
       });
 
-      const paymentInstructions = `${await this.appSettingsService.getPixInstructions()}\n\nCartao:\n${preference.checkoutUrl}`;
-      const receiptHint = /comprovante/i.test(paymentInstructions)
-        ? ""
-        : "\n\nDepois envie o comprovante por aqui. A liberacao do codigo sera feita somente apos conferencia manual.";
       return {
         order,
-        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\n${paymentInstructions}${receiptHint}`
+        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\nCartao:\n${preference.checkoutUrl}\n\nPara gerar um Pix Copia e Cola com confirmacao automatica, responda PIX.`
       };
     }
 
@@ -270,6 +276,111 @@ export class ChatAgentService {
     }
 
     return { reply: this.generateReply(input) };
+  }
+
+  private async generatePixPayment(
+    input: CommercialReplyInput,
+    knowledge: Array<{ category?: string; content?: string }>
+  ): Promise<CommercialReplyResult> {
+    const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+    if (!order) {
+      const plans = await this.plansService.listActivePlans();
+      return {
+        reply: plans.length
+          ? `Para gerar o Pix, primeiro escolha o plano:\n${plans.map(formatPlan).join("\n")}`
+          : "Ainda nao encontrei um pedido aberto. Vou encaminhar para atendimento humano."
+      };
+    }
+
+    const metadata = readOrderMetadata(order);
+    const existingQrCode = readMetadataString(metadata, "mercado_pago_pix_qr_code");
+    const existingTicketUrl = readMetadataString(metadata, "mercado_pago_pix_ticket_url");
+    if (existingQrCode) {
+      return {
+        order,
+        reply: formatPixReply(order, existingQrCode, existingTicketUrl)
+      };
+    }
+
+    if (!input.customer.email) {
+      return {
+        order,
+        awaitingPixEmail: true,
+        reply: "Para gerar seu Pix Copia e Cola com confirmacao automatica, envie seu e-mail. Ele e exigido pelo Mercado Pago para criar a cobranca."
+      };
+    }
+
+    const plan = readOrderPlan(order);
+    if (!plan || !order.plan_id) {
+      return this.handoffToHuman(
+        input,
+        "pix_order_plan_missing",
+        knowledge,
+        "Encontrei seu pedido, mas nao consegui identificar o plano para gerar o Pix. Vou encaminhar para atendimento humano."
+      );
+    }
+
+    try {
+      const pix = await this.mercadoPagoService.createPixPayment({
+        order: {
+          id: String(order.id),
+          order_number: String(order.order_number),
+          customer_id: String(order.customer_id),
+          plan_id: String(order.plan_id),
+          amount_cents: Number(order.amount_cents),
+          currency: String(order.currency || "BRL")
+        },
+        plan,
+        payer: { email: input.customer.email }
+      });
+
+      await this.ordersService.updateOrder(String(order.id), {
+        payment_provider: "mercado_pago",
+        payment_reference: pix.id,
+        metadata: {
+          ...metadata,
+          mercado_pago_pix_payment_id: pix.id,
+          mercado_pago_pix_qr_code: pix.qrCode,
+          mercado_pago_pix_ticket_url: pix.ticketUrl,
+          mercado_pago_pix_expires_at: pix.expiresAt
+        }
+      });
+      await this.auditService.createAuditLog({
+        actor_type: "ai_agent",
+        action: "mercado_pago_pix_created",
+        entity_type: "orders",
+        entity_id: String(order.id),
+        metadata: { payment_id: pix.id, webhookEventId: input.webhookEventId }
+      });
+
+      return {
+        order,
+        reply: formatPixReply(order, pix.qrCode, pix.ticketUrl),
+        media: {
+          base64: pix.qrCodeBase64,
+          mimetype: "image/png",
+          fileName: `pix-${String(order.order_number)}.png`,
+          caption: `QR Code Pix do pedido ${String(order.order_number)}`
+        }
+      };
+    } catch (error) {
+      await this.auditService.createAuditLog({
+        actor_type: "ai_agent",
+        action: "mercado_pago_pix_creation_failed",
+        entity_type: "orders",
+        entity_id: String(order.id),
+        metadata: {
+          webhookEventId: input.webhookEventId,
+          error: error instanceof Error ? error.message : "unknown_error"
+        }
+      });
+      return this.handoffToHuman(
+        input,
+        "mercado_pago_pix_creation_failed",
+        knowledge,
+        `Seu pedido ${String(order.order_number)} esta aberto, mas nao consegui gerar o Pix agora. Vou encaminhar para atendimento humano.`
+      );
+    }
   }
 
   private async handoffToHuman(
@@ -320,6 +431,10 @@ function isFreeTrialMessage(message: string) {
   return /\b(teste|gratis|gratuito|free trial)\b/i.test(message);
 }
 
+function isPixPaymentMessage(message: string) {
+  return /\b(pix|chave pix|copia e cola|qr code)\b/i.test(message);
+}
+
 function getSupportKnowledgeCategory(message: string) {
   if (/\b(video|vídeo|tutorial)\b/i.test(message)) {
     return "tutorial";
@@ -347,4 +462,25 @@ function readOrderMetadata(order: Record<string, unknown> | null) {
 function readOrderCheckoutUrl(order: Record<string, unknown> | null) {
   const checkoutUrl = readOrderMetadata(order).mercado_pago_checkout_url;
   return typeof checkoutUrl === "string" && checkoutUrl ? checkoutUrl : undefined;
+}
+
+function readMetadataString(metadata: Record<string, unknown>, key: string) {
+  const value = metadata[key];
+  return typeof value === "string" && value ? value : null;
+}
+
+function readOrderPlan(order: Record<string, unknown>) {
+  const plan = order.plans;
+  if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+    return null;
+  }
+
+  const name = (plan as { name?: unknown }).name;
+  const slug = (plan as { slug?: unknown }).slug;
+  return typeof name === "string" && name && typeof slug === "string" && slug ? { name, slug } : null;
+}
+
+function formatPixReply(order: Record<string, unknown>, qrCode: string, ticketUrl: string | null) {
+  const link = ticketUrl ? `\n\nAbrir instrucoes e QR Code:\n${ticketUrl}` : "";
+  return `PIX do pedido ${String(order.order_number)}:\n\nCopia e Cola:\n${qrCode}${link}\n\nA confirmacao e automatica pelo Mercado Pago. Nao precisa enviar comprovante.`;
 }

@@ -25,4 +25,9 @@ export class CustomersRepository {
       .single();
     return assertSupabaseSuccess(customer, error);
   }
+
+  async updateCustomer(id: string, data: Partial<Customer>) {
+    const { data: customer, error } = await this.supabase.from("customers").update(data).eq("id", id).select("*").single();
+    return assertSupabaseSuccess(customer, error);
+  }
 }

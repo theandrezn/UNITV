@@ -8,6 +8,16 @@ export class EvolutionService {
     return this.evolutionClient.sendTextMessage(input);
   }
 
+  sendMediaMessage(input: {
+    phone: string;
+    base64: string;
+    mimetype: string;
+    fileName: string;
+    caption: string;
+  }) {
+    return this.evolutionClient.sendMediaMessage(input);
+  }
+
   getInstanceStatus() {
     return this.evolutionClient.getInstanceStatus();
   }

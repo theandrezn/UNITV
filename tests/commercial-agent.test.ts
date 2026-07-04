@@ -47,6 +47,15 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
     createOrderPreference: vi.fn(async () => ({
       id: "preference-id",
       checkoutUrl: "https://www.mercadopago.com.br/checkout/dynamic-order-link"
+    })),
+    createPixPayment: vi.fn(async () => ({
+      id: "pix-payment-id",
+      status: "pending",
+      qrCode: "000201-pix-copy-paste",
+      qrCodeBase64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+      ticketUrl: "https://www.mercadopago.com.br/payments/pix-payment-id/ticket",
+      expiresAt: "2026-07-05T18:00:00.000Z",
+      rawPayload: { id: "pix-payment-id", status: "pending" }
     }))
   };
 
@@ -127,8 +136,9 @@ describe("commercial WhatsApp agent", () => {
         })
       })
     );
-    expect(appSettingsService.getPixInstructions).toHaveBeenCalled();
+    expect(appSettingsService.getPixInstructions).not.toHaveBeenCalled();
     expect(result.reply).toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
+    expect(result.reply).toContain("responda PIX");
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
   });
 
@@ -225,9 +235,112 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(appSettingsService.getPixInstructions).toHaveBeenCalled();
+    expect(appSettingsService.getPixInstructions).not.toHaveBeenCalled();
     expect(result.reply).toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(appSettingsService.getPaymentInstructions).not.toHaveBeenCalled();
+  });
+
+  it("asks for the payer email before creating a dynamic Pix charge", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000001",
+      customer_id: "44444444-4444-4444-8444-444444444444",
+      plan_id: plan.id,
+      amount_cents: 2500,
+      currency: "BRL",
+      metadata: {},
+      plans: { name: plan.name, slug: plan.slug }
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "me manda a chave pix",
+      classification: { intent: "pix_payment", confidence: 0.99, summary: "pix", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444", email: null },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.awaitingPixEmail).toBe(true);
+    expect(result.reply).toContain("e-mail");
+    expect(mercadoPagoService.createPixPayment).not.toHaveBeenCalled();
+  });
+
+  it("creates a dynamic Pix charge and returns copy-paste plus QR media", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    const order = {
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000001",
+      customer_id: "44444444-4444-4444-8444-444444444444",
+      plan_id: plan.id,
+      amount_cents: 2500,
+      currency: "BRL",
+      metadata: { source: "whatsapp_agent" },
+      plans: { name: plan.name, slug: plan.slug }
+    };
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce(order);
+
+    const result = await service.generateCommercialReply({
+      message: "quero pagar no pix",
+      classification: { intent: "pix_payment", confidence: 0.99, summary: "pix", suggested_reply: "" },
+      customer: { id: order.customer_id, email: "cliente@example.com" },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith({
+      order: expect.objectContaining({ id: order.id, order_number: order.order_number, amount_cents: 2500 }),
+      plan: { name: plan.name, slug: plan.slug },
+      payer: { email: "cliente@example.com" }
+    });
+    expect(ordersService.updateOrder).toHaveBeenCalledWith(
+      order.id,
+      expect.objectContaining({
+        payment_provider: "mercado_pago",
+        payment_reference: "pix-payment-id",
+        metadata: expect.objectContaining({
+          mercado_pago_pix_payment_id: "pix-payment-id",
+          mercado_pago_pix_qr_code: "000201-pix-copy-paste"
+        })
+      })
+    );
+    expect(result.reply).toContain("000201-pix-copy-paste");
+    expect(result.reply).toContain("confirmacao e automatica");
+    expect(result.media).toEqual(
+      expect.objectContaining({
+        base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+        mimetype: "image/png"
+      })
+    );
+  });
+
+  it("reuses an existing Pix charge instead of creating a duplicate", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000001",
+      customer_id: "44444444-4444-4444-8444-444444444444",
+      plan_id: plan.id,
+      amount_cents: 2500,
+      currency: "BRL",
+      metadata: {
+        mercado_pago_pix_payment_id: "existing-pix-id",
+        mercado_pago_pix_qr_code: "existing-pix-copy-paste",
+        mercado_pago_pix_ticket_url: "https://www.mercadopago.com.br/payments/existing-pix-id/ticket"
+      },
+      plans: { name: plan.name, slug: plan.slug }
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "manda o pix de novo",
+      classification: { intent: "pix_payment", confidence: 0.99, summary: "pix", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444", email: "cliente@example.com" },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(mercadoPagoService.createPixPayment).not.toHaveBeenCalled();
+    expect(result.reply).toContain("existing-pix-copy-paste");
   });
 
   it("asks for clarification when purchase intent has no clear plan", async () => {
@@ -351,6 +464,95 @@ describe("commercial WhatsApp agent", () => {
     const assistantMessage = messages.find((message) => message.role === "assistant");
     expect(String(assistantMessage?.content)).toContain("Recebi o comprovante");
     expect(String(assistantMessage?.content).toLowerCase()).not.toContain("codigo");
+  });
+
+  it("collects a pending Pix email and sends the generated QR image", async () => {
+    const customersRepository = {
+      upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", email: null })),
+      updateCustomer: vi.fn(async (_id, data) => ({ id: "customer-id", ...data }))
+    };
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({
+        id: "conversation-id",
+        metadata: { awaiting_pix_email: true, awaiting_pix_order_id: "order-id" }
+      })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+    };
+    const intentClassifier = { classify: vi.fn() };
+    const chatAgent = {
+      generateCommercialReply: vi.fn(async () => ({
+        reply: "PIX do pedido UTV-1:\n000201-pix-copy-paste",
+        media: {
+          base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
+          mimetype: "image/png",
+          fileName: "pix-UTV-1.png",
+          caption: "QR Code Pix do pedido UTV-1"
+        }
+      }))
+    };
+    const evolutionService = {
+      sendTextMessage: vi.fn(async () => ({ sent: true })),
+      sendMediaMessage: vi.fn(async () => ({ sent: true }))
+    };
+
+    const service = new WhatsappMessageService(
+      customersRepository as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "email-message-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "cliente@example.com",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(customersRepository.updateCustomer).toHaveBeenCalledWith("customer-id", { email: "cliente@example.com" });
+    expect(intentClassifier.classify).not.toHaveBeenCalled();
+    expect(chatAgent.generateCommercialReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        classification: expect.objectContaining({ intent: "pix_payment" }),
+        customer: expect.objectContaining({ email: "cliente@example.com" })
+      })
+    );
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ awaiting_pix_email: false, awaiting_pix_order_id: null })
+    );
+    expect(evolutionService.sendMediaMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phone: "5511999998888",
+        mimetype: "image/png",
+        base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"
+      })
+    );
+    expect(result.status).toBe("processed");
   });
 
   it("does not process duplicated messages", async () => {
