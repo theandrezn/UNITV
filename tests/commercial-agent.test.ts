@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { ChatAgentService } from "@/services/agent/chat-agent.service";
+import { PlansService } from "@/services/plans.service";
 import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
 
 const plan = {
@@ -154,6 +155,19 @@ describe("commercial WhatsApp agent", () => {
 
     expect(source).not.toMatch(/R\$\s*\d/);
     expect(source).not.toContain("39,90");
+  });
+
+  it("matches the most specific plan mention", async () => {
+    const service = new PlansService({
+      listActivePlans: vi.fn(async () => [
+        { ...plan, id: "generic", name: "Teste", slug: "teste", price_cents: 0 },
+        { ...plan, id: "specific", name: "Plano Teste Fase 3", slug: "fase3-teste", price_cents: 100 }
+      ])
+    } as never);
+
+    const result = await service.findPlanMentionedInText("quero comprar o plano teste fase 3");
+
+    expect(result.plan?.id).toBe("specific");
   });
 
   it("handles receipt messages without releasing activation codes", async () => {
