@@ -29,7 +29,7 @@ type MenuSelection = {
 
 const mainRows: WhatsAppMenuRow[] = [
   { title: "Ver planos", description: "Conheca valores e duracoes", rowId: "menu:main:view_plans" },
-  { title: "Fazer teste gratis", description: "Teste a UNiTV por 3 dias", rowId: "menu:main:free_trial" },
+  { title: "Fazer teste grátis", description: "Teste a UNiTV por 3 dias", rowId: "menu:main:free_trial" },
   { title: "Comprar agora", description: "Escolha seu plano", rowId: "menu:main:buy_now" },
   { title: "Aprender a instalar", description: "Receba o passo a passo", rowId: "menu:main:install" },
   { title: "Enviar comprovante", description: "Envie imagem ou PDF", rowId: "menu:main:receipt" },
@@ -40,10 +40,13 @@ export const MAIN_MENU: WhatsAppMenu = {
   id: "main",
   title: "Como posso te ajudar?",
   description: "Escolha uma opcao abaixo",
-  buttonText: "Ver opcoes",
+  buttonText: "Ver opções",
   footerText: "UNiTV",
   sections: [{ title: "Atendimento", rows: mainRows }],
-  fallbackText: formatFallback("O que voce quer fazer?", mainRows)
+  fallbackText: formatFallback(
+    "Olá! Bem-vindo à melhor plataforma de filmes e canais de todo o Brasil 🧡\n\nO que você quer hoje?",
+    mainRows
+  )
 };
 
 const deviceRows: WhatsAppMenuRow[] = [
@@ -67,7 +70,7 @@ export const DEVICE_MENU: WhatsAppMenu = {
 
 const continuationRows: WhatsAppMenuRow[] = [
   { title: "Ver planos", description: "Conheca valores e duracoes", rowId: "menu:continue:view_plans" },
-  { title: "Fazer teste gratis", description: "Teste a UNiTV por 3 dias", rowId: "menu:continue:free_trial" },
+  { title: "Fazer teste grátis", description: "Teste a UNiTV por 3 dias", rowId: "menu:continue:free_trial" },
   { title: "Comprar agora", description: "Escolha seu plano", rowId: "menu:continue:buy_now" },
   { title: "Falar com especialista", description: "Atendimento humano", rowId: "menu:continue:specialist" }
 ];
@@ -78,13 +81,13 @@ export const CONTINUATION_MENU: WhatsAppMenu = {
   description: "Escolha o proximo passo",
   buttonText: "Continuar",
   footerText: "UNiTV",
-  sections: [{ title: "Proximo passo", rows: continuationRows }],
-  fallbackText: formatFallback("O que voce quer fazer agora?", continuationRows)
+  sections: [{ title: "Próximo passo", rows: continuationRows }],
+  fallbackText: formatFallback("O que você quer fazer agora?", continuationRows)
 };
 
 const paymentRows: WhatsAppMenuRow[] = [
   { title: "Pagar com Pix", description: "QR Code e Copia e Cola", rowId: "menu:payment:pix" },
-  { title: "Pagar com cartao", description: "Link seguro do Mercado Pago", rowId: "menu:payment:card" }
+  { title: "Pagar com cartão", description: "Link seguro do Mercado Pago", rowId: "menu:payment:card" }
 ];
 
 export const PAYMENT_MENU: WhatsAppMenu = {

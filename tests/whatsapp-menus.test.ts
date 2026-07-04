@@ -22,7 +22,7 @@ describe("WhatsApp interactive menus", () => {
 
     expect(labels).toEqual([
       "Ver planos",
-      "Fazer teste gratis",
+      "Fazer teste grátis",
       "Comprar agora",
       "Aprender a instalar",
       "Enviar comprovante",

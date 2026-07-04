@@ -173,7 +173,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("Cartao:");
     expect(result.reply).not.toContain("Para gerar o Pix Copia e Cola");
     expect(result.reply).toContain("Pagar com Pix");
-    expect(result.reply).toContain("Pagar com cartao");
+    expect(result.reply).toContain("Pagar com cartão");
     expect(result.menu).toEqual(expect.objectContaining({ id: "payment" }));
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
   });
