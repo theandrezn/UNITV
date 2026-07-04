@@ -20,7 +20,7 @@ export class OrdersRepository {
   async findOrderByOrderNumber(orderNumber: string) {
     const { data, error } = await this.supabase
       .from("orders")
-      .select("*")
+      .select("*, plans(slug, name)")
       .eq("order_number", orderNumber)
       .maybeSingle();
     return assertSupabaseSuccess(data, error);

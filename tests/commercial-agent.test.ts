@@ -29,7 +29,8 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
     searchKnowledge: vi.fn(async () => [])
   };
   const ordersService = {
-    createOrder: vi.fn(async (data) => ({ ...data, id: "33333333-3333-4333-8333-333333333333", order_number: "UTV-20260704-000001" }))
+    createOrder: vi.fn(async (data) => ({ ...data, id: "33333333-3333-4333-8333-333333333333", order_number: "UTV-20260704-000001" })),
+    findLatestOpenOrderByCustomerId: vi.fn(async () => null as Record<string, unknown> | null)
   };
   const appSettingsService = {
     getPaymentInstructions: vi.fn(async () => "Instrucoes de pagamento cadastradas.")
@@ -77,7 +78,7 @@ describe("commercial WhatsApp agent", () => {
   });
 
   it("creates an order when the requested plan is clear", async () => {
-    const { service, ordersService } = createChatAgent();
+    const { service, ordersService, appSettingsService } = createChatAgent();
 
     const result = await service.generateCommercialReply({
       message: "quero comprar o plano mensal",
@@ -95,6 +96,7 @@ describe("commercial WhatsApp agent", () => {
       })
     );
     expect(result.reply).toContain("UTV-20260704-000001");
+    expect(appSettingsService.getPaymentInstructions).toHaveBeenCalledWith("mensal");
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
   });
 
@@ -158,7 +160,11 @@ describe("commercial WhatsApp agent", () => {
   });
 
   it("returns the configured payment instructions for card payments", async () => {
-    const { service, appSettingsService } = createChatAgent();
+    const { service, ordersService, appSettingsService } = createChatAgent();
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      plans: { slug: "mensal", name: "Mensal" }
+    });
     const result = await service.generateCommercialReply({
       message: "quero pagar no cartao",
       classification: { intent: "card_payment", confidence: 0.99, summary: "cartao", suggested_reply: "" },
@@ -167,7 +173,7 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(appSettingsService.getPaymentInstructions).toHaveBeenCalled();
+    expect(appSettingsService.getPaymentInstructions).toHaveBeenCalledWith("mensal");
     expect(result.reply).toBe("Instrucoes de pagamento cadastradas.");
   });
 

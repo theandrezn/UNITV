@@ -101,7 +101,13 @@ export class ChatAgentService {
       };
     }
 
-    if (intent === "ask_payment" || intent === "card_payment") {
+    if (intent === "card_payment") {
+      const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+      const planSlug = readOrderPlanSlug(order);
+      return { reply: await this.appSettingsService.getPaymentInstructions(planSlug) };
+    }
+
+    if (intent === "ask_payment") {
       return { reply: await this.appSettingsService.getPaymentInstructions() };
     }
 
@@ -181,7 +187,7 @@ export class ChatAgentService {
         }
       });
 
-      const paymentInstructions = await this.appSettingsService.getPaymentInstructions();
+      const paymentInstructions = await this.appSettingsService.getPaymentInstructions(String(plan.slug));
       const receiptHint = /comprovante/i.test(paymentInstructions)
         ? ""
         : "\n\nDepois envie o comprovante por aqui. A liberacao do codigo sera feita somente apos conferencia manual.";
@@ -272,4 +278,13 @@ function getSupportKnowledgeCategory(message: string) {
   }
 
   return "technical_support";
+}
+
+function readOrderPlanSlug(order: Record<string, unknown> | null) {
+  if (!order || !order.plans || typeof order.plans !== "object" || Array.isArray(order.plans)) {
+    return undefined;
+  }
+
+  const slug = (order.plans as { slug?: unknown }).slug;
+  return typeof slug === "string" && slug ? slug : undefined;
 }
