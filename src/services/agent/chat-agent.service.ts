@@ -173,9 +173,12 @@ export class ChatAgentService {
       });
 
       const paymentInstructions = await this.appSettingsService.getPaymentInstructions();
+      const receiptHint = /comprovante/i.test(paymentInstructions)
+        ? ""
+        : "\n\nDepois envie o comprovante por aqui. A liberacao do codigo sera feita somente apos conferencia manual.";
       return {
         order,
-        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\n${paymentInstructions}\n\nDepois envie o comprovante por aqui. A liberacao do codigo sera feita somente apos conferencia manual.`
+        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\n${paymentInstructions}${receiptHint}`
       };
     }
 
