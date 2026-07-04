@@ -688,7 +688,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.status).toBe("processed");
   });
 
-  it("interprets a clicked menu row before AI and sends interactive buttons", async () => {
+  it("interprets a clicked menu row before AI and sends a universal text menu", async () => {
     const customersRepository = {
       upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", email: null }))
     };
@@ -750,25 +750,19 @@ describe("commercial WhatsApp agent", () => {
         classification: expect.objectContaining({ intent: "ask_price", confidence: 1 })
       })
     );
-    expect(evolutionService.sendButtonMessage).toHaveBeenCalledTimes(2);
-    expect(evolutionService.sendButtonMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        phone: "5511999998888",
-        title: MAIN_MENU.title,
-        buttons: expect.arrayContaining([
-          expect.objectContaining({ id: "menu:main:view_plans", displayText: "Ver planos" })
-        ])
-      })
-    );
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: MAIN_MENU.fallbackText
+    });
+    expect(evolutionService.sendButtonMessage).not.toHaveBeenCalled();
     expect(evolutionService.sendListMessage).not.toHaveBeenCalled();
-    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({ last_menu_id: "main" })
     );
   });
 
-  it("falls back to the numbered menu when interactive buttons and list are rejected", async () => {
+  it("sends the numbered menu directly instead of unsupported interactive messages", async () => {
     const conversationsRepository = {
       findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
       createConversation: vi.fn(),
@@ -823,6 +817,8 @@ describe("commercial WhatsApp agent", () => {
       phone: "5511999998888",
       text: MAIN_MENU.fallbackText
     });
+    expect(evolutionService.sendButtonMessage).not.toHaveBeenCalled();
+    expect(evolutionService.sendListMessage).not.toHaveBeenCalled();
   });
 
   it("detects human handoff requests directly and notifies the owner WhatsApp", async () => {

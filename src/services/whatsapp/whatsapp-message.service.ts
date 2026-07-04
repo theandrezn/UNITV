@@ -228,59 +228,11 @@ export class WhatsappMessageService {
     let sendResult: unknown;
     if (menu) {
       if (sendTextBeforeMenu) {
+        const replyResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
+        const menuResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: menu.fallbackText });
+        sendResult = { text: replyResult, menu: menuResult };
+      } else {
         sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
-      }
-
-      try {
-        const buttonResults = [];
-        const rows = menu.sections.flatMap((section) => section.rows);
-        const chunks = chunkRows(rows, 3);
-        for (const [index, chunk] of chunks.entries()) {
-          buttonResults.push(
-            await this.evolutionService.sendButtonMessage({
-              phone: message.phone,
-              title: index === 0 ? menu.title : "Mais opcoes",
-              description: index === 0 ? menu.description : "Escolha uma opcao abaixo",
-              footerText: menu.footerText,
-              buttons: chunk.map((row) => ({
-                id: row.rowId,
-                displayText: toButtonDisplayText(row.title)
-              }))
-            })
-          );
-        }
-        sendResult = sendTextBeforeMenu ? { text: sendResult, buttons: buttonResults } : { buttons: buttonResults };
-      } catch (error) {
-        let listResult: unknown = null;
-        try {
-          listResult = await this.evolutionService.sendListMessage({
-            phone: message.phone,
-            title: menu.title,
-            description: menu.description,
-            buttonText: menu.buttonText,
-            footerText: menu.footerText,
-            sections: menu.sections
-          });
-          sendResult = sendTextBeforeMenu ? { text: sendResult, list: listResult } : listResult;
-        } catch (listError) {
-          const fallbackResult = await this.evolutionService.sendTextMessage({
-            phone: message.phone,
-            text: sendTextBeforeMenu ? menu.fallbackText : reply
-          });
-          sendResult = sendTextBeforeMenu ? { text: sendResult, fallback: fallbackResult } : fallbackResult;
-          await this.auditService.createAuditLog({
-            actor_type: "system",
-            action: "evolution_interactive_menu_fallback",
-            entity_type: "conversations",
-            entity_id: conversation.id,
-            metadata: {
-              webhookEventId,
-              menu_id: menu.id,
-              buttons_error: error instanceof Error ? error.message : "unknown_error",
-              list_error: listError instanceof Error ? listError.message : "unknown_error"
-            }
-          });
-        }
       }
     } else {
       sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
@@ -471,21 +423,4 @@ function isHumanHandoffRequest(text: string) {
 function isBotResumeRequest(text: string) {
   return /\b(ativar|reativar|voltar|retomar|liberar|reiniciar)\b/i.test(text) &&
     /\b(bot|agente|automatico|autom[aá]tico|atendimento automatico|atendimento autom[aá]tico)\b/i.test(text);
-}
-
-function chunkRows<T>(rows: T[], size: number) {
-  const chunks: T[][] = [];
-  for (let index = 0; index < rows.length; index += size) {
-    chunks.push(rows.slice(index, index + size));
-  }
-  return chunks;
-}
-
-function toButtonDisplayText(title: string) {
-  const replacements: Record<string, string> = {
-    "Falar com especialista": "Especialista",
-    "Fazer teste gratis": "Teste gratis",
-    "Aprender a instalar": "Instalar"
-  };
-  return (replacements[title] || title).slice(0, 20);
 }
