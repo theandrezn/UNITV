@@ -92,6 +92,22 @@ export class WhatsappMessageService {
       return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification: { intent: "receipt_sent" } });
     }
 
+    const resumeBot = conversation.metadata?.requires_human && isBotResumeRequest(message.text);
+    if (resumeBot) {
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
+        ...(conversation.metadata || {}),
+        requires_human: false,
+        handoff_resolved_at: new Date().toISOString(),
+        handoff_resolved_by: "whatsapp_resume_command",
+        handoff_reason: null
+      });
+      conversation.metadata = {
+        ...(conversation.metadata || {}),
+        requires_human: false,
+        handoff_reason: null
+      };
+    }
+
     if (conversation.metadata?.requires_human) {
       await this.auditService.createAuditLog({
         actor_type: "ai_agent",
@@ -450,6 +466,11 @@ function isReceiptMessage(message: IncomingEvolutionMessage) {
 function isHumanHandoffRequest(text: string) {
   return /\b(falar|fala|conversar|chamar|atendente|humano|pessoa|especialista|suporte humano|vendedor|consultor|responsavel)\b/i.test(text) &&
     /\b(humano|atendente|especialista|pessoa|alguem|algu[eé]m|vendedor|consultor|responsavel)\b/i.test(text);
+}
+
+function isBotResumeRequest(text: string) {
+  return /\b(ativar|reativar|voltar|retomar|liberar|reiniciar)\b/i.test(text) &&
+    /\b(bot|agente|automatico|autom[aá]tico|atendimento automatico|atendimento autom[aá]tico)\b/i.test(text);
 }
 
 function chunkRows<T>(rows: T[], size: number) {
