@@ -117,6 +117,24 @@ export class ChatAgentService {
         };
       }
 
+      if (Number(plan.price_cents) <= 0) {
+        await this.agentActionsService.createAgentAction({
+          conversation_id: input.conversation.id,
+          customer_id: input.customer.id,
+          action_name: "plan_price_missing_manual_review",
+          status: "requested",
+          input_payload: { plan_id: plan.id, plan_name: plan.name, intent },
+          output_payload: {},
+          requires_human_approval: true
+        });
+
+        return {
+          requiresHuman: true,
+          reply:
+            "Encontrei esse plano, mas o valor ainda precisa ser confirmado no cadastro. Vou encaminhar para atendimento humano finalizar seu pedido com seguranca."
+        };
+      }
+
       const order = await this.ordersService.createOrder({
         customer_id: input.customer.id,
         product_id: String(plan.product_id),
@@ -216,5 +234,6 @@ function formatMoney(priceCents: number, currency = "BRL") {
 
 function formatPlan(plan: { name: string; price_cents: number; currency?: string; duration_days?: number | null }) {
   const duration = plan.duration_days ? ` (${plan.duration_days} dias)` : "";
-  return `- ${plan.name}${duration}: ${formatMoney(plan.price_cents, plan.currency)}`;
+  const price = Number(plan.price_cents) > 0 ? formatMoney(plan.price_cents, plan.currency) : "preco sob consulta";
+  return `- ${plan.name}${duration}: ${price}`;
 }

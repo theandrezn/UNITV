@@ -97,6 +97,26 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
   });
 
+  it("does not create an order when the matched plan has no configured price", async () => {
+    const { service, ordersService, plansService } = createChatAgent();
+    plansService.findPlanMentionedInText.mockResolvedValueOnce({
+      plan: { ...plan, price_cents: 0 },
+      plans: [{ ...plan, price_cents: 0 }]
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "quero comprar o plano mensal",
+      classification: { intent: "buy_plan", confidence: 0.95, summary: "compra", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444" },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.requiresHuman).toBe(true);
+    expect(result.reply).toContain("valor ainda precisa ser confirmado");
+  });
+
   it("asks for clarification when purchase intent has no clear plan", async () => {
     const { service, ordersService } = createChatAgent();
 
