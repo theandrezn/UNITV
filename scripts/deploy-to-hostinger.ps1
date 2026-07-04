@@ -10,7 +10,7 @@ $ErrorActionPreference = "Stop"
 $remote = "$User@$HostName"
 $repo = "https://github.com/theandrezn/UNITV.git"
 
-$bootstrapScript = (Get-Content -Raw -LiteralPath "scripts/vps-bootstrap.sh").Replace("`r`n", "`n")
+$bootstrapScript = (Get-Content -Raw -LiteralPath "scripts/vps-bootstrap.sh").Replace("`r", "")
 $bootstrapScript |
   ssh -i $KeyPath -o StrictHostKeyChecking=accept-new $remote "APP_DIR='$AppDir' REPO_URL='$repo' DOMAIN='$Domain' bash -s"
 scp -i $KeyPath .env.local "${remote}:${AppDir}/.env.local"
