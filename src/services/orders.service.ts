@@ -42,6 +42,10 @@ export class OrdersService {
     return this.ordersRepository.findLatestOpenOrderByCustomerId(customerId);
   }
 
+  findLatestOrderByCustomerId(customerId: string) {
+    return this.ordersRepository.findLatestOrderByCustomerId(customerId);
+  }
+
   listRecentOrders(limit?: number) {
     return this.ordersRepository.listRecentOrders(limit);
   }

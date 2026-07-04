@@ -136,6 +136,10 @@ export class ChatAgentService {
       };
     }
 
+    if (isPaymentDoneMessage(message)) {
+      return this.checkPaymentAfterCustomerConfirmation(input);
+    }
+
     if (intent === "pix_payment" || isPixPaymentMessage(message)) {
       return this.generatePixPayment(input, knowledge);
     }
@@ -146,13 +150,6 @@ export class ChatAgentService {
 
     if (intent === "ask_payment") {
       return { reply: PAYMENT_MENU.fallbackText, menu: PAYMENT_MENU };
-    }
-
-    if (isPaymentDoneMessage(message)) {
-      return {
-        reply:
-          "FEITO. Vou aguardar a confirmacao automatica do Mercado Pago. Assim que o webhook confirmar o pagamento do pedido, sigo para liberacao do acesso."
-      };
     }
 
     if (intent === "receipt_sent") {
@@ -345,6 +342,65 @@ export class ChatAgentService {
     }
   }
 
+  private async checkPaymentAfterCustomerConfirmation(input: CommercialReplyInput): Promise<CommercialReplyResult> {
+    const order = await this.ordersService.findLatestOrderByCustomerId(input.customer.id);
+    if (!order) {
+      const plans = await this.plansService.listActivePlans();
+      const menu = plans.length ? buildPlansMenu(plans) : null;
+      return {
+        reply:
+          menu?.fallbackText ||
+          "FEITO. Ainda nao encontrei um pedido seu aqui. Escolha o plano para eu gerar o pagamento corretamente.",
+        menu: menu || undefined
+      };
+    }
+
+    const orderNumber = String(order.order_number || "seu pedido");
+    const status = String(order.status || "");
+
+    if (status === "paid" || status === "code_reserved") {
+      return {
+        order,
+        reply:
+          `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
+          "Agora vou seguir para a liberacao do acesso. Se o codigo ainda nao estiver disponivel automaticamente, eu encaminho para atendimento finalizar."
+      };
+    }
+
+    if (status === "code_sent") {
+      return {
+        order,
+        reply:
+          `Pagamento confirmado para o pedido ${orderNumber}. O acesso ja foi liberado para esse pedido.`
+      };
+    }
+
+    if (status === "manual_review" || status === "receipt_under_review") {
+      return {
+        order,
+        reply:
+          `FEITO. Seu pedido ${orderNumber} esta em conferencia.\n\n` +
+          "Assim que a validacao terminar, eu sigo com a liberacao do acesso."
+      };
+    }
+
+    if (status === "refunded" || status === "cancelled" || status === "failed") {
+      return {
+        order,
+        reply:
+          `Encontrei o pedido ${orderNumber}, mas ele nao esta como pagamento aprovado.\n\n` +
+          "Escolha uma forma de pagamento novamente ou fale com especialista para conferir."
+      };
+    }
+
+    return {
+      order,
+      reply:
+        `FEITO. Ainda nao consta pagamento aprovado para o pedido ${orderNumber}.\n\n` +
+        "O pedido esta aguardando a confirmacao automatica do Mercado Pago. Assim que o webhook confirmar, eu sigo para a liberacao do acesso."
+    };
+  }
+
   private async generatePixPayment(
     input: CommercialReplyInput,
     knowledge: Array<{ category?: string; content?: string }>
@@ -497,7 +553,17 @@ function isPixPaymentMessage(message: string) {
 }
 
 function isPaymentDoneMessage(message: string) {
-  return /^(feito|paguei|pagamento feito|ja paguei|j[aá] paguei)$/i.test(message.trim());
+  const normalized = message
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return (
+    /^(feito|paguei|pago|ja paguei|ja fiz|ja fiz o pagamento|feito o pagamento|pagamento feito|fiz o pagamento|acabei de pagar)$/i.test(normalized) ||
+    /\b(ja|acabei de|terminei de|conclui|fiz|realizei)\b.*\b(paguei|pagar|pagamento|pix)\b/i.test(normalized) ||
+    /\b(pagamento|pix)\b.*\b(feito|pago|realizado|concluido|enviado)\b/i.test(normalized)
+  );
 }
 
 function isInstallationMessage(message: string) {

@@ -32,6 +32,7 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
   const ordersService = {
     createOrder: vi.fn(async (data) => ({ ...data, id: "33333333-3333-4333-8333-333333333333", order_number: "UTV-20260704-000001" })),
     findLatestOpenOrderByCustomerId: vi.fn(async () => null as Record<string, unknown> | null),
+    findLatestOrderByCustomerId: vi.fn(async () => null as Record<string, unknown> | null),
     updateOrder: vi.fn(async (_id, data) => data)
   };
   const appSettingsService = {
@@ -309,20 +310,53 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toBe("PAGUE COM CARTAO AQUI ABAIXO\nhttps://www.mercadopago.com.br/checkout/dynamic-order-link");
   });
 
-  it("acknowledges payment completion without releasing access before webhook confirmation", async () => {
-    const { service } = createChatAgent();
+  it("checks payment status when the customer says payment is done before following card intent", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    ordersService.findLatestOrderByCustomerId.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000008",
+      customer_id: "customer-id",
+      status: "pending_payment",
+      metadata: { mercado_pago_checkout_url: "https://www.mercadopago.com.br/checkout/dynamic-order-link" }
+    });
 
     const result = await service.generateCommercialReply({
-      message: "feito",
-      classification: { intent: "unknown", confidence: 0.99, summary: "feito", suggested_reply: "" },
+      message: "feito o pagamento",
+      classification: { intent: "card_payment", confidence: 0.99, summary: "pagamento", suggested_reply: "" },
       customer: { id: "customer-id" },
       conversation: { id: "conversation-id" },
       webhookEventId: "webhook-id"
     });
 
     expect(result.reply).toContain("FEITO");
+    expect(result.reply.toLowerCase()).toContain("ainda nao consta pagamento aprovado");
+    expect(result.reply).toContain("UTV-20260704-000008");
     expect(result.reply).toContain("webhook");
+    expect(result.reply).not.toContain("PAGUE COM CARTAO");
+    expect(mercadoPagoService.createOrderPreference).not.toHaveBeenCalled();
     expect(result.reply.toLowerCase()).not.toContain("codigo");
+  });
+
+  it("recognizes an already paid order when the customer confirms payment", async () => {
+    const { service, ordersService } = createChatAgent();
+    ordersService.findLatestOrderByCustomerId.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000009",
+      customer_id: "customer-id",
+      status: "paid"
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "ja fiz o pix",
+      classification: { intent: "pix_payment", confidence: 0.99, summary: "pix", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("Pagamento confirmado");
+    expect(result.reply).toContain("UTV-20260704-000009");
+    expect(result.reply).not.toContain("PIX do pedido");
   });
 
   it("creates a dynamic Pix charge without asking the customer for email", async () => {

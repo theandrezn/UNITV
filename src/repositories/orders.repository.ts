@@ -92,6 +92,18 @@ export class OrdersRepository {
     return assertSupabaseSuccess(data, error);
   }
 
+  async findLatestOrderByCustomerId(customerId: string) {
+    const { data, error } = await this.supabase
+      .from("orders")
+      .select("*, plans(id, name, slug)")
+      .eq("customer_id", customerId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return assertSupabaseSuccess(data, error);
+  }
+
   async listRecentOrders(limit = 50) {
     const { data, error } = await this.supabase
       .from("orders")
