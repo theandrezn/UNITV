@@ -6,6 +6,7 @@ coverage/
 outputs/
 work/
 supabase/.temp/
+.worktrees/
 
 .env
 .env.*
