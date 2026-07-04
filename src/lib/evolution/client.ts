@@ -28,6 +28,18 @@ type SendMediaMessageInput = {
   caption: string;
 };
 
+type SendListMessageInput = {
+  phone: string;
+  title: string;
+  description: string;
+  buttonText: string;
+  footerText: string;
+  sections: Array<{
+    title: string;
+    rows: Array<{ title: string; description: string; rowId: string }>;
+  }>;
+};
+
 export class EvolutionClient {
   private readonly apiUrl: string;
   private readonly apiKey: string;
@@ -89,6 +101,31 @@ export class EvolutionClient {
     if (!response.ok) {
       const body = await response.text();
       throw new Error(`Evolution sendMediaMessage failed: ${response.status} ${body}`);
+    }
+
+    return response.json().catch(() => ({}));
+  }
+
+  async sendListMessage({ phone, title, description, buttonText, footerText, sections }: SendListMessageInput) {
+    const response = await fetch(`${this.apiUrl}/message/sendList/${encodeURIComponent(this.instanceName)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: this.apiKey
+      },
+      body: JSON.stringify({
+        number: normalizePhone(phone),
+        title,
+        description,
+        buttonText,
+        footerText,
+        sections
+      })
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Evolution sendListMessage failed: ${response.status} ${body}`);
     }
 
     return response.json().catch(() => ({}));

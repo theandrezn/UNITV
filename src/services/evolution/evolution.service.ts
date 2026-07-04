@@ -18,6 +18,20 @@ export class EvolutionService {
     return this.evolutionClient.sendMediaMessage(input);
   }
 
+  sendListMessage(input: {
+    phone: string;
+    title: string;
+    description: string;
+    buttonText: string;
+    footerText: string;
+    sections: Array<{
+      title: string;
+      rows: Array<{ title: string; description: string; rowId: string }>;
+    }>;
+  }) {
+    return this.evolutionClient.sendListMessage(input);
+  }
+
   getInstanceStatus() {
     return this.evolutionClient.getInstanceStatus();
   }

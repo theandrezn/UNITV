@@ -4,12 +4,13 @@ import { ConversationsRepository } from "@/repositories/conversations.repository
 import { MessagesRepository } from "@/repositories/messages.repository";
 import { AuditService } from "@/services/audit.service";
 import { ChatAgentService } from "@/services/agent/chat-agent.service";
-import { IntentClassifierService } from "@/services/agent/intent-classifier.service";
+import { IntentClassifierService, type IntentClassification } from "@/services/agent/intent-classifier.service";
 import { AgentActionsService } from "@/services/agent-actions.service";
 import { EvolutionService } from "@/services/evolution/evolution.service";
 import { OrdersService } from "@/services/orders.service";
 import { ReceiptsService } from "@/services/receipts.service";
 import type { IncomingEvolutionMessage } from "@/lib/evolution/client";
+import { resolveMenuSelection, type WhatsAppMenu } from "@/lib/whatsapp/menus";
 
 type ProcessIncomingMessageInput = {
   webhookEventId: string;
@@ -90,7 +91,8 @@ export class WhatsappMessageService {
     }
 
     let currentCustomer = customer;
-    let classification;
+    let effectiveMessage = message.text;
+    let classification: IntentClassification;
     if (conversation.metadata?.awaiting_pix_email) {
       const email = extractEmail(message.text);
       if (!email) {
@@ -117,10 +119,21 @@ export class WhatsappMessageService {
         suggested_reply: ""
       };
     } else {
-      classification = await this.intentClassifier.classify({ message: message.text });
+      const selection = resolveMenuSelection(message.text, conversation.metadata);
+      if (selection) {
+        effectiveMessage = selection.message;
+        classification = {
+          intent: selection.intent,
+          confidence: 1,
+          summary: `Selecao direta do menu: ${message.text}`,
+          suggested_reply: ""
+        };
+      } else {
+        classification = await this.intentClassifier.classify({ message: message.text });
+      }
     }
     const commercialReply = await this.chatAgent.generateCommercialReply({
-      message: message.text,
+      message: effectiveMessage,
       classification,
       customer: currentCustomer,
       conversation,
@@ -157,6 +170,14 @@ export class WhatsappMessageService {
       });
     }
 
+    if (commercialReply.menu) {
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
+        ...(conversation.metadata || {}),
+        last_menu_id: commercialReply.menu.id,
+        last_menu_sent_at: new Date().toISOString()
+      });
+    }
+
     return this.sendAndStoreAssistantReply({
       webhookEventId,
       message,
@@ -164,7 +185,9 @@ export class WhatsappMessageService {
       conversation,
       reply,
       classification,
-      media: commercialReply.media
+      media: commercialReply.media,
+      menu: commercialReply.menu,
+      sendTextBeforeMenu: commercialReply.sendTextBeforeMenu
     });
   }
 
@@ -175,7 +198,9 @@ export class WhatsappMessageService {
     conversation,
     reply,
     classification,
-    media
+    media,
+    menu,
+    sendTextBeforeMenu
   }: {
     webhookEventId: string;
     message: IncomingEvolutionMessage;
@@ -184,11 +209,42 @@ export class WhatsappMessageService {
     reply: string;
     classification: Record<string, unknown>;
     media?: { base64: string; mimetype: string; fileName: string; caption: string };
+    menu?: WhatsAppMenu;
+    sendTextBeforeMenu?: boolean;
   }) {
-    const sendResult = await this.evolutionService.sendTextMessage({
-      phone: message.phone,
-      text: reply
-    });
+    let sendResult: unknown;
+    if (menu) {
+      if (sendTextBeforeMenu) {
+        sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
+      }
+
+      try {
+        const listResult = await this.evolutionService.sendListMessage({
+          phone: message.phone,
+          title: menu.title,
+          description: menu.description,
+          buttonText: menu.buttonText,
+          footerText: menu.footerText,
+          sections: menu.sections
+        });
+        sendResult = sendTextBeforeMenu ? { text: sendResult, list: listResult } : listResult;
+      } catch (error) {
+        const fallbackResult = await this.evolutionService.sendTextMessage({
+          phone: message.phone,
+          text: sendTextBeforeMenu ? menu.fallbackText : reply
+        });
+        sendResult = sendTextBeforeMenu ? { text: sendResult, fallback: fallbackResult } : fallbackResult;
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "evolution_interactive_menu_fallback",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: { webhookEventId, menu_id: menu.id, error: error instanceof Error ? error.message : "unknown_error" }
+        });
+      }
+    } else {
+      sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
+    }
     let mediaSendResult: unknown = null;
     if (media) {
       try {
@@ -216,7 +272,8 @@ export class WhatsappMessageService {
         classification,
         sendResult,
         mediaSendResult,
-        media: media ? { mimetype: media.mimetype, fileName: media.fileName, caption: media.caption } : null
+        media: media ? { mimetype: media.mimetype, fileName: media.fileName, caption: media.caption } : null,
+        menu: menu ? { id: menu.id, title: menu.title } : null
       }
     });
 

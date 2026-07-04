@@ -30,6 +30,32 @@ describe("Evolution webhook helpers", () => {
     });
   });
 
+  it("extracts the selected row id from an interactive WhatsApp list", () => {
+    const payload = structuredClone(fixture) as Record<string, any>;
+    payload.data.message = {
+      listResponseMessage: {
+        title: "Mensal - R$ 25,00",
+        singleSelectReply: { selectedRowId: "menu:plans:mensal" }
+      }
+    };
+    payload.data.messageType = "listResponseMessage";
+
+    expect(extractIncomingMessageFromWebhook(payload)?.text).toBe("menu:plans:mensal");
+  });
+
+  it("extracts reply button ids from interactive WhatsApp messages", () => {
+    const payload = structuredClone(fixture) as Record<string, any>;
+    payload.data.message = {
+      buttonsResponseMessage: {
+        selectedButtonId: "menu:payment:pix",
+        selectedDisplayText: "Receber Pix"
+      }
+    };
+    payload.data.messageType = "buttonsResponseMessage";
+
+    expect(extractIncomingMessageFromWebhook(payload)?.text).toBe("menu:payment:pix");
+  });
+
   it("marks messages sent by myself for ignore", () => {
     const payload = structuredClone(fixture);
     payload.data.key.fromMe = true;

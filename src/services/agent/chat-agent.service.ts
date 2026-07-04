@@ -8,6 +8,14 @@ import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import { OrdersService } from "@/services/orders.service";
 import { MercadoPagoService } from "@/services/payments/mercadopago.service";
 import { PlansService } from "@/services/plans.service";
+import {
+  buildPlansMenu,
+  CONTINUATION_MENU,
+  DEVICE_MENU,
+  MAIN_MENU,
+  PAYMENT_MENU,
+  type WhatsAppMenu
+} from "@/lib/whatsapp/menus";
 
 export const INITIAL_UNITV_REPLY =
   "Ola! Sou o atendimento automatico da UniTV. Posso te ajudar com planos, renovacao, ativacao ou suporte. Voce quer comprar, renovar ou precisa de ajuda com o app?";
@@ -26,6 +34,8 @@ type CommercialReplyResult = {
   reply: string;
   order?: Record<string, unknown>;
   requiresHuman?: boolean;
+  menu?: WhatsAppMenu;
+  sendTextBeforeMenu?: boolean;
   awaitingPixEmail?: boolean;
   media?: {
     base64: string;
@@ -70,6 +80,20 @@ export class ChatAgentService {
     const knowledge = await this.knowledgeService.searchKnowledge(message);
     const intent = input.classification.intent === "support" ? "technical_support" : input.classification.intent;
 
+    const objectionCategory = getObjectionKnowledgeCategory(message);
+    if (objectionCategory) {
+      const objection = knowledge.find((article) => article.category === objectionCategory);
+      if (objection?.content) {
+        return {
+          reply: objection.content,
+          menu: objectionCategory === "objecao_preco" || objectionCategory === "objecao_concorrencia"
+            ? buildPlansMenu(await this.plansService.listActivePlans())
+            : CONTINUATION_MENU,
+          sendTextBeforeMenu: true
+        };
+      }
+    }
+
     if (input.classification.confidence < 0.45) {
       return this.handoffToHuman(input, "low_confidence", knowledge);
     }
@@ -88,7 +112,9 @@ export class ChatAgentService {
       });
       return {
         reply:
-          "Consigo te ajudar com a ativacao, mas nao libero codigo automaticamente. Se ja pagou, envie o comprovante por aqui para conferencia manual."
+          "Consigo te ajudar com a ativacao, mas nao libero codigo automaticamente. Se ja pagou, envie o comprovante por aqui para conferencia manual.",
+        menu: CONTINUATION_MENU,
+        sendTextBeforeMenu: true
       };
     }
 
@@ -103,10 +129,10 @@ export class ChatAgentService {
 
     if (intent === "ask_price") {
       const plans = await this.plansService.listActivePlans();
+      const menu = plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: plans.length
-          ? `Planos disponiveis:\n${plans.map(formatPlan).join("\n")}\n\nQual deles voce quer?`
-          : "Ainda nao encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano conferir."
+        reply: menu?.fallbackText || "Ainda nao encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano conferir.",
+        menu: menu || undefined
       };
     }
 
@@ -131,7 +157,15 @@ export class ChatAgentService {
     }
 
     if (intent === "ask_payment") {
-      return { reply: "Voce pode pagar por Pix ou cartao. Para Pix, responda PIX. Para cartao, responda CARTAO." };
+      return { reply: PAYMENT_MENU.fallbackText, menu: PAYMENT_MENU };
+    }
+
+    if (intent === "receipt_sent") {
+      return {
+        reply: "Envie a foto ou o PDF do comprovante aqui na conversa. O pagamento sera encaminhado para validacao.",
+        menu: CONTINUATION_MENU,
+        sendTextBeforeMenu: true
+      };
     }
 
     if (intent === "buy_plan" || intent === "renew_plan") {
@@ -148,10 +182,10 @@ export class ChatAgentService {
       });
 
       if (!plan) {
+        const menu = plans.length ? buildPlansMenu(plans) : null;
         return {
-          reply: plans.length
-            ? `Perfeito. Qual plano voce quer?\n${plans.map(formatPlan).join("\n")}`
-            : "Entendi que voce quer comprar, mas nao encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano."
+          reply: menu?.fallbackText || "Entendi que voce quer comprar, mas nao encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano.",
+          menu: menu || undefined
         };
       }
 
@@ -255,7 +289,9 @@ export class ChatAgentService {
 
       return {
         order,
-        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\nCartao:\n${preference.checkoutUrl}\n\nPara gerar um Pix Copia e Cola com confirmacao automatica, responda PIX.`
+        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\nCartao:\n${preference.checkoutUrl}\n\nPara gerar o Pix Copia e Cola, selecione Receber Pix abaixo.`,
+        menu: PAYMENT_MENU,
+        sendTextBeforeMenu: true
       };
     }
 
@@ -264,15 +300,22 @@ export class ChatAgentService {
       const supportKnowledge =
         knowledge.find((article) => article.category === preferredCategory) ||
         knowledge.find((article) => article.category === "technical_support");
+      if (isInstallationMessage(message)) {
+        return { reply: DEVICE_MENU.fallbackText, menu: DEVICE_MENU };
+      }
+
+      const supportReply =
+        supportKnowledge?.content ||
+        "Me diga qual aparelho/app voce usa, o erro que aparece e se sua internet esta funcionando. Assim eu te ajudo melhor.";
       return {
-        reply:
-          supportKnowledge?.content ||
-          "Me diga qual aparelho/app voce usa, o erro que aparece e se sua internet esta funcionando. Assim eu te ajudo melhor."
+        reply: supportReply,
+        menu: CONTINUATION_MENU,
+        sendTextBeforeMenu: true
       };
     }
 
     if (intent === "greeting") {
-      return { reply: INITIAL_UNITV_REPLY };
+      return { reply: `Ola! Seja bem-vindo a UNiTV.\n\n${MAIN_MENU.fallbackText}`, menu: MAIN_MENU };
     }
 
     return { reply: this.generateReply(input) };
@@ -285,10 +328,10 @@ export class ChatAgentService {
     const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
     if (!order) {
       const plans = await this.plansService.listActivePlans();
+      const menu = plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: plans.length
-          ? `Para gerar o Pix, primeiro escolha o plano:\n${plans.map(formatPlan).join("\n")}`
-          : "Ainda nao encontrei um pedido aberto. Vou encaminhar para atendimento humano."
+        reply: menu?.fallbackText || "Ainda nao encontrei um pedido aberto. Vou encaminhar para atendimento humano.",
+        menu: menu || undefined
       };
     }
 
@@ -433,6 +476,26 @@ function isFreeTrialMessage(message: string) {
 
 function isPixPaymentMessage(message: string) {
   return /\b(pix|chave pix|copia e cola|qr code)\b/i.test(message);
+}
+
+function isInstallationMessage(message: string) {
+  return /\b(instalar|instalacao|downloader|aparelho|smart tv|tv box|android|iphone|computador)\b/i.test(message);
+}
+
+function getObjectionKnowledgeCategory(message: string) {
+  if (/\b(caro|cara|desconto|promo[cç][aã]o)\b/i.test(message)) {
+    return "objecao_preco";
+  }
+  if (/\b(mais barato|vi barato|concorrente)\b/i.test(message)) {
+    return "objecao_concorrencia";
+  }
+  if (/\b(vou pensar|quero pensar|depois eu vejo|decidir depois)\b/i.test(message)) {
+    return "objecao_indecisao";
+  }
+  if (/\b(funciona mesmo|trava|travar|travamento|cai muito)\b/i.test(message)) {
+    return "objecao_estabilidade";
+  }
+  return null;
 }
 
 function getSupportKnowledgeCategory(message: string) {

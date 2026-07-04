@@ -71,6 +71,10 @@ export function extractIncomingMessageFromWebhook(payload: unknown) {
   const documentMessage = asRecord(message.documentMessage);
   const videoMessage = asRecord(message.videoMessage);
   const audioMessage = asRecord(message.audioMessage);
+  const listResponseMessage = asRecord(message.listResponseMessage);
+  const singleSelectReply = asRecord(listResponseMessage.singleSelectReply);
+  const buttonsResponseMessage = asRecord(message.buttonsResponseMessage);
+  const templateButtonReplyMessage = asRecord(message.templateButtonReplyMessage);
   const mediaMessage = imageMessage.url
     ? imageMessage
     : documentMessage.url
@@ -86,6 +90,9 @@ export function extractIncomingMessageFromWebhook(payload: unknown) {
   const fromMe = Boolean(key.fromMe ?? data.fromMe ?? root.fromMe);
   const isGroup = remoteJid.endsWith("@g.us");
   const text = firstString(
+    singleSelectReply.selectedRowId,
+    buttonsResponseMessage.selectedButtonId,
+    templateButtonReplyMessage.selectedId,
     message.conversation,
     asRecord(message.extendedTextMessage).text,
     imageMessage.caption,

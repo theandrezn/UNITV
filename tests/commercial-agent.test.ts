@@ -6,6 +6,7 @@ vi.mock("server-only", () => ({}));
 import { ChatAgentService } from "@/services/agent/chat-agent.service";
 import { PlansService } from "@/services/plans.service";
 import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
+import { MAIN_MENU } from "@/lib/whatsapp/menus";
 
 const plan = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -26,7 +27,7 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
     }))
   };
   const knowledgeService = {
-    searchKnowledge: vi.fn(async () => [])
+    searchKnowledge: vi.fn(async (): Promise<Array<{ category: string; content: string }>> => [])
   };
   const ordersService = {
     createOrder: vi.fn(async (data) => ({ ...data, id: "33333333-3333-4333-8333-333333333333", order_number: "UTV-20260704-000001" })),
@@ -70,6 +71,7 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
       mercadoPagoService as never
     ),
     plansService,
+    knowledgeService,
     ordersService,
     appSettingsService,
     agentActionsService,
@@ -94,6 +96,38 @@ describe("commercial WhatsApp agent", () => {
     expect(plansService.listActivePlans).toHaveBeenCalled();
     expect(result.reply).toContain("Plano Mensal");
     expect(result.reply).toMatch(/R\$\s*25,00/);
+    expect(result.menu).toEqual(expect.objectContaining({ id: "plans", title: "Escolha seu plano UNiTV" }));
+  });
+
+  it("opens the main selectable menu for a greeting", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "oi",
+      classification: { intent: "greeting", confidence: 0.99, summary: "saudacao", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.menu).toEqual(expect.objectContaining({ id: "main" }));
+    expect(result.reply).toContain("Ver planos");
+    expect(result.reply).toContain("Falar com especialista");
+  });
+
+  it("offers selectable payment methods", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "como posso pagar?",
+      classification: { intent: "ask_payment", confidence: 0.99, summary: "pagamento", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.menu).toEqual(expect.objectContaining({ id: "payment" }));
+    expect(result.reply).toContain("Receber Pix");
   });
 
   it("creates an order when the requested plan is clear", async () => {
@@ -138,7 +172,8 @@ describe("commercial WhatsApp agent", () => {
     );
     expect(appSettingsService.getPixInstructions).not.toHaveBeenCalled();
     expect(result.reply).toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
-    expect(result.reply).toContain("responda PIX");
+    expect(result.reply).toContain("Receber Pix");
+    expect(result.menu).toEqual(expect.objectContaining({ id: "payment" }));
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
   });
 
@@ -355,7 +390,42 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("Qual plano");
+    expect(result.reply).toContain("Escolha seu plano UNiTV");
+    expect(result.menu).toEqual(expect.objectContaining({ id: "plans" }));
+  });
+
+  it("offers a selectable device menu for installation", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "quero aprender a instalar",
+      classification: { intent: "technical_support", confidence: 0.99, summary: "instalacao", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.menu).toEqual(expect.objectContaining({ id: "devices" }));
+    expect(result.reply).toContain("Smart TV");
+  });
+
+  it("answers objections from trained knowledge and keeps a next step", async () => {
+    const { service, knowledgeService } = createChatAgent();
+    knowledgeService.searchKnowledge.mockResolvedValueOnce([
+      { category: "objecao_estabilidade", content: "A experiencia depende da internet e do aparelho. Voce pode testar por 3 dias." }
+    ]);
+
+    const result = await service.generateCommercialReply({
+      message: "e se travar?",
+      classification: { intent: "unknown", confidence: 0.2, summary: "objecao", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("depende da internet");
+    expect(result.menu).toEqual(expect.objectContaining({ id: "continue" }));
+    expect(result.sendTextBeforeMenu).toBe(true);
   });
 
   it("marks handoff when the customer asks for a human", async () => {
@@ -553,6 +623,131 @@ describe("commercial WhatsApp agent", () => {
       })
     );
     expect(result.status).toBe("processed");
+  });
+
+  it("interprets a clicked menu row before AI and sends an interactive list", async () => {
+    const customersRepository = {
+      upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", email: null }))
+    };
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+    };
+    const intentClassifier = { classify: vi.fn() };
+    const chatAgent = {
+      generateCommercialReply: vi.fn(async () => ({ reply: MAIN_MENU.fallbackText, menu: MAIN_MENU }))
+    };
+    const evolutionService = {
+      sendTextMessage: vi.fn(async () => ({ sent: true })),
+      sendListMessage: vi.fn(async () => ({ sent: true }))
+    };
+    const service = new WhatsappMessageService(
+      customersRepository as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "menu-click-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "menu:main:view_plans",
+        messageType: "listResponseMessage",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(intentClassifier.classify).not.toHaveBeenCalled();
+    expect(chatAgent.generateCommercialReply).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "quero ver os planos",
+        classification: expect.objectContaining({ intent: "ask_price", confidence: 1 })
+      })
+    );
+    expect(evolutionService.sendListMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ phone: "5511999998888", title: MAIN_MENU.title })
+    );
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ last_menu_id: "main" })
+    );
+  });
+
+  it("falls back to the numbered menu when Evolution rejects sendList", async () => {
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async () => ({})),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const evolutionService = {
+      sendTextMessage: vi.fn(async () => ({ sent: true })),
+      sendListMessage: vi.fn(async () => {
+        throw new Error("lists unavailable");
+      })
+    };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      conversationsRepository as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      { classify: vi.fn(async () => ({ intent: "greeting", confidence: 1, summary: "oi", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({ reply: MAIN_MENU.fallbackText, menu: MAIN_MENU })) } as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "greeting-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "oi",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: MAIN_MENU.fallbackText
+    });
   });
 
   it("does not process duplicated messages", async () => {
