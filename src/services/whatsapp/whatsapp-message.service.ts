@@ -90,52 +90,25 @@ export class WhatsappMessageService {
       return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification: { intent: "receipt_sent" } });
     }
 
-    let currentCustomer = customer;
     let effectiveMessage = message.text;
     let classification: IntentClassification;
-    if (conversation.metadata?.awaiting_pix_email) {
-      const email = extractEmail(message.text);
-      if (!email) {
-        return this.sendAndStoreAssistantReply({
-          webhookEventId,
-          message,
-          customer,
-          conversation,
-          reply: "Envie um e-mail valido para eu gerar seu Pix Copia e Cola.",
-          classification: { intent: "pix_payment", confidence: 1, summary: "invalid_payer_email" }
-        });
-      }
-
-      currentCustomer = await this.customersRepository.updateCustomer(customer.id, { email });
-      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
-        ...(conversation.metadata || {}),
-        awaiting_pix_email: false,
-        awaiting_pix_order_id: null
-      });
+    const selection = resolveMenuSelection(message.text, conversation.metadata);
+    if (selection) {
+      effectiveMessage = selection.message;
       classification = {
-        intent: "pix_payment" as const,
+        intent: selection.intent,
         confidence: 1,
-        summary: "E-mail recebido para gerar Pix.",
+        summary: `Selecao direta do menu: ${message.text}`,
         suggested_reply: ""
       };
     } else {
-      const selection = resolveMenuSelection(message.text, conversation.metadata);
-      if (selection) {
-        effectiveMessage = selection.message;
-        classification = {
-          intent: selection.intent,
-          confidence: 1,
-          summary: `Selecao direta do menu: ${message.text}`,
-          suggested_reply: ""
-        };
-      } else {
-        classification = await this.intentClassifier.classify({ message: message.text });
-      }
+      classification = await this.intentClassifier.classify({ message: message.text });
     }
+
     const commercialReply = await this.chatAgent.generateCommercialReply({
       message: effectiveMessage,
       classification,
-      customer: currentCustomer,
+      customer,
       conversation,
       webhookEventId
     });
@@ -161,15 +134,6 @@ export class WhatsappMessageService {
       });
     }
 
-    if (commercialReply.awaitingPixEmail) {
-      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
-        ...(conversation.metadata || {}),
-        awaiting_pix_email: true,
-        awaiting_pix_order_id: commercialReply.order?.id || null,
-        awaiting_pix_requested_at: new Date().toISOString()
-      });
-    }
-
     if (commercialReply.menu) {
       await this.conversationsRepository.updateConversationMetadata(conversation.id, {
         ...(conversation.metadata || {}),
@@ -181,7 +145,7 @@ export class WhatsappMessageService {
     return this.sendAndStoreAssistantReply({
       webhookEventId,
       message,
-      customer: currentCustomer,
+      customer,
       conversation,
       reply,
       classification,
@@ -374,9 +338,4 @@ function isReceiptMessage(message: IncomingEvolutionMessage) {
   const receiptMedia = message.hasMedia && ["imageMessage", "documentMessage"].includes(message.messageType);
 
   return receiptText || receiptMedia;
-}
-
-function extractEmail(message: string) {
-  const match = message.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
-  return match?.[0].toLowerCase() || null;
 }

@@ -36,7 +36,6 @@ type CommercialReplyResult = {
   requiresHuman?: boolean;
   menu?: WhatsAppMenu;
   sendTextBeforeMenu?: boolean;
-  awaitingPixEmail?: boolean;
   media?: {
     base64: string;
     mimetype: string;
@@ -345,16 +344,8 @@ export class ChatAgentService {
       };
     }
 
-    if (!input.customer.email) {
-      return {
-        order,
-        awaitingPixEmail: true,
-        reply: "Para gerar seu Pix Copia e Cola com confirmacao automatica, envie seu e-mail. Ele e exigido pelo Mercado Pago para criar a cobranca."
-      };
-    }
-
     const plan = readOrderPlan(order);
-    if (!plan || !order.plan_id) {
+    if (!order.plan_id) {
       return this.handoffToHuman(
         input,
         "pix_order_plan_missing",
@@ -374,7 +365,7 @@ export class ChatAgentService {
           currency: String(order.currency || "BRL")
         },
         plan,
-        payer: { email: input.customer.email }
+        payer: { email: buildMercadoPagoPixEmail(order, input.customer.id) }
       });
 
       await this.ordersService.updateOrder(String(order.id), {
@@ -535,15 +526,27 @@ function readMetadataString(metadata: Record<string, unknown>, key: string) {
 function readOrderPlan(order: Record<string, unknown>) {
   const plan = order.plans;
   if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
-    return null;
+    const orderNumber = typeof order.order_number === "string" && order.order_number.trim()
+      ? order.order_number.trim()
+      : "Pedido UNiTV";
+    return { name: orderNumber, slug: "unitv" };
   }
 
   const name = (plan as { name?: unknown }).name;
   const slug = (plan as { slug?: unknown }).slug;
-  return typeof name === "string" && name && typeof slug === "string" && slug ? { name, slug } : null;
+  if (typeof name === "string" && name && typeof slug === "string" && slug) {
+    return { name, slug };
+  }
+
+  return { name: "Plano UNiTV", slug: "unitv" };
 }
 
 function formatPixReply(order: Record<string, unknown>, qrCode: string, ticketUrl: string | null) {
   const link = ticketUrl ? `\n\nAbrir instrucoes e QR Code:\n${ticketUrl}` : "";
   return `PIX do pedido ${String(order.order_number)}:\n\nCopia e Cola:\n${qrCode}${link}\n\nA confirmacao e automatica pelo Mercado Pago. Nao precisa enviar comprovante.`;
+}
+
+function buildMercadoPagoPixEmail(order: Record<string, unknown>, customerId: string) {
+  const reference = String(order.order_number || order.id || customerId).toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  return `pix-${reference}@unitv.local`;
 }

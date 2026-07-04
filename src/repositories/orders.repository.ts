@@ -82,7 +82,7 @@ export class OrdersRepository {
   async findLatestOpenOrderByCustomerId(customerId: string) {
     const { data, error } = await this.supabase
       .from("orders")
-      .select("*")
+      .select("*, plans(id, name, slug)")
       .eq("customer_id", customerId)
       .in("status", ["draft", "pending_payment", "manual_review", "receipt_under_review"])
       .order("created_at", { ascending: false })

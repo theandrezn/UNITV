@@ -275,7 +275,7 @@ describe("commercial WhatsApp agent", () => {
     expect(appSettingsService.getPaymentInstructions).not.toHaveBeenCalled();
   });
 
-  it("asks for the payer email before creating a dynamic Pix charge", async () => {
+  it("creates a dynamic Pix charge without asking the customer for email", async () => {
     const { service, ordersService, mercadoPagoService } = createChatAgent();
     ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce({
       id: "33333333-3333-4333-8333-333333333333",
@@ -296,9 +296,13 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.awaitingPixEmail).toBe(true);
-    expect(result.reply).toContain("e-mail");
-    expect(mercadoPagoService.createPixPayment).not.toHaveBeenCalled();
+    expect(result.reply).toContain("000201-pix-copy-paste");
+    expect(result.reply).not.toContain("e-mail");
+    expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payer: { email: "pix-utv-20260704-000001@unitv.local" }
+      })
+    );
   });
 
   it("creates a dynamic Pix charge and returns copy-paste plus QR media", async () => {
@@ -318,7 +322,7 @@ describe("commercial WhatsApp agent", () => {
     const result = await service.generateCommercialReply({
       message: "quero pagar no pix",
       classification: { intent: "pix_payment", confidence: 0.99, summary: "pix", suggested_reply: "" },
-      customer: { id: order.customer_id, email: "cliente@example.com" },
+      customer: { id: order.customer_id, email: null },
       conversation: { id: "55555555-5555-4555-8555-555555555555" },
       webhookEventId: "webhook-id"
     });
@@ -326,7 +330,7 @@ describe("commercial WhatsApp agent", () => {
     expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith({
       order: expect.objectContaining({ id: order.id, order_number: order.order_number, amount_cents: 2500 }),
       plan: { name: plan.name, slug: plan.slug },
-      payer: { email: "cliente@example.com" }
+      payer: { email: "pix-utv-20260704-000001@unitv.local" }
     });
     expect(ordersService.updateOrder).toHaveBeenCalledWith(
       order.id,
@@ -536,10 +540,10 @@ describe("commercial WhatsApp agent", () => {
     expect(String(assistantMessage?.content).toLowerCase()).not.toContain("codigo");
   });
 
-  it("collects a pending Pix email and sends the generated QR image", async () => {
+  it("ignores stale pending Pix email metadata and classifies the message normally", async () => {
     const customersRepository = {
       upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", email: null })),
-      updateCustomer: vi.fn(async (_id, data) => ({ id: "customer-id", ...data }))
+      updateCustomer: vi.fn()
     };
     const conversationsRepository = {
       findByExternalConversationId: vi.fn(async () => ({
@@ -554,7 +558,7 @@ describe("commercial WhatsApp agent", () => {
       findByExternalMessageId: vi.fn(async () => null),
       createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
     };
-    const intentClassifier = { classify: vi.fn() };
+    const intentClassifier = { classify: vi.fn(async () => ({ intent: "pix_payment", confidence: 1, summary: "pix", suggested_reply: "" })) };
     const chatAgent = {
       generateCommercialReply: vi.fn(async () => ({
         reply: "PIX do pedido UTV-1:\n000201-pix-copy-paste",
@@ -589,11 +593,11 @@ describe("commercial WhatsApp agent", () => {
       message: {
         event: "messages.upsert",
         instance: "unitv",
-        externalMessageId: "email-message-id",
+        externalMessageId: "pix-message-id",
         remoteJid: "5511999998888@s.whatsapp.net",
         phone: "5511999998888",
         contactName: "Cliente",
-        text: "cliente@example.com",
+        text: "pix",
         messageType: "conversation",
         hasMedia: false,
         media: {},
@@ -603,17 +607,13 @@ describe("commercial WhatsApp agent", () => {
       }
     });
 
-    expect(customersRepository.updateCustomer).toHaveBeenCalledWith("customer-id", { email: "cliente@example.com" });
-    expect(intentClassifier.classify).not.toHaveBeenCalled();
+    expect(customersRepository.updateCustomer).not.toHaveBeenCalled();
+    expect(intentClassifier.classify).toHaveBeenCalledWith({ message: "pix" });
     expect(chatAgent.generateCommercialReply).toHaveBeenCalledWith(
       expect.objectContaining({
         classification: expect.objectContaining({ intent: "pix_payment" }),
-        customer: expect.objectContaining({ email: "cliente@example.com" })
+        customer: expect.objectContaining({ email: null })
       })
-    );
-    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
-      "conversation-id",
-      expect.objectContaining({ awaiting_pix_email: false, awaiting_pix_order_id: null })
     );
     expect(evolutionService.sendMediaMessage).toHaveBeenCalledWith(
       expect.objectContaining({
