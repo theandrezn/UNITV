@@ -51,6 +51,8 @@ WEBHOOK_SECRET=
 
 `OPENAI_MODEL` pode ficar vazio; o codigo usa `gpt-4o-mini` como default.
 
+`SUPABASE_DB_URL` e necessario para ferramentas e scripts diretos de banco, mas os clients server-side usam `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`.
+
 ## Supabase
 
 1. Crie ou selecione um projeto Supabase.

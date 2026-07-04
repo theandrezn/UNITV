@@ -1,9 +1,9 @@
 import "server-only";
 import OpenAI from "openai";
-import { getOpenAIModel, getServerEnv } from "@/lib/env";
+import { getOpenAIEnv, getOpenAIModel } from "@/lib/env";
 
 export function createOpenAIClient() {
-  const env = getServerEnv();
+  const env = getOpenAIEnv();
 
   return new OpenAI({
     apiKey: env.OPENAI_API_KEY

@@ -5,6 +5,7 @@ create sequence if not exists public.order_number_seq;
 create or replace function public.handle_updated_at()
 returns trigger
 language plpgsql
+set search_path = public, pg_temp
 as $$
 begin
   new.updated_at = now();
@@ -15,6 +16,7 @@ $$;
 create or replace function public.generate_order_number()
 returns text
 language plpgsql
+set search_path = public, pg_temp
 as $$
 declare
   next_value bigint;

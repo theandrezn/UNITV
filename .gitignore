@@ -5,6 +5,7 @@ dist/
 coverage/
 outputs/
 work/
+supabase/.temp/
 
 .env
 .env.*
