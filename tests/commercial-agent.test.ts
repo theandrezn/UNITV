@@ -30,16 +30,24 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
   };
   const ordersService = {
     createOrder: vi.fn(async (data) => ({ ...data, id: "33333333-3333-4333-8333-333333333333", order_number: "UTV-20260704-000001" })),
-    findLatestOpenOrderByCustomerId: vi.fn(async () => null as Record<string, unknown> | null)
+    findLatestOpenOrderByCustomerId: vi.fn(async () => null as Record<string, unknown> | null),
+    updateOrder: vi.fn(async (_id, data) => data)
   };
   const appSettingsService = {
-    getPaymentInstructions: vi.fn(async () => "Instrucoes de pagamento cadastradas.")
+    getPaymentInstructions: vi.fn(async () => "Instrucoes de pagamento cadastradas."),
+    getPixInstructions: vi.fn(async () => "PIX configurado. Envie o comprovante por aqui.")
   };
   const agentActionsService = {
     createAgentAction: vi.fn(async (data) => data)
   };
   const auditService = {
     createAuditLog: vi.fn(async (data) => data)
+  };
+  const mercadoPagoService = {
+    createOrderPreference: vi.fn(async () => ({
+      id: "preference-id",
+      checkoutUrl: "https://www.mercadopago.com.br/checkout/dynamic-order-link"
+    }))
   };
 
   return {
@@ -49,13 +57,15 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
       ordersService as never,
       appSettingsService as never,
       agentActionsService as never,
-      auditService as never
+      auditService as never,
+      mercadoPagoService as never
     ),
     plansService,
     ordersService,
     appSettingsService,
     agentActionsService,
     auditService,
+    mercadoPagoService,
     ...overrides
   };
 }
@@ -78,7 +88,7 @@ describe("commercial WhatsApp agent", () => {
   });
 
   it("creates an order when the requested plan is clear", async () => {
-    const { service, ordersService, appSettingsService } = createChatAgent();
+    const { service, ordersService, appSettingsService, mercadoPagoService } = createChatAgent();
 
     const result = await service.generateCommercialReply({
       message: "quero comprar o plano mensal",
@@ -96,8 +106,50 @@ describe("commercial WhatsApp agent", () => {
       })
     );
     expect(result.reply).toContain("UTV-20260704-000001");
-    expect(appSettingsService.getPaymentInstructions).toHaveBeenCalledWith("mensal");
+    expect(mercadoPagoService.createOrderPreference).toHaveBeenCalledWith({
+      order: expect.objectContaining({
+        id: "33333333-3333-4333-8333-333333333333",
+        order_number: "UTV-20260704-000001",
+        customer_id: "44444444-4444-4444-8444-444444444444",
+        plan_id: plan.id,
+        amount_cents: 2500,
+        currency: "BRL"
+      }),
+      plan: { name: plan.name, slug: plan.slug }
+    });
+    expect(ordersService.updateOrder).toHaveBeenCalledWith(
+      "33333333-3333-4333-8333-333333333333",
+      expect.objectContaining({
+        payment_provider: "mercado_pago",
+        payment_reference: "preference-id",
+        metadata: expect.objectContaining({
+          mercado_pago_checkout_url: "https://www.mercadopago.com.br/checkout/dynamic-order-link"
+        })
+      })
+    );
+    expect(appSettingsService.getPixInstructions).toHaveBeenCalled();
+    expect(result.reply).toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
+  });
+
+  it("hands off when the order-specific Checkout Pro preference cannot be created", async () => {
+    const { service, ordersService, mercadoPagoService, agentActionsService } = createChatAgent();
+    mercadoPagoService.createOrderPreference.mockRejectedValueOnce(new Error("Mercado Pago unavailable"));
+
+    const result = await service.generateCommercialReply({
+      message: "quero comprar o plano mensal",
+      classification: { intent: "buy_plan", confidence: 0.95, summary: "compra", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444" },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).toHaveBeenCalled();
+    expect(ordersService.updateOrder).not.toHaveBeenCalled();
+    expect(result.requiresHuman).toBe(true);
+    expect(agentActionsService.createAgentAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human", requires_human_approval: true })
+    );
   });
 
   it("does not create an order when the matched plan has no configured price", async () => {
@@ -159,11 +211,11 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
-  it("returns the configured payment instructions for card payments", async () => {
+  it("returns the order-specific payment link for later card-payment questions", async () => {
     const { service, ordersService, appSettingsService } = createChatAgent();
     ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce({
       id: "33333333-3333-4333-8333-333333333333",
-      plans: { slug: "mensal", name: "Mensal" }
+      metadata: { mercado_pago_checkout_url: "https://www.mercadopago.com.br/checkout/dynamic-order-link" }
     });
     const result = await service.generateCommercialReply({
       message: "quero pagar no cartao",
@@ -173,8 +225,9 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(appSettingsService.getPaymentInstructions).toHaveBeenCalledWith("mensal");
-    expect(result.reply).toBe("Instrucoes de pagamento cadastradas.");
+    expect(appSettingsService.getPixInstructions).toHaveBeenCalled();
+    expect(result.reply).toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
+    expect(appSettingsService.getPaymentInstructions).not.toHaveBeenCalled();
   });
 
   it("asks for clarification when purchase intent has no clear plan", async () => {

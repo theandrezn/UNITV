@@ -25,6 +25,19 @@ export class OrdersService {
     return this.ordersRepository.updateOrder(orderId, data);
   }
 
+  transitionToPaid(orderId: string, paidAt: string, paymentReference: string) {
+    return this.ordersRepository.transitionToPaid(orderId, paidAt, paymentReference);
+  }
+
+  transitionStatus(orderId: string, fromStatuses: string[], toStatus: string, data: Partial<Order> = {}) {
+    return this.ordersRepository.transitionStatus(
+      orderId,
+      fromStatuses.map((status) => orderStatusSchema.parse(status)),
+      orderStatusSchema.parse(toStatus),
+      data
+    );
+  }
+
   findLatestOpenOrderByCustomerId(customerId: string) {
     return this.ordersRepository.findLatestOpenOrderByCustomerId(customerId);
   }

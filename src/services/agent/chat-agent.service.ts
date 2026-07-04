@@ -6,6 +6,7 @@ import { AgentActionsService } from "@/services/agent-actions.service";
 import { AuditService } from "@/services/audit.service";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import { OrdersService } from "@/services/orders.service";
+import { MercadoPagoService } from "@/services/payments/mercadopago.service";
 import { PlansService } from "@/services/plans.service";
 
 export const INITIAL_UNITV_REPLY =
@@ -34,7 +35,8 @@ export class ChatAgentService {
     private readonly ordersService = new OrdersService(),
     private readonly appSettingsService = new AppSettingsService(),
     private readonly agentActionsService = new AgentActionsService(),
-    private readonly auditService = new AuditService()
+    private readonly auditService = new AuditService(),
+    private readonly mercadoPagoService = new MercadoPagoService()
   ) {}
 
   generateReply(input: { message: string; classification: IntentClassification }) {
@@ -103,8 +105,19 @@ export class ChatAgentService {
 
     if (intent === "card_payment") {
       const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
-      const planSlug = readOrderPlanSlug(order);
-      return { reply: await this.appSettingsService.getPaymentInstructions(planSlug) };
+      const checkoutUrl = readOrderCheckoutUrl(order);
+      const pixInstructions = await this.appSettingsService.getPixInstructions();
+
+      if (!checkoutUrl) {
+        return this.handoffToHuman(
+          input,
+          "checkout_link_missing",
+          knowledge,
+          `${pixInstructions}\n\nAinda nao encontrei um link de cartao para seu pedido. Vou encaminhar para atendimento humano gerar o link correto.`
+        );
+      }
+
+      return { reply: `${pixInstructions}\n\nCartao:\n${checkoutUrl}` };
     }
 
     if (intent === "ask_payment") {
@@ -187,7 +200,50 @@ export class ChatAgentService {
         }
       });
 
-      const paymentInstructions = await this.appSettingsService.getPaymentInstructions(String(plan.slug));
+      let preference: Awaited<ReturnType<MercadoPagoService["createOrderPreference"]>>;
+      try {
+        preference = await this.mercadoPagoService.createOrderPreference({
+          order: {
+            id: String(order.id),
+            order_number: String(order.order_number),
+            customer_id: String(order.customer_id),
+            plan_id: String(order.plan_id),
+            amount_cents: Number(order.amount_cents),
+            currency: String(order.currency || "BRL")
+          },
+          plan: { name: String(plan.name), slug: String(plan.slug) }
+        });
+      } catch (error) {
+        await this.auditService.createAuditLog({
+          actor_type: "ai_agent",
+          action: "mercado_pago_preference_creation_failed",
+          entity_type: "orders",
+          entity_id: order.id,
+          metadata: {
+            webhookEventId: input.webhookEventId,
+            error: error instanceof Error ? error.message : "unknown_error"
+          }
+        });
+        return this.handoffToHuman(
+          input,
+          "mercado_pago_preference_creation_failed",
+          knowledge,
+          `Seu pedido ${order.order_number} foi criado, mas nao consegui gerar o link do cartao agora. Vou encaminhar para atendimento humano concluir o pagamento.`
+        );
+      }
+
+      const updatedMetadata = {
+        ...readOrderMetadata(order),
+        mercado_pago_preference_id: preference.id,
+        mercado_pago_checkout_url: preference.checkoutUrl
+      };
+      await this.ordersService.updateOrder(String(order.id), {
+        payment_provider: "mercado_pago",
+        payment_reference: preference.id,
+        metadata: updatedMetadata
+      });
+
+      const paymentInstructions = `${await this.appSettingsService.getPixInstructions()}\n\nCartao:\n${preference.checkoutUrl}`;
       const receiptHint = /comprovante/i.test(paymentInstructions)
         ? ""
         : "\n\nDepois envie o comprovante por aqui. A liberacao do codigo sera feita somente apos conferencia manual.";
@@ -280,11 +336,15 @@ function getSupportKnowledgeCategory(message: string) {
   return "technical_support";
 }
 
-function readOrderPlanSlug(order: Record<string, unknown> | null) {
-  if (!order || !order.plans || typeof order.plans !== "object" || Array.isArray(order.plans)) {
-    return undefined;
+function readOrderMetadata(order: Record<string, unknown> | null) {
+  if (!order?.metadata || typeof order.metadata !== "object" || Array.isArray(order.metadata)) {
+    return {};
   }
 
-  const slug = (order.plans as { slug?: unknown }).slug;
-  return typeof slug === "string" && slug ? slug : undefined;
+  return order.metadata as Record<string, unknown>;
+}
+
+function readOrderCheckoutUrl(order: Record<string, unknown> | null) {
+  const checkoutUrl = readOrderMetadata(order).mercado_pago_checkout_url;
+  return typeof checkoutUrl === "string" && checkoutUrl ? checkoutUrl : undefined;
 }

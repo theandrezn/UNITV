@@ -13,14 +13,18 @@ export class OrdersRepository {
   }
 
   async findOrderById(id: string) {
-    const { data, error } = await this.supabase.from("orders").select("*").eq("id", id).maybeSingle();
+    const { data, error } = await this.supabase
+      .from("orders")
+      .select("*, customers(id, phone), plans(id, name, slug)")
+      .eq("id", id)
+      .maybeSingle();
     return assertSupabaseSuccess(data, error);
   }
 
   async findOrderByOrderNumber(orderNumber: string) {
     const { data, error } = await this.supabase
       .from("orders")
-      .select("*, plans(slug, name)")
+      .select("*, customers(id, phone), plans(id, name, slug)")
       .eq("order_number", orderNumber)
       .maybeSingle();
     return assertSupabaseSuccess(data, error);
@@ -38,6 +42,40 @@ export class OrdersRepository {
 
   async updateOrder(orderId: string, data: Partial<Order>) {
     const { data: order, error } = await this.supabase.from("orders").update(data).eq("id", orderId).select("*").single();
+    return assertSupabaseSuccess(order, error);
+  }
+
+  async transitionToPaid(orderId: string, paidAt: string, paymentReference: string) {
+    const { data, error } = await this.supabase
+      .from("orders")
+      .update({
+        status: "paid",
+        paid_at: paidAt,
+        payment_provider: "mercado_pago",
+        payment_reference: paymentReference
+      })
+      .eq("id", orderId)
+      .in("status", ["pending_payment", "receipt_under_review", "manual_review"])
+      .select("*, customers(id, phone), plans(id, name, slug)")
+      .maybeSingle();
+
+    return assertSupabaseSuccess(data, error);
+  }
+
+  async transitionStatus(
+    orderId: string,
+    fromStatuses: string[],
+    toStatus: string,
+    data: Partial<Order> = {}
+  ) {
+    const { data: order, error } = await this.supabase
+      .from("orders")
+      .update({ ...data, status: toStatus })
+      .eq("id", orderId)
+      .in("status", fromStatuses)
+      .select("*, customers(id, phone), plans(id, name, slug)")
+      .maybeSingle();
+
     return assertSupabaseSuccess(order, error);
   }
 

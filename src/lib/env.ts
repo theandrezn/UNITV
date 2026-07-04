@@ -15,6 +15,10 @@ const serverEnvSchema = z.object({
   WEBHOOK_SECRET: z.string().optional(),
   ADMIN_API_KEY: z.string().optional(),
   PAYMENT_INSTRUCTIONS: z.string().optional(),
+  MERCADO_PAGO_ACCESS_TOKEN: z.string().optional(),
+  MERCADO_PAGO_WEBHOOK_SECRET: z.string().optional(),
+  MERCADO_PAGO_PUBLIC_KEY: z.string().optional(),
+  MERCADO_PAGO_WEBHOOK_URL: z.string().url("MERCADO_PAGO_WEBHOOK_URL must be a valid URL").optional().or(z.literal("")),
   EVOLUTION_API_URL: z.string().url("EVOLUTION_API_URL must be a valid URL").optional().or(z.literal("")),
   EVOLUTION_API_KEY: z.string().optional(),
   EVOLUTION_INSTANCE_NAME: z.string().optional(),
@@ -29,6 +33,12 @@ export type EvolutionEnv = ServerEnv & {
   EVOLUTION_API_URL: string;
   EVOLUTION_API_KEY: string;
   EVOLUTION_INSTANCE_NAME: string;
+};
+export type MercadoPagoEnv = ServerEnv & {
+  MERCADO_PAGO_ACCESS_TOKEN: string;
+  MERCADO_PAGO_WEBHOOK_SECRET: string;
+  MERCADO_PAGO_PUBLIC_KEY: string;
+  MERCADO_PAGO_WEBHOOK_URL: string;
 };
 
 export const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
@@ -88,6 +98,29 @@ export function getEvolutionEnv(): EvolutionEnv {
     EVOLUTION_API_URL: env.EVOLUTION_API_URL,
     EVOLUTION_API_KEY: env.EVOLUTION_API_KEY,
     EVOLUTION_INSTANCE_NAME: env.EVOLUTION_INSTANCE_NAME
+  };
+}
+
+export function getMercadoPagoEnv(): MercadoPagoEnv {
+  const env = getServerEnv();
+
+  if (
+    !env.MERCADO_PAGO_ACCESS_TOKEN ||
+    !env.MERCADO_PAGO_WEBHOOK_SECRET ||
+    !env.MERCADO_PAGO_PUBLIC_KEY ||
+    !env.MERCADO_PAGO_WEBHOOK_URL
+  ) {
+    throw new Error(
+      "MERCADO_PAGO_ACCESS_TOKEN, MERCADO_PAGO_WEBHOOK_SECRET, MERCADO_PAGO_PUBLIC_KEY, and MERCADO_PAGO_WEBHOOK_URL are required."
+    );
+  }
+
+  return {
+    ...env,
+    MERCADO_PAGO_ACCESS_TOKEN: env.MERCADO_PAGO_ACCESS_TOKEN,
+    MERCADO_PAGO_WEBHOOK_SECRET: env.MERCADO_PAGO_WEBHOOK_SECRET,
+    MERCADO_PAGO_PUBLIC_KEY: env.MERCADO_PAGO_PUBLIC_KEY,
+    MERCADO_PAGO_WEBHOOK_URL: env.MERCADO_PAGO_WEBHOOK_URL
   };
 }
 

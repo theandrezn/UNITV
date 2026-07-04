@@ -106,6 +106,7 @@ export const paymentSchema = z.object({
   status: paymentStatusSchema.default("pending"),
   amount_cents: z.number().int().positive(),
   currency: z.string().default("BRL"),
+  paid_at: z.string().datetime().nullable().optional(),
   raw_payload: jsonRecordSchema.default({})
 });
 
