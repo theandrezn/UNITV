@@ -9,6 +9,15 @@ export const incomingEvolutionMessageSchema = z.object({
   contactName: z.string().nullable().optional(),
   text: z.string().default(""),
   messageType: z.string().default("unknown"),
+  hasMedia: z.boolean().default(false),
+  media: z
+    .object({
+      mimeType: z.string().nullable().optional(),
+      fileName: z.string().nullable().optional(),
+      url: z.string().nullable().optional(),
+      caption: z.string().nullable().optional()
+    })
+    .default({}),
   timestamp: z.number().nullable().optional(),
   fromMe: z.boolean().default(false),
   isGroup: z.boolean().default(false)
@@ -58,6 +67,19 @@ export function extractIncomingMessageFromWebhook(payload: unknown) {
   const data = asRecord(root.data);
   const key = asRecord(data.key);
   const message = asRecord(data.message);
+  const imageMessage = asRecord(message.imageMessage);
+  const documentMessage = asRecord(message.documentMessage);
+  const videoMessage = asRecord(message.videoMessage);
+  const audioMessage = asRecord(message.audioMessage);
+  const mediaMessage = imageMessage.url
+    ? imageMessage
+    : documentMessage.url
+      ? documentMessage
+      : videoMessage.url
+        ? videoMessage
+        : audioMessage.url
+          ? audioMessage
+          : {};
   const pushName = firstString(data.pushName, root.pushName, data.notifyName);
   const remoteJid = firstString(key.remoteJid, data.remoteJid, root.remoteJid);
   const externalMessageId = firstString(key.id, data.id, root.id, root.messageId);
@@ -66,14 +88,16 @@ export function extractIncomingMessageFromWebhook(payload: unknown) {
   const text = firstString(
     message.conversation,
     asRecord(message.extendedTextMessage).text,
-    asRecord(message.imageMessage).caption,
-    asRecord(message.videoMessage).caption,
+    imageMessage.caption,
+    videoMessage.caption,
+    documentMessage.caption,
     data.text,
     root.text,
     asRecord(root.message).text
   );
   const messageType = firstString(data.messageType, root.messageType, Object.keys(message)[0], text ? "text" : "unknown");
   const timestamp = firstNumber(data.messageTimestamp, root.messageTimestamp, data.timestamp, root.timestamp);
+  const hasMedia = ["imageMessage", "documentMessage", "videoMessage", "audioMessage"].includes(messageType) || Boolean(mediaMessage.url);
 
   if (!externalMessageId || !remoteJid) {
     return null;
@@ -88,6 +112,13 @@ export function extractIncomingMessageFromWebhook(payload: unknown) {
     contactName: pushName || null,
     text,
     messageType,
+    hasMedia,
+    media: {
+      mimeType: firstString(mediaMessage.mimetype, mediaMessage.mimeType) || null,
+      fileName: firstString(mediaMessage.fileName, mediaMessage.title) || null,
+      url: firstString(mediaMessage.url, data.mediaUrl, root.mediaUrl) || null,
+      caption: firstString(mediaMessage.caption) || null
+    },
     timestamp,
     fromMe,
     isGroup

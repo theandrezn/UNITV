@@ -32,4 +32,15 @@ export class MessagesRepository {
     const { data: message, error } = await this.supabase.from("messages").insert(data).select("*").single();
     return assertSupabaseSuccess(message, error);
   }
+
+  async listMessagesByConversationId(conversationId: string, limit = 100) {
+    const { data, error } = await this.supabase
+      .from("messages")
+      .select("*")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: true })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error);
+  }
 }

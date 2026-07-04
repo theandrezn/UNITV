@@ -43,4 +43,26 @@ export class ConversationsRepository {
 
     return assertSupabaseSuccess(data, error);
   }
+
+  async updateConversationMetadata(id: string, metadata: Record<string, unknown>) {
+    const { data, error } = await this.supabase
+      .from("conversations")
+      .update({ metadata })
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    return assertSupabaseSuccess(data, error);
+  }
+
+  async listRecentConversations(limit = 50) {
+    const { data, error } = await this.supabase
+      .from("conversations")
+      .select("*, customers(id, name, phone)")
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error);
+  }
 }

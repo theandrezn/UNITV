@@ -20,4 +20,20 @@ export class OrdersService {
   updateOrderStatus(orderId: string, status: string) {
     return this.ordersRepository.updateOrderStatus(orderId, orderStatusSchema.parse(status));
   }
+
+  updateOrder(orderId: string, data: Partial<Order>) {
+    return this.ordersRepository.updateOrder(orderId, data);
+  }
+
+  findLatestOpenOrderByCustomerId(customerId: string) {
+    return this.ordersRepository.findLatestOpenOrderByCustomerId(customerId);
+  }
+
+  listRecentOrders(limit?: number) {
+    return this.ordersRepository.listRecentOrders(limit);
+  }
+
+  listOrdersByStatuses(statuses: string[], limit?: number) {
+    return this.ordersRepository.listOrdersByStatuses(statuses.map((status) => orderStatusSchema.parse(status)), limit);
+  }
 }

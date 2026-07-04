@@ -13,6 +13,8 @@ const serverEnvSchema = z.object({
   APP_ENV: appEnvSchema.default("development"),
   APP_BASE_URL: z.string().url("APP_BASE_URL must be a valid URL").optional().or(z.literal("")),
   WEBHOOK_SECRET: z.string().optional(),
+  ADMIN_API_KEY: z.string().optional(),
+  PAYMENT_INSTRUCTIONS: z.string().optional(),
   EVOLUTION_API_URL: z.string().url("EVOLUTION_API_URL must be a valid URL").optional().or(z.literal("")),
   EVOLUTION_API_KEY: z.string().optional(),
   EVOLUTION_INSTANCE_NAME: z.string().optional(),

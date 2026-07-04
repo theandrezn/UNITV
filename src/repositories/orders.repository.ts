@@ -35,4 +35,43 @@ export class OrdersRepository {
       .single();
     return assertSupabaseSuccess(data, error);
   }
+
+  async updateOrder(orderId: string, data: Partial<Order>) {
+    const { data: order, error } = await this.supabase.from("orders").update(data).eq("id", orderId).select("*").single();
+    return assertSupabaseSuccess(order, error);
+  }
+
+  async findLatestOpenOrderByCustomerId(customerId: string) {
+    const { data, error } = await this.supabase
+      .from("orders")
+      .select("*")
+      .eq("customer_id", customerId)
+      .in("status", ["draft", "pending_payment", "manual_review", "receipt_under_review"])
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return assertSupabaseSuccess(data, error);
+  }
+
+  async listRecentOrders(limit = 50) {
+    const { data, error } = await this.supabase
+      .from("orders")
+      .select("*, customers(id, name, phone), plans(id, name, slug, duration_days, price_cents, currency)")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error);
+  }
+
+  async listOrdersByStatuses(statuses: string[], limit = 50) {
+    const { data, error } = await this.supabase
+      .from("orders")
+      .select("*, customers(id, name, phone), plans(id, name, slug, duration_days, price_cents, currency)")
+      .in("status", statuses)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error);
+  }
 }

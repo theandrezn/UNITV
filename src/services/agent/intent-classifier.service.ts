@@ -3,12 +3,15 @@ import { z } from "zod";
 import { createOpenAIClient, getDefaultOpenAIModel } from "@/lib/openai/client";
 
 export const intentSchema = z.enum([
+  "greeting",
   "buy_plan",
   "renew_plan",
+  "ask_price",
+  "ask_payment",
   "support",
   "activation_help",
   "receipt_sent",
-  "price_question",
+  "technical_support",
   "human_help",
   "unknown"
 ]);
@@ -38,7 +41,7 @@ export class IntentClassifierService {
         {
           role: "system",
           content:
-            "Classifique a intencao do cliente UniTV. Responda somente JSON valido com intent, confidence, summary e suggested_reply. Nunca ofereca codigo de ativacao."
+            "Classifique a intencao do cliente UniTV usando apenas: greeting, buy_plan, renew_plan, ask_price, ask_payment, receipt_sent, activation_help, technical_support, human_help, unknown. Responda somente JSON valido com intent, confidence, summary e suggested_reply. Nunca ofereca codigo de ativacao."
         },
         {
           role: "user",

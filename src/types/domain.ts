@@ -33,6 +33,7 @@ export const messageRoleSchema = z.enum(["customer", "assistant", "system", "hum
 export const webhookEventStatusSchema = z.enum(["received", "processing", "processed", "ignored", "failed"]);
 export const agentActionStatusSchema = z.enum(["requested", "approved", "rejected", "executed", "failed"]);
 export const auditActorTypeSchema = z.enum(["system", "ai_agent", "human_admin", "webhook", "customer"]);
+export const knowledgeArticleStatusSchema = z.enum(["active", "inactive", "archived"]);
 
 const jsonRecordSchema = z.record(z.unknown());
 const uuidSchema = z.string().uuid();
@@ -161,6 +162,15 @@ export const auditLogSchema = z.object({
   metadata: jsonRecordSchema.default({})
 });
 
+export const knowledgeArticleSchema = z.object({
+  id: uuidSchema.optional(),
+  title: z.string().min(1),
+  category: z.string().min(1),
+  content: z.string().min(1),
+  status: knowledgeArticleStatusSchema.default("active"),
+  metadata: jsonRecordSchema.default({})
+});
+
 export type Customer = z.infer<typeof customerSchema>;
 export type Product = z.infer<typeof productSchema>;
 export type Plan = z.infer<typeof planSchema>;
@@ -171,3 +181,4 @@ export type Receipt = z.infer<typeof receiptSchema>;
 export type WebhookEvent = z.infer<typeof webhookEventSchema>;
 export type AgentAction = z.infer<typeof agentActionSchema>;
 export type AuditLog = z.infer<typeof auditLogSchema>;
+export type KnowledgeArticle = z.infer<typeof knowledgeArticleSchema>;
