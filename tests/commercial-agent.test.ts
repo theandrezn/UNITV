@@ -1074,7 +1074,120 @@ describe("commercial WhatsApp agent", () => {
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         phone: "558699802602",
-        text: expect.stringContaining("Um cliente quer falar com você.")
+        text: expect.stringContaining("Um cliente pediu para falar com um especialista.")
+      })
+    );
+  });
+
+  it("notifies the owner for any human handoff, even when the classifier is not human_help", async () => {
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const intentClassifier = { classify: vi.fn(async () => ({ intent: "unknown", confidence: 0.4, summary: "duvida", suggested_reply: "" })) };
+    const chatAgent = {
+      generateCommercialReply: vi.fn(async () => ({
+        reply: "Vou encaminhar para atendimento humano para te ajudar melhor.",
+        requiresHuman: true
+      }))
+    };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", name: "Cliente Teste", phone: "5511999998888" })) } as never,
+      conversationsRepository as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "low-confidence-human-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente Teste",
+        text: "preciso de ajuda",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phone: "558699802602",
+        text: expect.stringContaining("Responda lá no WhatsApp.")
+      })
+    );
+  });
+
+  it("notifies the owner again when a customer asks for a specialist during active human takeover", async () => {
+    const intentClassifier = { classify: vi.fn() };
+    const chatAgent = { generateCommercialReply: vi.fn() };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", name: "Cliente Teste", phone: "5511999998888" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: { requires_human: true } })),
+        createConversation: vi.fn(),
+        updateConversationMetadata: vi.fn(),
+        touchConversation: vi.fn(async () => ({}))
+      } as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "active-human-request-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente Teste",
+        text: "quero falar com especialista",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(result.status).toBe("ignored");
+    expect(intentClassifier.classify).not.toHaveBeenCalled();
+    expect(chatAgent.generateCommercialReply).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        phone: "558699802602",
+        text: expect.stringContaining("Um cliente pediu para falar com um especialista.")
       })
     );
   });

@@ -166,6 +166,15 @@ export class WhatsappMessageService {
     }
 
     if (conversation.metadata?.requires_human) {
+      if (isHumanHandoffRequest(message.text)) {
+        await this.notifyHumanOwner({
+          webhookEventId,
+          customer,
+          conversationId: conversation.id,
+          message
+        });
+      }
+
       await this.auditService.createAuditLog({
         actor_type: "ai_agent",
         action: "human_takeover_active_auto_reply_skipped",
@@ -227,15 +236,13 @@ export class WhatsappMessageService {
         handoff_requested_at: new Date().toISOString()
       };
       await this.conversationsRepository.updateConversationMetadata(conversation.id, handoffMetadata);
-      if (classification.intent === "human_help" || commercialReply.notifyOwner) {
-        await this.notifyHumanOwner({
-          webhookEventId,
-          customer,
-          conversationId: conversation.id,
-          message,
-          notificationText: commercialReply.ownerNotificationText
-        });
-      }
+      await this.notifyHumanOwner({
+        webhookEventId,
+        customer,
+        conversationId: conversation.id,
+        message,
+        notificationText: commercialReply.ownerNotificationText
+      });
     }
 
     if (commercialReply.menu) {
@@ -375,7 +382,9 @@ export class WhatsappMessageService {
     const customerName = message.contactName || customer.name || "Cliente";
     const customerPhone = message.phone || customer.phone || "sem telefone";
     const notification = notificationText || [
-      "Um cliente quer falar com você.",
+      "Um cliente pediu para falar com um especialista.",
+      "Responda lá no WhatsApp.",
+      "",
       `Cliente: ${customerName}`,
       `WhatsApp: +${customerPhone}`,
       `Mensagem: ${message.text || "(sem texto)"}`,
@@ -383,13 +392,13 @@ export class WhatsappMessageService {
     ].join("\n");
 
     try {
-      await this.evolutionService.sendTextMessage({ phone: HUMAN_NOTIFICATION_PHONE, text: notification });
+      const notificationResult = await this.evolutionService.sendTextMessage({ phone: HUMAN_NOTIFICATION_PHONE, text: notification });
       await this.auditService.createAuditLog({
         actor_type: "system",
         action: "human_handoff_owner_notified",
         entity_type: "conversations",
         entity_id: conversationId,
-        metadata: { webhookEventId, ownerPhone: HUMAN_NOTIFICATION_PHONE }
+        metadata: { webhookEventId, ownerPhone: HUMAN_NOTIFICATION_PHONE, notificationResult }
       });
     } catch (error) {
       await this.auditService.createAuditLog({
