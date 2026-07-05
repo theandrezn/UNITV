@@ -37,6 +37,11 @@ const fallbackClassification: IntentClassification = {
 
 export class IntentClassifierService {
   async classify(input: { message: string }): Promise<IntentClassification> {
+    const deterministic = classifyDeterministicIntent(input.message);
+    if (deterministic) {
+      return deterministic;
+    }
+
     const client = createOpenAIClient();
     const completion = await client.chat.completions.create({
       model: getDefaultOpenAIModel(),
@@ -63,4 +68,88 @@ export class IntentClassifierService {
     const parsed = intentClassificationSchema.safeParse(JSON.parse(content));
     return parsed.success ? parsed.data : fallbackClassification;
   }
+}
+
+function classifyDeterministicIntent(message: string): IntentClassification | null {
+  const text = normalizeMessage(message);
+  if (!text) {
+    return {
+      intent: "unknown",
+      confidence: 0.2,
+      summary: "Mensagem vazia.",
+      suggested_reply: fallbackClassification.suggested_reply
+    };
+  }
+
+  if (/^(oi|ola|olá|opa|bom dia|boa tarde|boa noite|e ai|e aí|oie|oii+|oiii+)[!?.,\s]*$/.test(text)) {
+    return fixedClassification("greeting", "Saudacao simples.");
+  }
+
+  if (/\b(humano|atendente|especialista|vendedor|consultor|pessoa|responsavel|responsável)\b/.test(text)) {
+    return fixedClassification("human_help", "Cliente pediu atendimento humano.");
+  }
+
+  if (/\b(teste|gratis|gratuito|free trial)\b/.test(text)) {
+    return fixedClassification("free_trial", "Cliente pediu teste gratis.");
+  }
+
+  if (/\b(preco|preço|valor|valores|quanto custa|planos?|mensal|trimestral|semestral|anual)\b/.test(text) &&
+      !/\b(comprar|quero|renovar|renovacao|renovação)\b/.test(text)) {
+    return fixedClassification("ask_price", "Cliente pediu valores ou planos.");
+  }
+
+  if (/\b(renovar|renovacao|renovação)\b/.test(text)) {
+    return fixedClassification("renew_plan", "Cliente pediu renovacao.");
+  }
+
+  if (/\b(comprar|compra|assinar|quero um codigo|quero codigo|liberar acesso|ativar plano)\b/.test(text)) {
+    return fixedClassification("buy_plan", "Cliente demonstrou intencao de compra.");
+  }
+
+  if (/\b(pix|chave pix|copia e cola|qr code)\b/.test(text)) {
+    return fixedClassification("pix_payment", "Cliente pediu pagamento por Pix.");
+  }
+
+  if (/\b(cartao|cartão|credito|crédito|debito|débito|link de pagamento)\b/.test(text)) {
+    return fixedClassification("card_payment", "Cliente pediu pagamento por cartao.");
+  }
+
+  if (/\b(como pagar|pagamento|formas de pagamento|pagar)\b/.test(text)) {
+    return fixedClassification("ask_payment", "Cliente perguntou sobre pagamento.");
+  }
+
+  if (/\b(paguei|ja paguei|feito o pagamento|pagamento feito|fiz o pagamento|acabei de pagar)\b/.test(text)) {
+    return fixedClassification("unknown", "Cliente informou pagamento para checagem do provedor.");
+  }
+
+  if (/\b(comprovante|recibo|print do pagamento|transferencia|transferência)\b/.test(text)) {
+    return fixedClassification("receipt_sent", "Cliente mencionou comprovante.");
+  }
+
+  if (/\b(instalar|instalacao|instalação|baixar|download|dowload|apk|tutorial|downloader|tv box|android tv|celular|codigo downloader)\b/.test(text)) {
+    return fixedClassification("technical_support", "Cliente pediu instalacao ou download.");
+  }
+
+  if (/\b(travando|trava|erro|nao abre|não abre|suporte|ajuda|problema|funciona)\b/.test(text)) {
+    return fixedClassification("technical_support", "Cliente pediu suporte tecnico.");
+  }
+
+  return null;
+}
+
+function fixedClassification(intent: IntentClassification["intent"], summary: string): IntentClassification {
+  return {
+    intent,
+    confidence: 0.95,
+    summary,
+    suggested_reply: "Resolvido por regra local sem uso de IA."
+  };
+}
+
+function normalizeMessage(message: string) {
+  return message
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
