@@ -171,12 +171,13 @@ export class WhatsappMessageService {
         handoff_requested_at: new Date().toISOString()
       };
       await this.conversationsRepository.updateConversationMetadata(conversation.id, handoffMetadata);
-      if (classification.intent === "human_help") {
+      if (classification.intent === "human_help" || commercialReply.notifyOwner) {
         await this.notifyHumanOwner({
           webhookEventId,
           customer,
           conversationId: conversation.id,
-          message
+          message,
+          notificationText: commercialReply.ownerNotificationText
         });
       }
     }
@@ -198,6 +199,7 @@ export class WhatsappMessageService {
       classification,
       media: commercialReply.media,
       copyText: commercialReply.copyText,
+      followUpMessages: commercialReply.followUpMessages,
       menu: commercialReply.menu,
       sendTextBeforeMenu: commercialReply.sendTextBeforeMenu
     });
@@ -212,6 +214,7 @@ export class WhatsappMessageService {
     classification,
     media,
     copyText,
+    followUpMessages,
     menu,
     sendTextBeforeMenu
   }: {
@@ -223,6 +226,7 @@ export class WhatsappMessageService {
     classification: Record<string, unknown>;
     media?: { base64: string; mimetype: string; fileName: string; caption: string };
     copyText?: string;
+    followUpMessages?: string[];
     menu?: WhatsAppMenu;
     sendTextBeforeMenu?: boolean;
   }) {
@@ -241,6 +245,11 @@ export class WhatsappMessageService {
     let copyTextSendResult: unknown = null;
     if (copyText) {
       copyTextSendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: copyText });
+    }
+
+    const followUpSendResults = [];
+    for (const followUpMessage of followUpMessages || []) {
+      followUpSendResults.push(await this.evolutionService.sendTextMessage({ phone: message.phone, text: followUpMessage }));
     }
 
     let mediaSendResult: unknown = null;
@@ -270,6 +279,7 @@ export class WhatsappMessageService {
         classification,
         sendResult,
         copyTextSendResult,
+        followUpSendResults,
         mediaSendResult,
         media: media ? { mimetype: media.mimetype, fileName: media.fileName, caption: media.caption } : null,
         menu: menu ? { id: menu.id, title: menu.title } : null
@@ -297,16 +307,18 @@ export class WhatsappMessageService {
     webhookEventId,
     customer,
     conversationId,
-    message
+    message,
+    notificationText
   }: {
     webhookEventId: string;
     customer: { id: string; name?: string | null; phone?: string | null };
     conversationId: string;
     message: IncomingEvolutionMessage;
+    notificationText?: string;
   }) {
     const customerName = message.contactName || customer.name || "Cliente";
     const customerPhone = message.phone || customer.phone || "sem telefone";
-    const notification = [
+    const notification = notificationText || [
       "Um cliente quer falar com voce.",
       `Cliente: ${customerName}`,
       `WhatsApp: +${customerPhone}`,

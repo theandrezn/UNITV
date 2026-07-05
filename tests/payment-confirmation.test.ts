@@ -91,7 +91,7 @@ function createHarness() {
 describe("PaymentConfirmationService", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("marks an exact approved payment paid and sends one WhatsApp message", async () => {
+  it("marks an exact approved payment paid and notifies stock is missing", async () => {
     const harness = createHarness();
 
     const result = await harness.service.process({ webhookEventId: "webhook-id", paymentId: "987654" });
@@ -111,11 +111,13 @@ describe("PaymentConfirmationService", () => {
       "2026-07-04T18:00:00.000Z",
       "987654"
     );
-    expect(harness.evolutionService.sendTextMessage).toHaveBeenCalledWith({
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(1, {
       phone: "5511999998888",
-      text:
-        "Pagamento confirmado. Seu pedido UTV-20260704-000100 foi aprovado.\n\n" +
-        "Ainda nao encontrei codigo disponivel no estoque para esse plano. Vou encaminhar para atendimento inserir/liberar o codigo."
+      text: expect.stringContaining("Ainda não encontrei código de acesso disponível")
+    });
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(2, {
+      phone: "558699802602",
+      text: expect.stringContaining("Pagamento confirmado sem código disponível")
     });
     expect(harness.webhooksService.markWebhookProcessed).toHaveBeenCalledWith("webhook-id");
     expect(result).toEqual({ status: "paid", orderId: baseOrder.id });
@@ -140,9 +142,21 @@ describe("PaymentConfirmationService", () => {
       baseOrder.id,
       expect.objectContaining({ code_id: "code-id", status: "code_sent" })
     );
-    expect(harness.evolutionService.sendTextMessage).toHaveBeenCalledWith({
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(1, {
       phone: "5511999998888",
-      text: "Pagamento confirmado. Seu pedido UTV-20260704-000100 foi aprovado.\n\nSeu codigo de recarga UNiTV:\nUNITV-CODE-001"
+      text: expect.stringContaining("✅ Agradecemos pela sua compra!")
+    });
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(1, {
+      phone: "5511999998888",
+      text: expect.stringContaining("UNITV-CODE-001")
+    });
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(2, {
+      phone: "5511999998888",
+      text: expect.stringContaining("🎬 Entre na Comunidade Oficial da UNITV!")
+    });
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(2, {
+      phone: "5511999998888",
+      text: expect.stringContaining("https://chat.whatsapp.com/Kxm1wDqplLX9QUnj2YTwvs?mode=gi_t")
     });
   });
 

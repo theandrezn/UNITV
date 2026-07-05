@@ -9,6 +9,7 @@ import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import { OrdersService } from "@/services/orders.service";
 import { MercadoPagoService } from "@/services/payments/mercadopago.service";
 import { PlansService } from "@/services/plans.service";
+import { buildNoAccessCodeAvailableMessage, buildPostPurchaseMessages } from "@/lib/unitv/post-purchase-messages";
 import {
   buildPlansMenu,
   CONTINUATION_MENU,
@@ -35,6 +36,9 @@ type CommercialReplyResult = {
   reply: string;
   order?: Record<string, unknown>;
   requiresHuman?: boolean;
+  notifyOwner?: boolean;
+  ownerNotificationText?: string;
+  followUpMessages?: string[];
   menu?: WhatsAppMenu;
   sendTextBeforeMenu?: boolean;
   copyText?: string;
@@ -496,9 +500,14 @@ export class ChatAgentService {
       await this.ordersService.transitionStatus(String(order.id), ["paid", "code_reserved"], "waiting_stock");
       return {
         order,
-        reply:
-          `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
-          "Ainda nao encontrei codigo disponivel no estoque para esse plano. Vou encaminhar para atendimento inserir/liberar o codigo."
+        requiresHuman: true,
+        notifyOwner: true,
+        ownerNotificationText:
+          "⚠️ Pagamento confirmado sem código disponível.\n\n" +
+          `Pedido: ${orderNumber}\n` +
+          `Cliente: ${input.customer.id}\n\n` +
+          "Cadastre/libere um código válido no banco para o cliente receber o acesso.",
+        reply: buildNoAccessCodeAvailableMessage(orderNumber)
       };
     }
 
@@ -524,11 +533,11 @@ export class ChatAgentService {
       metadata: { webhookEventId: input.webhookEventId, code_id: reservedCode.id }
     });
 
+    const postPurchaseMessages = buildPostPurchaseMessages(String(reservedCode.code));
     return {
       order: sentOrder,
-      reply:
-        `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
-        `Seu codigo de recarga UNiTV:\n${String(reservedCode.code)}`
+      reply: postPurchaseMessages[0],
+      followUpMessages: [postPurchaseMessages[1]]
     };
   }
 

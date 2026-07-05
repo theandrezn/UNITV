@@ -5,7 +5,10 @@ import { EvolutionService } from "@/services/evolution/evolution.service";
 import { OrdersService } from "@/services/orders.service";
 import { PaymentsService } from "@/services/payments.service";
 import { WebhooksService } from "@/services/webhooks.service";
+import { buildNoAccessCodeAvailableMessage, buildPostPurchaseMessages } from "@/lib/unitv/post-purchase-messages";
 import { MercadoPagoService } from "./mercadopago.service";
+
+const ADMIN_WHATSAPP_PHONE = "558699802602";
 
 type ProcessPaymentInput = {
   webhookEventId: string;
@@ -134,18 +137,24 @@ export class PaymentConfirmationService {
     try {
       const code = await this.releaseActivationCode(order);
       if (code) {
-        await this.evolutionService.sendTextMessage({
-          phone,
-          text: `Pagamento confirmado. Seu pedido ${String(order.order_number)} foi aprovado.\n\nSeu codigo de recarga UNiTV:\n${code}`
-        });
+        for (const text of buildPostPurchaseMessages(code)) {
+          await this.evolutionService.sendTextMessage({ phone, text });
+        }
         return;
       }
 
+      const orderNumber = String(order.order_number || "seu pedido");
       await this.evolutionService.sendTextMessage({
         phone,
+        text: buildNoAccessCodeAvailableMessage(orderNumber)
+      });
+      await this.evolutionService.sendTextMessage({
+        phone: ADMIN_WHATSAPP_PHONE,
         text:
-          `Pagamento confirmado. Seu pedido ${String(order.order_number)} foi aprovado.\n\n` +
-          "Ainda nao encontrei codigo disponivel no estoque para esse plano. Vou encaminhar para atendimento inserir/liberar o codigo."
+          "⚠️ Pagamento confirmado sem código disponível.\n\n" +
+          `Pedido: ${orderNumber}\n` +
+          `Cliente: ${String(order.customer_id || "sem cliente")}\n\n` +
+          "Cadastre/libere um código válido no banco para o cliente receber o acesso."
       });
     } catch (error) {
       await this.auditService.createAuditLog({
