@@ -65,17 +65,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: "ok", result: "ignored_invalid_payload" });
     }
 
-    if (incomingMessage.fromMe) {
-      await webhooksService.markWebhookIgnored(currentWebhookEventId);
-      return NextResponse.json({ status: "ok", result: "ignored_from_me" });
-    }
-
     if (incomingMessage.isGroup) {
       await webhooksService.markWebhookIgnored(currentWebhookEventId);
       return NextResponse.json({ status: "ok", result: "ignored_group" });
     }
 
-    if (!incomingMessage.text.trim()) {
+    if (!incomingMessage.fromMe && !incomingMessage.text.trim()) {
       await webhooksService.markWebhookIgnored(currentWebhookEventId);
       return NextResponse.json({ status: "ok", result: "ignored_empty_message" });
     }

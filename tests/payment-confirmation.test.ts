@@ -156,7 +156,7 @@ describe("PaymentConfirmationService", () => {
     });
     expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(2, {
       phone: "5511999998888",
-      text: expect.stringContaining("https://chat.whatsapp.com/Kxm1wDqplLX9QUnj2YTwvs?mode=gi_t")
+      text: expect.stringContaining("https://chat.whatsapp.com/GuMhy92y5cJ6PVC0KLtZh3")
     });
   });
 

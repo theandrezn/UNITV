@@ -1,4 +1,4 @@
-export const UNITV_COMMUNITY_LINK = "https://chat.whatsapp.com/Kxm1wDqplLX9QUnj2YTwvs?mode=gi_t";
+export const UNITV_COMMUNITY_LINK = "https://chat.whatsapp.com/GuMhy92y5cJ6PVC0KLtZh3";
 
 export function buildPostPurchaseMessages(accessCode: string) {
   return [

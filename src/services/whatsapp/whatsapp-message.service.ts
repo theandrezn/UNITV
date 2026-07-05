@@ -13,6 +13,7 @@ import type { IncomingEvolutionMessage } from "@/lib/evolution/client";
 import { resolveMenuSelection, type WhatsAppMenu } from "@/lib/whatsapp/menus";
 
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
+const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
 
 type ProcessIncomingMessageInput = {
   webhookEventId: string;
@@ -71,6 +72,55 @@ export class WhatsappMessageService {
         metadata: { instance: message.instance }
       }));
 
+    if (message.fromMe) {
+      if (!conversation.metadata?.requires_human) {
+        await this.auditService.createAuditLog({
+          actor_type: "webhook",
+          action: "from_me_message_ignored_without_handoff",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: { webhookEventId, externalMessageId: message.externalMessageId }
+        });
+        return { status: "ignored" as const };
+      }
+
+      const messageAt = getMessageDate(message).toISOString();
+      await this.messagesRepository.createMessage({
+        conversation_id: conversation.id,
+        customer_id: customer.id,
+        role: "human_agent",
+        content: message.text,
+        content_type: message.messageType,
+        external_message_id: message.externalMessageId,
+        metadata: {
+          remoteJid: message.remoteJid,
+          media: message.media,
+          hasMedia: message.hasMedia,
+          timestamp: message.timestamp,
+          webhookEventId,
+          fromMe: true
+        }
+      });
+
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
+        ...(conversation.metadata || {}),
+        requires_human: true,
+        handoff_reason: conversation.metadata?.handoff_reason || "human_agent_reply",
+        handoff_requested_at: conversation.metadata?.handoff_requested_at || messageAt,
+        last_specialist_message_at: messageAt
+      });
+      await this.conversationsRepository.touchConversation(conversation.id, messageAt);
+      await this.auditService.createAuditLog({
+        actor_type: "human_admin",
+        action: "human_agent_message_recorded",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, externalMessageId: message.externalMessageId, lastSpecialistMessageAt: messageAt }
+      });
+
+      return { status: "ignored" as const };
+    }
+
     await this.messagesRepository.createMessage({
       conversation_id: conversation.id,
       customer_id: customer.id,
@@ -94,12 +144,18 @@ export class WhatsappMessageService {
 
     const resumeBot = conversation.metadata?.requires_human && isBotResumeRequest(message.text);
     const staleFreeTrialHandoff = conversation.metadata?.requires_human && isStaleFreeTrialHandoff(conversation.metadata);
-    if (resumeBot || staleFreeTrialHandoff) {
+    const timedOutHumanHandoff = conversation.metadata?.requires_human && isHumanHandoffTimeoutExpired(conversation.metadata);
+    if (resumeBot || staleFreeTrialHandoff || timedOutHumanHandoff) {
+      const handoffResolvedBy = resumeBot
+        ? "whatsapp_resume_command"
+        : staleFreeTrialHandoff
+          ? "stale_free_trial_handoff_auto_resume"
+          : "human_handoff_timeout_auto_resume";
       await this.conversationsRepository.updateConversationMetadata(conversation.id, {
         ...(conversation.metadata || {}),
         requires_human: false,
         handoff_resolved_at: new Date().toISOString(),
-        handoff_resolved_by: resumeBot ? "whatsapp_resume_command" : "stale_free_trial_handoff_auto_resume",
+        handoff_resolved_by: handoffResolvedBy,
         handoff_reason: null
       });
       conversation.metadata = {
@@ -434,6 +490,42 @@ function isReceiptMessage(message: IncomingEvolutionMessage) {
 function isStaleFreeTrialHandoff(metadata: Record<string, unknown> | null | undefined) {
   const reason = metadata?.handoff_reason;
   return reason === "free_trial" || reason === "free_trial_activation";
+}
+
+function isHumanHandoffTimeoutExpired(metadata: Record<string, unknown> | null | undefined, now = new Date()) {
+  const referenceDate = firstValidMetadataDate(metadata?.last_specialist_message_at, metadata?.handoff_requested_at);
+  if (!referenceDate) {
+    return false;
+  }
+
+  return now.getTime() - referenceDate.getTime() >= HUMAN_HANDOFF_TIMEOUT_MS;
+}
+
+function firstValidMetadataDate(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value !== "string" || !value.trim()) {
+      continue;
+    }
+
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) {
+      return date;
+    }
+  }
+
+  return null;
+}
+
+function getMessageDate(message: IncomingEvolutionMessage) {
+  if (typeof message.timestamp === "number" && Number.isFinite(message.timestamp)) {
+    const milliseconds = message.timestamp > 10_000_000_000 ? message.timestamp : message.timestamp * 1000;
+    const date = new Date(milliseconds);
+    if (!Number.isNaN(date.getTime())) {
+      return date;
+    }
+  }
+
+  return new Date();
 }
 
 function isHumanHandoffRequest(text: string) {
