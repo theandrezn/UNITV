@@ -3,7 +3,7 @@ export default function Home() {
     <main>
       <section>
         <h1>UNITV Agent</h1>
-        <p>Base tecnica server-side para atendimento, pedidos, pagamentos e estoque de codigos.</p>
+        <p>Base técnica server-side para atendimento, pedidos, pagamentos e estoque de códigos.</p>
       </section>
     </main>
   );

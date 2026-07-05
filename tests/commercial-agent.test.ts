@@ -277,7 +277,7 @@ describe("commercial WhatsApp agent", () => {
 
     expect(appSettingsService.getPixInstructions).not.toHaveBeenCalled();
     expect(mercadoPagoService.createOrderPreference).not.toHaveBeenCalled();
-    expect(result.reply).toBe("PAGUE COM CARTAO AQUI ABAIXO\nhttps://www.mercadopago.com.br/checkout/dynamic-order-link");
+    expect(result.reply).toBe("PAGUE COM CARTÃO AQUI ABAIXO\nhttps://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(result.reply).not.toContain("Pedido criado");
     expect(result.reply).not.toContain("Pagar com Pix");
     expect(appSettingsService.getPaymentInstructions).not.toHaveBeenCalled();
@@ -326,7 +326,7 @@ describe("commercial WhatsApp agent", () => {
         })
       })
     );
-    expect(result.reply).toBe("PAGUE COM CARTAO AQUI ABAIXO\nhttps://www.mercadopago.com.br/checkout/dynamic-order-link");
+    expect(result.reply).toBe("PAGUE COM CARTÃO AQUI ABAIXO\nhttps://www.mercadopago.com.br/checkout/dynamic-order-link");
   });
 
   it("checks payment status when the customer says payment is done before following card intent", async () => {
@@ -348,10 +348,10 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("FEITO");
-    expect(result.reply.toLowerCase()).toContain("ainda nao consta pagamento aprovado");
+    expect(result.reply.toLowerCase()).toContain("ainda não consta pagamento aprovado");
     expect(result.reply).toContain("UTV-20260704-000008");
     expect(result.reply).toContain("webhook");
-    expect(result.reply).not.toContain("PAGUE COM CARTAO");
+    expect(result.reply).not.toContain("PAGUE COM CARTÃO");
     expect(mercadoPagoService.createOrderPreference).not.toHaveBeenCalled();
     expect(result.reply.toLowerCase()).not.toContain("codigo");
   });
@@ -454,7 +454,7 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("proxima mensagem");
+    expect(result.reply).toContain("próxima mensagem");
     expect(result.reply).not.toContain("000201-pix-copy-paste");
     expect(result.copyText).toBe("000201-pix-copy-paste");
     expect(result.reply).not.toContain("mercadopago.com.br/payments");
@@ -504,11 +504,11 @@ describe("commercial WhatsApp agent", () => {
         })
       })
     );
-    expect(result.reply).toContain("proxima mensagem");
+    expect(result.reply).toContain("próxima mensagem");
     expect(result.reply).not.toContain("000201-pix-copy-paste");
     expect(result.copyText).toBe("000201-pix-copy-paste");
     expect(result.reply).not.toContain("mercadopago.com.br/payments");
-    expect(result.reply).toContain("confirmacao e automatica");
+    expect(result.reply).toContain("confirmação é automática");
     expect(result.media).toEqual(
       expect.objectContaining({
         base64: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB",
@@ -1074,7 +1074,7 @@ describe("commercial WhatsApp agent", () => {
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         phone: "558699802602",
-        text: expect.stringContaining("Um cliente quer falar com voce.")
+        text: expect.stringContaining("Um cliente quer falar com você.")
       })
     );
   });
@@ -1203,7 +1203,7 @@ describe("commercial WhatsApp agent", () => {
       touchConversation: vi.fn(async () => ({}))
     };
     const intentClassifier = { classify: vi.fn(async () => ({ intent: "payment_pix", confidence: 1, summary: "pix", suggested_reply: "" })) };
-    const chatAgent = { generateCommercialReply: vi.fn(async () => ({ reply: "Aqui esta a chave Pix." })) };
+    const chatAgent = { generateCommercialReply: vi.fn(async () => ({ reply: "Aqui está a chave Pix." })) };
     const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
     const service = new WhatsappMessageService(
       { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
@@ -1250,7 +1250,7 @@ describe("commercial WhatsApp agent", () => {
       })
     );
     expect(chatAgent.generateCommercialReply).toHaveBeenCalled();
-    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({ phone: "5511999998888", text: "Aqui esta a chave Pix." });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({ phone: "5511999998888", text: "Aqui está a chave Pix." });
   });
 
   it("records specialist messages during handoff and renews the 5-minute timer", async () => {
@@ -1292,7 +1292,7 @@ describe("commercial WhatsApp agent", () => {
         remoteJid: "5511999998888@s.whatsapp.net",
         phone: "5511999998888",
         contactName: "Cliente",
-        text: "Estou verificando para voce.",
+        text: "Estou verificando para você.",
         messageType: "conversation",
         hasMedia: false,
         media: {},

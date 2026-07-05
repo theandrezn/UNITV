@@ -375,7 +375,7 @@ export class WhatsappMessageService {
     const customerName = message.contactName || customer.name || "Cliente";
     const customerPhone = message.phone || customer.phone || "sem telefone";
     const notification = notificationText || [
-      "Um cliente quer falar com voce.",
+      "Um cliente quer falar com você.",
       `Cliente: ${customerName}`,
       `WhatsApp: +${customerPhone}`,
       `Mensagem: ${message.text || "(sem texto)"}`,

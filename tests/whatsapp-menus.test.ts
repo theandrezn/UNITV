@@ -72,15 +72,15 @@ describe("WhatsApp interactive menus", () => {
     });
     expect(resolveMenuSelection("3", { last_menu_id: "install" })).toEqual({
       intent: "technical_support",
-      message: "quero download na tv box televisao android"
+      message: "quero download na TV Box/Televisão Android"
     });
     expect(resolveMenuSelection("4", { last_menu_id: "install" })).toEqual({
       intent: "technical_support",
-      message: "ver video tutorial de instalacao"
+      message: "ver vídeo tutorial de instalação"
     });
     expect(resolveMenuSelection("5", { last_menu_id: "install" })).toEqual({
       intent: "human_help",
-      message: "quero falar com suporte sobre instalacao"
+      message: "quero falar com suporte sobre instalação"
     });
   });
 

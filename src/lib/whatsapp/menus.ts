@@ -28,7 +28,7 @@ type MenuSelection = {
 };
 
 const mainRows: WhatsAppMenuRow[] = [
-  { title: "Ver planos", description: "Conheca valores e duracoes", rowId: "menu:main:view_plans" },
+  { title: "Ver planos", description: "Conheça valores e durações", rowId: "menu:main:view_plans" },
   { title: "Fazer teste grátis", description: "Teste a UNiTV por 3 dias", rowId: "menu:main:free_trial" },
   { title: "Comprar agora", description: "Escolha seu plano", rowId: "menu:main:buy_now" },
   { title: "Aprender a instalar", description: "Receba o passo a passo", rowId: "menu:main:install" },
@@ -39,7 +39,7 @@ const mainRows: WhatsAppMenuRow[] = [
 export const MAIN_MENU: WhatsAppMenu = {
   id: "main",
   title: "Como posso te ajudar?",
-  description: "Escolha uma opcao abaixo",
+  description: "Escolha uma opção abaixo",
   buttonText: "Ver opções",
   footerText: "UNiTV",
   sections: [{ title: "Atendimento", rows: mainRows }],
@@ -60,20 +60,20 @@ const deviceRows: WhatsAppMenuRow[] = [
 
 export const DEVICE_MENU: WhatsAppMenu = {
   id: "devices",
-  title: "Qual aparelho voce usa?",
-  description: "Escolha o aparelho para receber a orientacao correta",
+  title: "Qual aparelho você usa?",
+  description: "Escolha o aparelho para receber a orientação correta",
   buttonText: "Escolher aparelho",
   footerText: "UNiTV",
   sections: [{ title: "Aparelhos", rows: deviceRows }],
-  fallbackText: formatFallback("Qual aparelho voce usa?", deviceRows)
+  fallbackText: formatFallback("Qual aparelho você usa?", deviceRows)
 };
 
 const installRows: WhatsAppMenuRow[] = [
-  { title: "Instalar na TV pelo Downloader", description: "Codigo 8322904 e passo a passo", rowId: "menu:install:downloader_tv" },
-  { title: "Quero download no celular", description: "Versao mobile para Android", rowId: "menu:install:apk_android" },
-  { title: "Quero download na TV Box/Televisao Android", description: "TV Box, Android TV e aparelhos compativeis", rowId: "menu:install:apk_tv" },
-  { title: "Ver video tutorial", description: "Tutorial no YouTube", rowId: "menu:install:video" },
-  { title: "Falar com suporte", description: "Atendimento para instalacao", rowId: "menu:install:support" }
+  { title: "Instalar na TV pelo Downloader", description: "Código 8322904 e passo a passo", rowId: "menu:install:downloader_tv" },
+  { title: "Quero download no celular", description: "Versão mobile para Android", rowId: "menu:install:apk_android" },
+  { title: "Quero download na TV Box/Televisão Android", description: "TV Box, Android TV e aparelhos compatíveis", rowId: "menu:install:apk_tv" },
+  { title: "Ver vídeo tutorial", description: "Tutorial no YouTube", rowId: "menu:install:video" },
+  { title: "Falar com suporte", description: "Atendimento para instalação", rowId: "menu:install:support" }
 ];
 
 export const INSTALL_MENU: WhatsAppMenu = {
@@ -87,7 +87,7 @@ export const INSTALL_MENU: WhatsAppMenu = {
 };
 
 const continuationRows: WhatsAppMenuRow[] = [
-  { title: "Ver planos", description: "Conheca valores e duracoes", rowId: "menu:continue:view_plans" },
+  { title: "Ver planos", description: "Conheça valores e durações", rowId: "menu:continue:view_plans" },
   { title: "Fazer teste grátis", description: "Teste a UNiTV por 3 dias", rowId: "menu:continue:free_trial" },
   { title: "Comprar agora", description: "Escolha seu plano", rowId: "menu:continue:buy_now" },
   { title: "Falar com especialista", description: "Atendimento humano", rowId: "menu:continue:specialist" }
@@ -96,7 +96,7 @@ const continuationRows: WhatsAppMenuRow[] = [
 export const CONTINUATION_MENU: WhatsAppMenu = {
   id: "continue",
   title: "Consegui te ajudar?",
-  description: "Escolha o proximo passo",
+  description: "Escolha o próximo passo",
   buttonText: "Continuar",
   footerText: "UNiTV",
   sections: [{ title: "Próximo passo", rows: continuationRows }],
@@ -130,10 +130,10 @@ export function buildPlansMenu(
   return {
     id: "plans",
     title: "Escolha seu plano UNiTV",
-    description: "Selecione uma opcao abaixo",
+    description: "Selecione uma opção abaixo",
     buttonText: "Ver planos",
     footerText: "UNiTV",
-    sections: [{ title: "Planos disponiveis", rows }],
+    sections: [{ title: "Planos disponíveis", rows }],
     fallbackText: formatFallback("Escolha seu plano UNiTV", rows)
   };
 }
@@ -155,22 +155,22 @@ export function resolveMenuSelection(text: string, metadata: Record<string, unkn
 
 const directSelections: Record<string, MenuSelection> = {
   "menu:main:view_plans": { intent: "ask_price", message: "quero ver os planos" },
-  "menu:main:free_trial": { intent: "free_trial", message: "quero fazer o teste gratis" },
+  "menu:main:free_trial": { intent: "free_trial", message: "quero fazer o teste grátis" },
   "menu:main:buy_now": { intent: "buy_plan", message: "quero comprar agora" },
   "menu:main:install": { intent: "technical_support", message: "quero aprender a instalar" },
   "menu:main:receipt": { intent: "receipt_sent", message: "quero enviar comprovante" },
   "menu:main:specialist": { intent: "human_help", message: "quero falar com especialista" },
   "menu:continue:view_plans": { intent: "ask_price", message: "quero ver os planos" },
-  "menu:continue:free_trial": { intent: "free_trial", message: "quero fazer o teste gratis" },
+  "menu:continue:free_trial": { intent: "free_trial", message: "quero fazer o teste grátis" },
   "menu:continue:buy_now": { intent: "buy_plan", message: "quero comprar agora" },
   "menu:continue:specialist": { intent: "human_help", message: "quero falar com especialista" },
   "menu:payment:pix": { intent: "pix_payment", message: "quero pagar no pix" },
-  "menu:payment:card": { intent: "card_payment", message: "quero pagar com cartao" },
+  "menu:payment:card": { intent: "card_payment", message: "quero pagar com cartão" },
   "menu:install:downloader_tv": { intent: "technical_support", message: "instalar na tv pelo downloader" },
   "menu:install:apk_android": { intent: "technical_support", message: "quero download no celular" },
-  "menu:install:apk_tv": { intent: "technical_support", message: "quero download na tv box televisao android" },
-  "menu:install:video": { intent: "technical_support", message: "ver video tutorial de instalacao" },
-  "menu:install:support": { intent: "human_help", message: "quero falar com suporte sobre instalacao" },
+  "menu:install:apk_tv": { intent: "technical_support", message: "quero download na TV Box/Televisão Android" },
+  "menu:install:video": { intent: "technical_support", message: "ver vídeo tutorial de instalação" },
+  "menu:install:support": { intent: "human_help", message: "quero falar com suporte sobre instalação" },
   "menu:devices:smart_tv": { intent: "technical_support", message: "quero instalar na Smart TV" },
   "menu:devices:tv_box": { intent: "technical_support", message: "quero instalar na TV Box" },
   "menu:devices:android": { intent: "technical_support", message: "quero instalar no celular Android" },

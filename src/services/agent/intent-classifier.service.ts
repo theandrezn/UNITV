@@ -31,8 +31,8 @@ export type IntentClassification = z.infer<typeof intentClassificationSchema>;
 const fallbackClassification: IntentClassification = {
   intent: "unknown",
   confidence: 0.2,
-  summary: "Nao foi possivel classificar a mensagem com seguranca.",
-  suggested_reply: "Entendi. Voce quer comprar um plano, renovar um acesso ou falar com suporte?"
+  summary: "Não foi possível classificar a mensagem com segurança.",
+  suggested_reply: "Entendi. Você quer comprar um plano, renovar um acesso ou falar com suporte?"
 };
 
 export class IntentClassifierService {
@@ -49,7 +49,7 @@ export class IntentClassifierService {
         {
           role: "system",
           content:
-            "Classifique a intencao do cliente UniTV usando apenas: greeting, buy_plan, renew_plan, ask_price, ask_payment, card_payment, pix_payment, free_trial, receipt_sent, activation_help, technical_support, human_help, unknown. Use card_payment quando pedir pagamento por cartao ou link de pagamento. Use pix_payment quando pedir Pix, chave Pix, QR Code ou Pix Copia e Cola. Use free_trial quando pedir teste gratis. Responda somente JSON valido com intent, confidence, summary e suggested_reply. Nunca ofereca codigo de ativacao."
+            "Classifique a intenção do cliente UniTV usando apenas: greeting, buy_plan, renew_plan, ask_price, ask_payment, card_payment, pix_payment, free_trial, receipt_sent, activation_help, technical_support, human_help, unknown. Use card_payment quando pedir pagamento por cartão ou link de pagamento. Use pix_payment quando pedir Pix, chave Pix, QR Code ou Pix Copia e Cola. Use free_trial quando pedir teste grátis. Responda somente JSON válido com intent, confidence, summary e suggested_reply. Nunca ofereça código de ativação."
         },
         {
           role: "user",
@@ -82,7 +82,7 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
   }
 
   if (/^(oi|ola|olá|opa|bom dia|boa tarde|boa noite|e ai|e aí|oie|oii+|oiii+)[!?.,\s]*$/.test(text)) {
-    return fixedClassification("greeting", "Saudacao simples.");
+    return fixedClassification("greeting", "Saudação simples.");
   }
 
   if (/\b(humano|atendente|especialista|vendedor|consultor|pessoa|responsavel|responsável)\b/.test(text)) {
@@ -90,7 +90,7 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
   }
 
   if (/\b(teste|gratis|gratuito|free trial)\b/.test(text)) {
-    return fixedClassification("free_trial", "Cliente pediu teste gratis.");
+    return fixedClassification("free_trial", "Cliente pediu teste grátis.");
   }
 
   if (/\b(preco|preço|valor|valores|quanto custa|planos?|mensal|trimestral|semestral|anual)\b/.test(text) &&
@@ -99,11 +99,11 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
   }
 
   if (/\b(renovar|renovacao|renovação)\b/.test(text)) {
-    return fixedClassification("renew_plan", "Cliente pediu renovacao.");
+    return fixedClassification("renew_plan", "Cliente pediu renovação.");
   }
 
   if (/\b(comprar|compra|assinar|quero um codigo|quero codigo|liberar acesso|ativar plano)\b/.test(text)) {
-    return fixedClassification("buy_plan", "Cliente demonstrou intencao de compra.");
+    return fixedClassification("buy_plan", "Cliente demonstrou intenção de compra.");
   }
 
   if (/\b(pix|chave pix|copia e cola|qr code)\b/.test(text)) {
@@ -111,7 +111,7 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
   }
 
   if (/\b(cartao|cartão|credito|crédito|debito|débito|link de pagamento)\b/.test(text)) {
-    return fixedClassification("card_payment", "Cliente pediu pagamento por cartao.");
+    return fixedClassification("card_payment", "Cliente pediu pagamento por cartão.");
   }
 
   if (/\b(como pagar|pagamento|formas de pagamento|pagar)\b/.test(text)) {
@@ -127,11 +127,11 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
   }
 
   if (/\b(instalar|instalacao|instalação|baixar|download|dowload|apk|tutorial|downloader|tv box|android tv|celular|codigo downloader)\b/.test(text)) {
-    return fixedClassification("technical_support", "Cliente pediu instalacao ou download.");
+    return fixedClassification("technical_support", "Cliente pediu instalação ou download.");
   }
 
   if (/\b(travando|trava|erro|nao abre|não abre|suporte|ajuda|problema|funciona)\b/.test(text)) {
-    return fixedClassification("technical_support", "Cliente pediu suporte tecnico.");
+    return fixedClassification("technical_support", "Cliente pediu suporte técnico.");
   }
 
   return null;

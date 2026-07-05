@@ -9,7 +9,7 @@ export class AiService {
       messages: [
         {
           role: "system",
-          content: "Voce e um assistente de atendimento da UNITV. Responda de forma objetiva e segura."
+          content: "Você é um assistente de atendimento da UNITV. Responda de forma objetiva e segura."
         },
         { role: "user", content: input.message }
       ],
@@ -33,7 +33,7 @@ export class AiService {
       messages: [
         {
           role: "system",
-          content: "Classifique a intencao em uma palavra: purchase, renewal, support, receipt, unknown."
+          content: "Classifique a intenção em uma palavra: purchase, renewal, support, receipt, unknown."
         },
         { role: "user", content: input.message }
       ],

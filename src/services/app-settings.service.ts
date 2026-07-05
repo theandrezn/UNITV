@@ -33,5 +33,5 @@ function readTextValue(value: { text?: unknown } | string | null | undefined) {
 }
 
 function defaultInstructions() {
-  return "Pagamento sob orientacao manual. Envie o comprovante por aqui apos pagar.";
+  return "Pagamento sob orientação manual. Envie o comprovante por aqui após pagar.";
 }

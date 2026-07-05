@@ -22,7 +22,7 @@ import {
 export const INITIAL_UNITV_REPLY =
   "Olá! Bem-vindo à melhor plataforma de filmes e canais de todo o Brasil 🧡\n\nO que você quer hoje?";
 
-const LOW_CONFIDENCE_REPLY = "Entendi. Voce quer comprar um plano, renovar um acesso ou falar com suporte?";
+const LOW_CONFIDENCE_REPLY = "Entendi. Você quer comprar um plano, renovar um acesso ou falar com suporte?";
 
 type CommercialReplyInput = {
   message: string;
@@ -123,7 +123,7 @@ export class ChatAgentService {
       });
       return {
         reply:
-          "Consigo te ajudar com a ativacao, mas nao libero codigo automaticamente. Se ja pagou, envie o comprovante por aqui para conferencia manual.",
+          "Consigo te ajudar com a ativação, mas não libero código automaticamente. Se já pagou, envie o comprovante por aqui para conferência manual.",
         menu: CONTINUATION_MENU,
         sendTextBeforeMenu: true
       };
@@ -143,7 +143,7 @@ export class ChatAgentService {
       const plans = await this.plansService.listActivePlans();
       const menu = plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: menu?.fallbackText || "Ainda nao encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano conferir.",
+        reply: menu?.fallbackText || "Ainda não encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano conferir.",
         menu: menu || undefined
       };
     }
@@ -166,7 +166,7 @@ export class ChatAgentService {
 
     if (intent === "receipt_sent") {
       return {
-        reply: "Envie a foto ou o PDF do comprovante aqui na conversa. O pagamento sera encaminhado para validacao.",
+        reply: "Envie a foto ou o PDF do comprovante aqui na conversa. O pagamento será encaminhado para validação.",
         menu: CONTINUATION_MENU,
         sendTextBeforeMenu: true
       };
@@ -188,7 +188,7 @@ export class ChatAgentService {
       if (!plan) {
         const menu = plans.length ? buildPlansMenu(plans) : null;
         return {
-          reply: menu?.fallbackText || "Entendi que voce quer comprar, mas nao encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano.",
+          reply: menu?.fallbackText || "Entendi que você quer comprar, mas não encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano.",
           menu: menu || undefined
         };
       }
@@ -207,7 +207,7 @@ export class ChatAgentService {
         return {
           requiresHuman: true,
           reply:
-            "Encontrei esse plano, mas o valor ainda precisa ser confirmado no cadastro. Vou encaminhar para atendimento humano finalizar seu pedido com seguranca."
+            "Encontrei esse plano, mas o valor ainda precisa ser confirmado no cadastro. Vou encaminhar para atendimento humano finalizar seu pedido com segurança."
         };
       }
 
@@ -271,7 +271,7 @@ export class ChatAgentService {
 
       const supportReply =
         supportKnowledge?.content ||
-        "Me diga qual aparelho/app voce usa, o erro que aparece e se sua internet esta funcionando. Assim eu te ajudo melhor.";
+        "Me diga qual aparelho/app você usa, o erro que aparece e se sua internet está funcionando. Assim eu te ajudo melhor.";
       return {
         reply: supportReply,
         menu: CONTINUATION_MENU,
@@ -295,7 +295,7 @@ export class ChatAgentService {
       const plans = await this.plansService.listActivePlans();
       const menu = plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: menu?.fallbackText || "Ainda nao encontrei um pedido aberto. Vou encaminhar para atendimento humano.",
+        reply: menu?.fallbackText || "Ainda não encontrei um pedido aberto. Vou encaminhar para atendimento humano.",
         menu: menu || undefined
       };
     }
@@ -311,7 +311,7 @@ export class ChatAgentService {
         input,
         "card_order_plan_missing",
         knowledge,
-        "Encontrei seu pedido, mas nao consegui identificar o plano para gerar o link do cartao. Vou encaminhar para atendimento humano."
+        "Encontrei seu pedido, mas não consegui identificar o plano para gerar o link do cartão. Vou encaminhar para atendimento humano."
       );
     }
 
@@ -354,7 +354,7 @@ export class ChatAgentService {
         input,
         "mercado_pago_preference_creation_failed",
         knowledge,
-        `Seu pedido ${String(order.order_number)} esta aberto, mas nao consegui gerar o link do cartao agora. Vou encaminhar para atendimento humano.`
+        `Seu pedido ${String(order.order_number)} está aberto, mas não consegui gerar o link do cartão agora. Vou encaminhar para atendimento humano.`
       );
     }
   }
@@ -367,7 +367,7 @@ export class ChatAgentService {
       return {
         reply:
           menu?.fallbackText ||
-          "FEITO. Ainda nao encontrei um pedido seu aqui. Escolha o plano para eu gerar o pagamento corretamente.",
+          "FEITO. Ainda não encontrei um pedido seu aqui. Escolha o plano para eu gerar o pagamento corretamente.",
         menu: menu || undefined
       };
     }
@@ -384,7 +384,7 @@ export class ChatAgentService {
       return {
         order,
         reply:
-          `Pagamento confirmado para o pedido ${orderNumber}. O acesso ja foi liberado para esse pedido.`
+          `Pagamento confirmado para o pedido ${orderNumber}. O acesso já foi liberado para esse pedido.`
       };
     }
 
@@ -392,8 +392,8 @@ export class ChatAgentService {
       return {
         order,
         reply:
-          `FEITO. Seu pedido ${orderNumber} esta em conferencia.\n\n` +
-          "Assim que a validacao terminar, eu sigo com a liberacao do acesso."
+          `FEITO. Seu pedido ${orderNumber} está em conferência.\n\n` +
+          "Assim que a validação terminar, eu sigo com a liberação do acesso."
       };
     }
 
@@ -401,7 +401,7 @@ export class ChatAgentService {
       return {
         order,
         reply:
-          `Encontrei o pedido ${orderNumber}, mas ele nao esta como pagamento aprovado.\n\n` +
+          `Encontrei o pedido ${orderNumber}, mas ele não está como pagamento aprovado.\n\n` +
           "Escolha uma forma de pagamento novamente ou fale com especialista para conferir."
       };
     }
@@ -409,8 +409,8 @@ export class ChatAgentService {
     return {
       order,
       reply:
-        `FEITO. Ainda nao consta pagamento aprovado para o pedido ${orderNumber}.\n\n` +
-        "O pedido esta aguardando a confirmacao automatica do Mercado Pago. Assim que o webhook confirmar, eu sigo para a liberacao do acesso."
+        `FEITO. Ainda não consta pagamento aprovado para o pedido ${orderNumber}.\n\n` +
+        "O pedido está aguardando a confirmação automática do Mercado Pago. Assim que o webhook confirmar, eu sigo para a liberação do acesso."
     };
   }
 
@@ -480,7 +480,7 @@ export class ChatAgentService {
         order,
         reply:
           `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
-          "O acesso ja esta reservado. Se ele nao aparecer na conversa, fale com especialista para reenviar com seguranca."
+          "O acesso já está reservado. Se ele não aparecer na conversa, fale com especialista para reenviar com segurança."
       };
     }
 
@@ -490,7 +490,7 @@ export class ChatAgentService {
         order,
         reply:
           `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
-          "Nao consegui identificar o produto para separar o codigo automaticamente. Vou encaminhar para atendimento finalizar."
+          "Não consegui identificar o produto para separar o código automaticamente. Vou encaminhar para o atendimento finalizar."
       };
     }
 
@@ -550,7 +550,7 @@ export class ChatAgentService {
       const plans = await this.plansService.listActivePlans();
       const menu = plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: menu?.fallbackText || "Ainda nao encontrei um pedido aberto. Vou encaminhar para atendimento humano.",
+        reply: menu?.fallbackText || "Ainda não encontrei um pedido aberto. Vou encaminhar para atendimento humano.",
         menu: menu || undefined
       };
     }
@@ -572,7 +572,7 @@ export class ChatAgentService {
         input,
         "pix_order_plan_missing",
         knowledge,
-        "Encontrei seu pedido, mas nao consegui identificar o plano para gerar o Pix. Vou encaminhar para atendimento humano."
+        "Encontrei seu pedido, mas não consegui identificar o plano para gerar o Pix. Vou encaminhar para atendimento humano."
       );
     }
 
@@ -635,7 +635,7 @@ export class ChatAgentService {
         input,
         "mercado_pago_pix_creation_failed",
         knowledge,
-        `Seu pedido ${String(order.order_number)} esta aberto, mas nao consegui gerar o Pix agora. Vou encaminhar para atendimento humano.`
+        `Seu pedido ${String(order.order_number)} está aberto, mas não consegui gerar o Pix agora. Vou encaminhar para atendimento humano.`
       );
     }
   }
@@ -644,7 +644,7 @@ export class ChatAgentService {
     input: CommercialReplyInput,
     reason: string,
     knowledge: Array<{ category?: string; content?: string }> = [],
-    reply = "Vou encaminhar para atendimento humano te ajudar melhor. Enquanto isso, pode me mandar mais detalhes por aqui."
+    reply = "Vou encaminhar para atendimento humano para te ajudar melhor. Enquanto isso, pode me mandar mais detalhes por aqui."
   ): Promise<CommercialReplyResult> {
     await this.agentActionsService.createAgentAction({
       conversation_id: input.conversation.id,
@@ -680,7 +680,7 @@ function formatMoney(priceCents: number, currency = "BRL") {
 
 function formatPlan(plan: { name: string; price_cents: number; currency?: string; duration_days?: number | null }) {
   const duration = plan.duration_days ? ` (${plan.duration_days} dias)` : "";
-  const price = Number(plan.price_cents) > 0 ? formatMoney(plan.price_cents, plan.currency) : "gratis";
+  const price = Number(plan.price_cents) > 0 ? formatMoney(plan.price_cents, plan.currency) : "grátis";
   return `- ${plan.name}${duration}: ${price}`;
 }
 
@@ -865,14 +865,14 @@ function readOrderPlan(order: Record<string, unknown>) {
 function formatPixReply(order: Record<string, unknown>, _qrCode: string, _ticketUrl: string | null) {
   return [
     `PIX do pedido ${String(order.order_number)}`,
-    "Vou enviar o Pix Copia e Cola na proxima mensagem para facilitar a copia.",
-    "Toque e segure na proxima mensagem e escolha copiar.",
-    "A confirmacao e automatica pelo Mercado Pago. Nao precisa enviar comprovante."
+    "Vou enviar o Pix Copia e Cola na próxima mensagem para facilitar a cópia.",
+    "Toque e segure na próxima mensagem e escolha copiar.",
+    "A confirmação é automática pelo Mercado Pago. Não precisa enviar comprovante."
   ].join("\n\n");
 }
 
 function formatCardReply(checkoutUrl: string) {
-  return `PAGUE COM CARTAO AQUI ABAIXO\n${checkoutUrl}`;
+  return `PAGUE COM CARTÃO AQUI ABAIXO\n${checkoutUrl}`;
 }
 
 function buildMercadoPagoPixEmail(order: Record<string, unknown>, customerId: string) {
