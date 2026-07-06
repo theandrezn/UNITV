@@ -32,7 +32,7 @@ const fallbackClassification: IntentClassification = {
   intent: "unknown",
   confidence: 0.2,
   summary: "Não foi possível classificar a mensagem com segurança.",
-  suggested_reply: "Entendi. Você quer comprar um plano, renovar um acesso ou falar com suporte?"
+  suggested_reply: "Claro, eu te ajudo. Você quer comprar um plano, renovar um acesso ou precisa de ajuda com instalação?"
 };
 
 export class IntentClassifierService {
@@ -93,16 +93,20 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     return fixedClassification("free_trial", "Cliente pediu teste grátis.");
   }
 
-  if (/\b(preco|preço|valor|valores|quanto custa|planos?|mensal|trimestral|semestral|anual)\b/.test(text) &&
+  if (/\b(quantas telas|2 telas|duas telas|telas?)\b/.test(text)) {
+    return fixedClassification("unknown", "Cliente perguntou sobre telas.");
+  }
+
+  if (/\b(preco|preço|valor|valores|quanto custa|planos?|mensal|trimestral|semestral|anual|desconto|promo[cç]ao|promoção|caro|barato)\b/.test(text) &&
       !/\b(comprar|quero|renovar|renovacao|renovação)\b/.test(text)) {
     return fixedClassification("ask_price", "Cliente pediu valores ou planos.");
   }
 
-  if (/\b(renovar|renovacao|renovação)\b/.test(text)) {
+  if (/\b(renovar|renovacao|renovação|recarga|recarregar)\b/.test(text)) {
     return fixedClassification("renew_plan", "Cliente pediu renovação.");
   }
 
-  if (/\b(comprar|compra|assinar|quero um codigo|quero codigo|liberar acesso|ativar plano)\b/.test(text)) {
+  if (/\b(comprar|compra|assinar|quero um codigo|quero codigo|liberar acesso|ativar plano|novo plano|novo acesso)\b/.test(text)) {
     return fixedClassification("buy_plan", "Cliente demonstrou intenção de compra.");
   }
 
@@ -126,11 +130,11 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     return fixedClassification("receipt_sent", "Cliente mencionou comprovante.");
   }
 
-  if (/\b(instalar|instalacao|instalação|baixar|download|dowload|apk|tutorial|downloader|tv box|android tv|celular|codigo downloader)\b/.test(text)) {
+  if (/\b(instalar|instalacao|instalação|baixar|download|dowload|apk|tutorial|downloader|tv box|android tv|celular|codigo downloader|link nao funciona|link não funciona)\b/.test(text)) {
     return fixedClassification("technical_support", "Cliente pediu instalação ou download.");
   }
 
-  if (/\b(travando|trava|erro|nao abre|não abre|suporte|ajuda|problema|funciona)\b/.test(text)) {
+  if (/\b(travando|trava|erro|nao abre|não abre|suporte|ajuda|problema|funciona|iphone|ios)\b/.test(text)) {
     return fixedClassification("technical_support", "Cliente pediu suporte técnico.");
   }
 

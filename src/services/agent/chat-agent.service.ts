@@ -20,9 +20,12 @@ import {
 } from "@/lib/whatsapp/menus";
 
 export const INITIAL_UNITV_REPLY =
-  "Olá! Bem-vindo à melhor plataforma de filmes e canais de todo o Brasil 🧡\n\nO que você quer hoje?";
+  "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André, como posso ajudar?";
 
-const LOW_CONFIDENCE_REPLY = "Entendi. Você quer comprar um plano, renovar um acesso ou falar com suporte?";
+const LOW_CONFIDENCE_REPLY =
+  "Claro, eu te ajudo.\n\nMe confirma uma coisa: você quer comprar um plano, renovar um acesso ou precisa de ajuda com instalação?";
+
+const PLANS_TEXT = ["Mensal — R$ 25", "3 meses — R$ 70", "6 meses — R$ 120", "Anual — R$ 200"].join("\n");
 
 type CommercialReplyInput = {
   message: string;
@@ -86,6 +89,15 @@ export class ChatAgentService {
     const knowledge = await this.knowledgeService.searchKnowledge(message);
     const intent = input.classification.intent === "support" ? "technical_support" : input.classification.intent;
 
+    const salesObjectionReply = getSalesObjectionReply(message);
+    if ((intent === "unknown" || intent === "technical_support") && salesObjectionReply) {
+      return {
+        reply: salesObjectionReply.reply,
+        menu: salesObjectionReply.menu,
+        sendTextBeforeMenu: Boolean(salesObjectionReply.menu)
+      };
+    }
+
     const objectionCategory = getObjectionKnowledgeCategory(message);
     if (objectionCategory) {
       const objection = knowledge.find((article) => article.category === objectionCategory);
@@ -132,8 +144,9 @@ export class ChatAgentService {
     if (intent === "free_trial" || isFreeTrialMessage(message)) {
       return {
         reply:
-          "Claro! O teste grátis é de 3 dias.\n\n" +
-          "Para começar, instale o UNiTV no seu aparelho usando uma das opções abaixo.",
+          "Claro. O teste grátis é de 3 dias.\n\n" +
+          "Primeiro você instala o app no aparelho, depois seguimos com a liberação do teste.\n\n" +
+          "Você vai usar na TV, TV Box ou celular Android?",
         menu: INSTALL_MENU,
         sendTextBeforeMenu: true
       };
@@ -142,9 +155,18 @@ export class ChatAgentService {
     if (intent === "ask_price") {
       const plans = await this.plansService.listActivePlans();
       const menu = plans.length ? buildPlansMenu(plans) : null;
+      const objectionReply = salesObjectionReply?.reply;
       return {
-        reply: menu?.fallbackText || "Ainda não encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano conferir.",
-        menu: menu || undefined
+        reply: objectionReply ||
+          "O mensal fica R$ 25.\n\n" +
+          "Também temos planos maiores:\n" +
+          "3 meses — R$ 70\n" +
+          "6 meses — R$ 120\n" +
+          "Anual — R$ 200\n\n" +
+          "O mensal é bom para começar, mas o anual é o melhor custo-benefício.\n\n" +
+          "Você quer começar pelo mensal ou prefere um plano maior?",
+        menu: menu || undefined,
+        sendTextBeforeMenu: Boolean(menu)
       };
     }
 
@@ -161,7 +183,11 @@ export class ChatAgentService {
     }
 
     if (intent === "ask_payment") {
-      return { reply: PAYMENT_MENU.fallbackText, menu: PAYMENT_MENU };
+      return {
+        reply: "Claro. Você pode pagar com Pix ou cartão pelo Mercado Pago.\n\nSe já escolheu o plano, me diga qual é para eu gerar o pagamento certinho.",
+        menu: PAYMENT_MENU,
+        sendTextBeforeMenu: true
+      };
     }
 
     if (intent === "receipt_sent") {
@@ -188,8 +214,12 @@ export class ChatAgentService {
       if (!plan) {
         const menu = plans.length ? buildPlansMenu(plans) : null;
         return {
-          reply: menu?.fallbackText || "Entendi que você quer comprar, mas não encontrei planos ativos cadastrados. Vou encaminhar para atendimento humano.",
-          menu: menu || undefined
+          reply:
+            "Perfeito.\n\nQual plano você quer ativar?\n\n" +
+            PLANS_TEXT +
+            "\n\nSe você quer o melhor custo-benefício, recomendo o anual.",
+          menu: menu || undefined,
+          sendTextBeforeMenu: Boolean(menu)
         };
       }
 
@@ -266,7 +296,16 @@ export class ChatAgentService {
         knowledge.find((article) => article.category === preferredCategory) ||
         knowledge.find((article) => article.category === "technical_support");
       if (isInstallationMessage(message)) {
-        return { reply: INSTALL_MENU.fallbackText, menu: INSTALL_MENU };
+        return {
+          reply:
+            "Claro, eu te ajudo.\n\n" +
+            "Você quer baixar onde?\n\n" +
+            "1. Celular Android\n" +
+            "2. TV Box / Televisão Android\n" +
+            "3. TV pelo Downloader",
+          menu: INSTALL_MENU,
+          sendTextBeforeMenu: true
+        };
       }
 
       const supportReply =
@@ -280,7 +319,7 @@ export class ChatAgentService {
     }
 
     if (intent === "greeting") {
-      return { reply: MAIN_MENU.fallbackText, menu: MAIN_MENU };
+      return { reply: INITIAL_UNITV_REPLY, menu: MAIN_MENU, sendTextBeforeMenu: true };
     }
 
     return { reply: this.generateReply(input) };
@@ -798,6 +837,133 @@ function getObjectionKnowledgeCategory(message: string) {
   if (/\b(funciona mesmo|trava|travar|travamento|cai muito)\b/i.test(message)) {
     return "objecao_estabilidade";
   }
+  return null;
+}
+
+function getSalesObjectionReply(message: string): { reply: string; menu?: WhatsAppMenu } | null {
+  const normalized = message
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (/\b(quantas telas|2 telas|duas telas|telas?)\b/.test(normalized)) {
+    return {
+      reply:
+        "Depende do tipo de acesso e da configuração.\n\n" +
+        "Para eu te orientar certo, você quer usar em quantos aparelhos e quais seriam eles?\n\n" +
+        "Não quero te passar informação errada sobre telas.",
+      menu: CONTINUATION_MENU
+    };
+  }
+
+  if (/\b(qual valor|valor|preco|preço|quanto custa|planos?)\b/.test(normalized)) {
+    return {
+      reply:
+        "O mensal fica R$ 25.\n\n" +
+        "Também temos:\n" +
+        PLANS_TEXT +
+        "\n\nO mensal é uma boa opção para começar. Se você quiser economizar mais, o anual sai melhor no custo-benefício.\n\n" +
+        "Você quer começar pelo mensal ou prefere um plano maior?"
+    };
+  }
+
+  if (/\b(caro|ta caro|tá caro)\b/.test(normalized)) {
+    return {
+      reply:
+        "Entendo.\n\n" +
+        "O mensal fica R$ 25, que é o valor mais baixo para começar.\n\n" +
+        "Agora, se você pensa em usar por mais tempo, os planos maiores compensam mais:\n" +
+        "3 meses — R$ 70\n" +
+        "6 meses — R$ 120\n" +
+        "Anual — R$ 200\n\n" +
+        "Você quer começar com o mensal para testar ou prefere economizar no plano maior?"
+    };
+  }
+
+  if (/\b(desconto|promo[cç]ao|promoção)\b/.test(normalized)) {
+    return {
+      reply:
+        "Os valores atuais já estão fechados:\n\n" +
+        PLANS_TEXT +
+        "\n\nO desconto real fica nos planos maiores, principalmente no anual.\n\nQuer que eu te passe o melhor custo-benefício?"
+    };
+  }
+
+  if (/\b(mais barato|vi barato|concorrente)\b/.test(normalized)) {
+    return {
+      reply:
+        "Entendo.\n\n" +
+        "A diferença aqui é que você tem suporte para instalação, orientação na ativação e atendimento caso precise de ajuda.\n\n" +
+        "Se quiser começar sem compromisso alto, o mensal é R$ 25.\n\nQuer começar pelo mensal ou fazer o teste grátis primeiro?"
+    };
+  }
+
+  if (/\b(funciona mesmo|funciona|e bom|é bom)\b/.test(normalized)) {
+    return {
+      reply:
+        "Funciona em aparelhos compatíveis, sim.\n\n" +
+        "A qualidade depende também da internet e do aparelho, mas a UNITV tem suporte para te ajudar na instalação.\n\n" +
+        "Você quer testar grátis por 3 dias antes de contratar?",
+      menu: CONTINUATION_MENU
+    };
+  }
+
+  if (/\b(trava|travar|travando|travamento|cai muito)\b/.test(normalized)) {
+    return {
+      reply:
+        "Boa pergunta.\n\n" +
+        "Travamento normalmente depende da internet, do aparelho ou da instalação. Por isso eu te oriento certinho.\n\n" +
+        "O ideal é você fazer o teste grátis de 3 dias no seu aparelho e ver como fica.\n\nVocê vai usar na TV ou no celular?",
+      menu: CONTINUATION_MENU
+    };
+  }
+
+  if (/\b(futebol|jogo|canais?)\b/.test(normalized)) {
+    return {
+      reply:
+        "A UNITV reúne canais ao vivo, filmes e séries no app.\n\n" +
+        "A disponibilidade pode variar, mas você pode testar grátis por 3 dias e conferir no seu aparelho.\n\nQuer fazer o teste?",
+      menu: CONTINUATION_MENU
+    };
+  }
+
+  if (/\b(filmes|series|séries)\b/.test(normalized)) {
+    return {
+      reply:
+        "Tem sim. A UNITV reúne filmes, séries e canais ao vivo no mesmo app.\n\nVocê quer testar grátis ou já quer ver os planos?",
+      menu: CONTINUATION_MENU
+    };
+  }
+
+  if (/\b(iphone|ios)\b/.test(normalized)) {
+    return {
+      reply:
+        "No momento eu preciso confirmar a melhor forma para iPhone.\n\nVocê quer usar no iPhone ou tem também TV/TV Box?",
+      menu: CONTINUATION_MENU
+    };
+  }
+
+  if (/\b(golpe|confiavel|confiável|medo)\b/.test(normalized)) {
+    return {
+      reply:
+        "Entendo totalmente.\n\n" +
+        "Por isso o atendimento é feito por aqui, com suporte, orientação de instalação e ativação após confirmação.\n\n" +
+        "Se preferir, você pode começar pelo teste grátis de 3 dias antes de contratar.",
+      menu: CONTINUATION_MENU
+    };
+  }
+
+  if (/\b(vou pensar|depois eu vejo|pensar)\b/.test(normalized)) {
+    return {
+      reply:
+        "Sem problema.\n\nPara facilitar, os planos são:\n\n" +
+        PLANS_TEXT +
+        "\n\nVocê também pode testar grátis por 3 dias antes de decidir.",
+      menu: CONTINUATION_MENU
+    };
+  }
+
   return null;
 }
 

@@ -111,8 +111,8 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(plansService.listActivePlans).toHaveBeenCalled();
-    expect(result.reply).toContain("Plano Mensal");
-    expect(result.reply).toMatch(/R\$\s*25,00/);
+    expect(result.reply).toContain("O mensal fica R$ 25");
+    expect(result.reply).toContain("custo-benefício");
     expect(result.menu).toEqual(expect.objectContaining({ id: "plans", title: "Escolha seu plano UNiTV" }));
   });
 
@@ -128,8 +128,8 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.menu).toEqual(expect.objectContaining({ id: "main" }));
-    expect(result.reply).toContain("Ver planos");
-    expect(result.reply).toContain("Falar com especialista");
+    expect(result.reply).toContain("Meu nome é André");
+    expect(result.sendTextBeforeMenu).toBe(true);
   });
 
   it("offers selectable payment methods", async () => {
@@ -144,7 +144,8 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.menu).toEqual(expect.objectContaining({ id: "payment" }));
-    expect(result.reply).toContain("Pagar com Pix");
+    expect(result.reply).toContain("Pix ou cartão");
+    expect(result.sendTextBeforeMenu).toBe(true);
   });
 
   it("creates an order when the requested plan is clear", async () => {
@@ -253,7 +254,7 @@ describe("commercial WhatsApp agent", () => {
     expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(result.requiresHuman).not.toBe(true);
     expect(result.reply).toContain("3 dias");
-    expect(result.reply).toContain("instale o UNiTV");
+    expect(result.reply).toContain("Primeiro você instala o app");
     expect(result.menu).toEqual(expect.objectContaining({ id: "install" }));
     expect(result.sendTextBeforeMenu).toBe(true);
     expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
@@ -560,7 +561,8 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("Escolha seu plano UNiTV");
+    expect(result.reply).toContain("Qual plano você quer ativar?");
+    expect(result.reply).toContain("Mensal — R$ 25");
     expect(result.menu).toEqual(expect.objectContaining({ id: "plans" }));
   });
 
@@ -576,8 +578,8 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.menu).toEqual(expect.objectContaining({ id: "install" }));
-    expect(result.reply).toContain("Instalação UNiTV");
-    expect(result.reply).toContain("Instalar na TV pelo Downloader");
+    expect(result.reply).toContain("Claro, eu te ajudo.");
+    expect(result.reply).toContain("TV pelo Downloader");
   });
 
   it("sends downloader instructions with the current test code and tutorial link", async () => {

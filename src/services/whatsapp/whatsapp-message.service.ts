@@ -208,6 +208,21 @@ export class WhatsappMessageService {
       classification = await this.intentClassifier.classify({ message: message.text });
     }
 
+    const leadProfilePatch = buildLeadProfilePatch(message.text, classification.intent, conversation.metadata);
+    if (Object.keys(leadProfilePatch).length) {
+      const currentLeadProfile = readLeadProfile(conversation.metadata);
+      const nextMetadata = {
+        ...(conversation.metadata || {}),
+        lead_profile: {
+          ...currentLeadProfile,
+          ...leadProfilePatch,
+          updated_at: new Date().toISOString()
+        }
+      };
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
+      conversation.metadata = nextMetadata;
+    }
+
     const commercialReply = await this.chatAgent.generateCommercialReply({
       message: effectiveMessage,
       classification,
@@ -545,4 +560,128 @@ function isHumanHandoffRequest(text: string) {
 function isBotResumeRequest(text: string) {
   return /\b(ativar|reativar|voltar|retomar|liberar|reiniciar)\b/i.test(text) &&
     /\b(bot|agente|automatico|autom[aá]tico|atendimento automatico|atendimento autom[aá]tico)\b/i.test(text);
+}
+
+function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
+  const profile = metadata?.lead_profile;
+  return profile && typeof profile === "object" && !Array.isArray(profile) ? (profile as Record<string, unknown>) : {};
+}
+
+function buildLeadProfilePatch(text: string, intent: string, metadata: Record<string, unknown> | null | undefined) {
+  const normalized = text
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+  const existing = readLeadProfile(metadata);
+  const patch: Record<string, unknown> = {
+    ultima_intencao: intent,
+    etapa_atual: mapIntentToStage(intent)
+  };
+
+  if (!existing.intencao_inicial) {
+    patch.intencao_inicial = intent;
+  }
+
+  const plan = detectPlanInterest(normalized);
+  if (plan) {
+    patch.plano_interesse = plan;
+    patch.nivel_interesse = "quente";
+  }
+
+  const device = detectDevice(normalized);
+  if (device) {
+    patch.aparelho = device;
+  }
+
+  if (/\b(download|baixar|apk|downloader|instalar|instalacao)\b/.test(normalized)) {
+    patch.pediu_download = true;
+  }
+  if (/\b(teste|gratis|gratuito|free trial)\b/.test(normalized)) {
+    patch.pediu_teste_gratis = true;
+    patch.nivel_interesse = "morno";
+  }
+  if (/\bpix\b/.test(normalized)) {
+    patch.pediu_pix = true;
+    patch.nivel_interesse = "quente";
+  }
+  if (/\b(comprovante|recibo|print do pagamento|paguei|ja paguei|fiz o pagamento)\b/.test(normalized)) {
+    patch.enviou_comprovante = true;
+    patch.nivel_interesse = "quente";
+  }
+  if (/\b(humano|especialista|atendente|suporte humano)\b/.test(normalized)) {
+    patch.precisou_humano = true;
+  }
+
+  const objection = detectMainObjection(normalized);
+  if (objection) {
+    patch.objecao_principal = existing.objecao_principal || objection;
+    if (existing.objecao_principal && existing.objecao_principal !== objection) {
+      patch.segunda_objecao = objection;
+    }
+  }
+
+  patch.resumo_curto = buildShortConversationSummary(patch, existing);
+  patch.proxima_acao = suggestNextAction(patch, existing);
+
+  return patch;
+}
+
+function mapIntentToStage(intent: string) {
+  const stages: Record<string, string> = {
+    greeting: "inicio",
+    ask_price: "avaliando_planos",
+    buy_plan: "escolha_plano",
+    renew_plan: "recarga",
+    free_trial: "teste_gratis",
+    technical_support: "instalacao",
+    pix_payment: "pagamento_pix",
+    card_payment: "pagamento_cartao",
+    receipt_sent: "comprovante",
+    human_help: "atendimento_humano"
+  };
+  return stages[intent] || "conversa";
+}
+
+function detectPlanInterest(normalized: string) {
+  if (/\banual|1 ano|365\b/.test(normalized)) return "anual";
+  if (/\b6 meses|semestral|180\b/.test(normalized)) return "6 meses";
+  if (/\b3 meses|trimestral|90\b/.test(normalized)) return "3 meses";
+  if (/\bmensal|30 dias|mes\b/.test(normalized)) return "mensal";
+  return null;
+}
+
+function detectDevice(normalized: string) {
+  if (/\btv box|android tv|televisao android\b/.test(normalized)) return "TV Box / Android TV";
+  if (/\bsmart tv|tv\b/.test(normalized)) return "TV";
+  if (/\bcelular|android|mobile\b/.test(normalized)) return "Celular Android";
+  if (/\biphone|ios\b/.test(normalized)) return "iPhone";
+  if (/\bcomputador|pc|notebook\b/.test(normalized)) return "Computador";
+  return null;
+}
+
+function detectMainObjection(normalized: string) {
+  if (/\bcaro|desconto|promo|mais barato|barato\b/.test(normalized)) return "preco";
+  if (/\btrava|travando|cai|funciona mesmo\b/.test(normalized)) return "estabilidade";
+  if (/\bgolpe|confiavel|medo\b/.test(normalized)) return "confianca";
+  if (/\bnao sei instalar|instalar|download|apk\b/.test(normalized)) return "download_instalacao";
+  if (/\btelas?\b/.test(normalized)) return "telas";
+  return null;
+}
+
+function buildShortConversationSummary(patch: Record<string, unknown>, existing: Record<string, unknown>) {
+  const plan = patch.plano_interesse || existing.plano_interesse || "sem plano definido";
+  const device = patch.aparelho || existing.aparelho || "aparelho não informado";
+  const stage = patch.etapa_atual || existing.etapa_atual || "conversa";
+  return `Cliente em ${stage}, plano: ${plan}, aparelho: ${device}.`;
+}
+
+function suggestNextAction(patch: Record<string, unknown>, existing: Record<string, unknown>) {
+  const stage = String(patch.etapa_atual || existing.etapa_atual || "");
+  if (patch.pediu_pix) return "gerar Pix após confirmar o plano";
+  if (stage === "instalacao") return "enviar orientação correta de instalação";
+  if (stage === "teste_gratis") return "confirmar aparelho e liberar teste";
+  if (stage === "escolha_plano" || stage === "recarga") return "confirmar plano e forma de pagamento";
+  if (patch.precisou_humano) return "aguardar especialista";
+  return "responder dúvida e conduzir ao próximo passo";
 }

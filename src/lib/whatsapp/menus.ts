@@ -44,7 +44,7 @@ export const MAIN_MENU: WhatsAppMenu = {
   footerText: "UNiTV",
   sections: [{ title: "Atendimento", rows: mainRows }],
   fallbackText: formatFallback(
-    "Olá! Bem-vindo à melhor plataforma de filmes e canais de todo o Brasil 🧡\n\nO que você quer hoje?",
+    "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André, como posso ajudar?",
     mainRows
   )
 };
