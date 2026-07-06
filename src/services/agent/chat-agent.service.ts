@@ -20,6 +20,7 @@ import {
   PAYMENT_MENU,
   type WhatsAppMenu
 } from "@/lib/whatsapp/menus";
+import { SalesResponseAIService, shouldUseAIResponse } from "@/services/agent/sales-response-ai.service";
 
 export const INITIAL_UNITV_REPLY =
   "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\n" +
@@ -37,6 +38,12 @@ type CommercialReplyInput = {
   customer: { id: string; email?: string | null };
   conversation: { id: string; metadata?: Record<string, unknown> | null };
   webhookEventId: string;
+  recentMessages?: Array<{ role?: string; content?: string | null }>;
+  specialistExamples?: Array<{
+    customer_last_message?: string | null;
+    bot_previous_message?: string | null;
+    specialist_message?: string | null;
+  }>;
 };
 
 type CommercialReplyResult = {
@@ -66,7 +73,8 @@ export class ChatAgentService {
     private readonly agentActionsService = new AgentActionsService(),
     private readonly auditService = new AuditService(),
     private readonly mercadoPagoService = new MercadoPagoService(),
-    private readonly activationCodesService = new ActivationCodesService()
+    private readonly activationCodesService = new ActivationCodesService(),
+    private readonly salesResponseAIService = new SalesResponseAIService()
   ) {}
 
   generateReply(input: { message: string; classification: IntentClassification }) {
@@ -93,6 +101,32 @@ export class ChatAgentService {
     const knowledge = await this.knowledgeService.searchKnowledge(message);
     const intent = input.classification.intent === "support" ? "technical_support" : input.classification.intent;
     const allowMenu = shouldUseMenu(message);
+    const leadProfile = readLeadProfile(input.conversation.metadata);
+
+    const contextualReply = getContextualCommercialReply(message, leadProfile);
+    if (shouldUseAIResponse({
+      message,
+      intent,
+      leadProfile,
+      recentMessages: input.recentMessages
+    })) {
+      const aiReply = await this.salesResponseAIService.generateResponse({
+        message,
+        intent,
+        leadProfile,
+        recentMessages: input.recentMessages,
+        specialistExamples: input.specialistExamples,
+        fallbackReply: contextualReply?.reply || null,
+        useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
+      });
+      if (aiReply) {
+        return { reply: aiReply };
+      }
+    }
+
+    if (contextualReply) {
+      return contextualReply;
+    }
 
     const salesObjectionReply = findUnitvObjectionReply(message) || getSalesObjectionReply(message);
     if ((intent === "unknown" || intent === "technical_support") && salesObjectionReply) {
@@ -721,6 +755,77 @@ export class ChatAgentService {
       reply
     };
   }
+}
+
+function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
+  const profile = metadata?.lead_profile;
+  return profile && typeof profile === "object" && !Array.isArray(profile) ? profile as Record<string, unknown> : {};
+}
+
+function getContextualCommercialReply(message: string, leadProfile: Record<string, unknown>): CommercialReplyResult | null {
+  const normalized = normalizeContextMessage(message);
+  const selectedPlan = leadProfile.selected_plan || leadProfile.plano_interesse;
+  const lastBotQuestion = normalizeContextMessage(String(leadProfile.last_bot_question || ""));
+  const confirmedDownload =
+    /\b(ja baixei|baixei|download feito|fiz o download|ja instalei|instalei)\b/.test(normalized) ||
+    (/^(sim|s|ja|ok|feito|consegui)$/.test(normalized) && /\b(baixou|download|instalou)\b/.test(lastBotQuestion));
+
+  if (/\b(nao paguei|ainda nao paguei|nao fiz o pagamento|nem paguei|n paguei)\b/.test(normalized)) {
+    return {
+      reply: "Sem problema. Voc\u00ea quer seguir com o mensal de R$ 25 ou prefere fazer o teste gr\u00e1tis de 3 dias primeiro?"
+    };
+  }
+
+  if (confirmedDownload) {
+    return {
+      reply:
+        "Perfeito. Como voc\u00ea j\u00e1 baixou o app, agora posso te ajudar com a ativa\u00e7\u00e3o. " +
+        "Voc\u00ea quer liberar o teste gr\u00e1tis de 3 dias ou j\u00e1 ativar o mensal de R$ 25?"
+    };
+  }
+
+  if (/\b(ja usei|ja tenho|ja conheco|uso o app|uso unitv)\b/.test(normalized)) {
+    return {
+      reply: selectedPlan === "mensal"
+        ? "\u00d3timo, ent\u00e3o voc\u00ea j\u00e1 conhece o app. Quer seguir com o mensal de R$ 25 agora?"
+        : "\u00d3timo, ent\u00e3o voc\u00ea j\u00e1 conhece o app. Voc\u00ea quer renovar o acesso ou ativar um novo plano?"
+    };
+  }
+
+  if (/^(ativar|ativacao|ativa|liberar)$/i.test(normalized)) {
+    return {
+      reply: "Claro. Voc\u00ea quer ativar o mensal de R$ 25 ou fazer o teste gr\u00e1tis de 3 dias primeiro?"
+    };
+  }
+
+  if (/^(mensal|plano mensal)$/i.test(normalized)) {
+    return {
+      reply: "Perfeito, o mensal fica R$ 25. Voc\u00ea prefere pagar por Pix ou cart\u00e3o?"
+    };
+  }
+
+  return null;
+}
+
+function normalizeContextMessage(message: string) {
+  return message
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
+function shouldUseStrongSalesModel(
+  message: string,
+  leadProfile: Record<string, unknown>,
+  recentMessages: Array<{ role?: string; content?: string | null }> | undefined
+) {
+  const normalized = normalizeContextMessage(message);
+  return (
+    /\b(pagar|pagamento|paguei|comprovante|irritado|reclamacao|reclamação)\b/.test(normalized) ||
+    leadProfile.nivel_interesse === "quente" ||
+    (recentMessages || []).some((item) => item.role === "human_agent")
+  );
 }
 
 function formatMoney(priceCents: number, currency = "BRL") {

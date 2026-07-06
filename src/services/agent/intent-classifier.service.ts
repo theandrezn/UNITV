@@ -185,6 +185,10 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     return fixedClassification("buy_plan", "Cliente demonstrou intenção de compra.");
   }
 
+  if (/^(ativar|ativacao|ativa|liberar)$/i.test(text)) {
+    return fixedClassification("activation_help", "Cliente pediu ativacao.");
+  }
+
   if (/\b(pix|chave pix|copia e cola|qr code)\b/.test(text)) {
     return fixedClassification("pix_payment", "Cliente pediu pagamento por Pix.");
   }
@@ -221,7 +225,7 @@ function fixedClassification(intent: IntentClassification["intent"], summary: st
     intent,
     confidence: 0.95,
     summary,
-    suggested_reply: "Resolvido por regra local sem uso de IA."
+    suggested_reply: "Claro, eu te ajudo. Qual e o proximo passo que voce quer seguir?"
   };
 }
 

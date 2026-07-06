@@ -11,6 +11,13 @@ import { OrdersService } from "@/services/orders.service";
 import { ReceiptsService } from "@/services/receipts.service";
 import type { IncomingEvolutionMessage } from "@/lib/evolution/client";
 import { resolveMenuSelection, type WhatsAppMenu } from "@/lib/whatsapp/menus";
+import {
+  CUSTOMER_SAFE_FALLBACK,
+  createCustomerMessageHash,
+  sanitizeCustomerMessage,
+  validateResponseAgainstLeadProfile
+} from "@/lib/whatsapp/customer-message-safety";
+import { SpecialistTrainingExamplesRepository } from "@/repositories/specialist-training-examples.repository";
 
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
@@ -32,7 +39,8 @@ export class WhatsappMessageService {
     private readonly auditService = new AuditService(),
     private readonly ordersService = new OrdersService(),
     private readonly receiptsService = new ReceiptsService(),
-    private readonly agentActionsService = new AgentActionsService()
+    private readonly agentActionsService = new AgentActionsService(),
+    private readonly specialistTrainingExamplesRepository?: SpecialistTrainingExamplesRepository
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -75,6 +83,17 @@ export class WhatsappMessageService {
 
     if (message.fromMe) {
       const messageAt = getMessageDate(message).toISOString();
+      if (await this.isBotEcho(conversation.id, message)) {
+        await this.auditService.createAuditLog({
+          actor_type: "webhook",
+          action: "bot_echo_message_ignored",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: { webhookEventId, externalMessageId: message.externalMessageId }
+        });
+        return { status: "ignored" as const };
+      }
+
       await this.messagesRepository.createMessage({
         conversation_id: conversation.id,
         customer_id: customer.id,
@@ -106,6 +125,13 @@ export class WhatsappMessageService {
         entity_type: "conversations",
         entity_id: conversation.id,
         metadata: { webhookEventId, externalMessageId: message.externalMessageId, lastSpecialistMessageAt: messageAt }
+      });
+      await this.recordSpecialistTrainingExample({
+        webhookEventId,
+        conversation,
+        customer,
+        message,
+        messageAt
       });
 
       return { status: "ignored" as const };
@@ -236,12 +262,16 @@ export class WhatsappMessageService {
       conversation.metadata = nextMetadata;
     }
 
+    const recentMessages = await this.listRecentConversationMessages(conversation.id);
+    const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata);
     const commercialReply = await this.chatAgent.generateCommercialReply({
       message: effectiveMessage,
       classification,
       customer,
       conversation,
-      webhookEventId
+      webhookEventId,
+      recentMessages,
+      specialistExamples
     });
     const reply = commercialReply.reply;
 
@@ -322,17 +352,35 @@ export class WhatsappMessageService {
     menu?: WhatsAppMenu;
     sendTextBeforeMenu?: boolean;
   }) {
+    const safeReply = await this.sanitizeAndValidateCustomerText({
+      text: reply,
+      conversation,
+      webhookEventId,
+      leadProfile: readLeadProfile(conversation.metadata)
+    });
+    const safeFollowUpMessages = [];
+    for (const followUpMessage of followUpMessages || []) {
+      safeFollowUpMessages.push(
+        await this.sanitizeAndValidateCustomerText({
+          text: followUpMessage,
+          conversation,
+          webhookEventId,
+          leadProfile: readLeadProfile(conversation.metadata)
+        })
+      );
+    }
+
     let sendResult: unknown;
     if (menu) {
       if (sendTextBeforeMenu) {
-        const replyResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
+        const replyResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: safeReply });
         const menuResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: menu.fallbackText });
         sendResult = { text: replyResult, menu: menuResult };
       } else {
-        sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
+        sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: safeReply });
       }
     } else {
-      sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
+      sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: safeReply });
     }
     let copyTextSendResult: unknown = null;
     if (copyText) {
@@ -340,7 +388,7 @@ export class WhatsappMessageService {
     }
 
     const followUpSendResults = [];
-    for (const followUpMessage of followUpMessages || []) {
+    for (const followUpMessage of safeFollowUpMessages) {
       followUpSendResults.push(await this.evolutionService.sendTextMessage({ phone: message.phone, text: followUpMessage }));
     }
 
@@ -363,12 +411,15 @@ export class WhatsappMessageService {
       conversation_id: conversation.id,
       customer_id: customer.id,
       role: "assistant",
-      content: reply,
+      content: safeReply,
       content_type: "text",
       external_message_id: `assistant:${message.externalMessageId}`,
       metadata: {
         webhookEventId,
         classification,
+        sender_type: "bot",
+        content_hash: createCustomerMessageHash(safeReply),
+        sent_at: new Date().toISOString(),
         sendResult,
         copyTextSendResult,
         followUpSendResults,
@@ -379,10 +430,17 @@ export class WhatsappMessageService {
     });
 
     const now = new Date();
-    const followupState = buildFollowupState({ reply, classification, menu, copyText, followUpMessages, media }, conversation.metadata, now);
+    const followupState = buildFollowupState({ reply: safeReply, classification, menu, copyText, followUpMessages: safeFollowUpMessages, media }, conversation.metadata, now);
+    const currentLeadProfile = readLeadProfile(conversation.metadata);
+    const lastBotQuestion = extractLastQuestion(safeReply);
     const nextMetadata = {
       ...(conversation.metadata || {}),
       last_bot_message_at: now.toISOString(),
+      lead_profile: {
+        ...currentLeadProfile,
+        last_bot_question: lastBotQuestion || currentLeadProfile.last_bot_question,
+        updated_at: now.toISOString()
+      },
       ...followupState
     };
     await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
@@ -400,7 +458,165 @@ export class WhatsappMessageService {
       }
     });
 
-    return { status: "processed" as const, reply };
+    return { status: "processed" as const, reply: safeReply };
+  }
+
+  private async sanitizeAndValidateCustomerText({
+    text,
+    conversation,
+    webhookEventId,
+    leadProfile
+  }: {
+    text: string;
+    conversation: { id: string };
+    webhookEventId: string;
+    leadProfile: Record<string, unknown>;
+  }) {
+    const sanitized = sanitizeCustomerMessage(text);
+    let safeText = sanitized.text;
+    let blockedReason = sanitized.reason;
+
+    const recentMessages = await this.listRecentConversationMessages(conversation.id);
+    const recentBotMessages = recentMessages
+      .filter((item) => item.role === "assistant" && typeof item.content === "string")
+      .slice(-5)
+      .map((item) => item.content as string);
+    const profileValidation = validateResponseAgainstLeadProfile(safeText, leadProfile, recentBotMessages);
+    if (!profileValidation.valid) {
+      safeText = CUSTOMER_SAFE_FALLBACK;
+      blockedReason = profileValidation.reason;
+    }
+
+    if (sanitized.blocked || blockedReason) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "customer_message_safety_blocked",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, reason: blockedReason || sanitized.reason, originalText: text }
+      });
+    }
+
+    return safeText;
+  }
+
+  private async listRecentConversationMessages(conversationId: string) {
+    const listMessages = (this.messagesRepository as unknown as {
+      listMessagesByConversationId?: (conversationId: string, limit?: number) => Promise<Array<Record<string, unknown>>>;
+    }).listMessagesByConversationId;
+    if (!listMessages) {
+      return [];
+    }
+
+    try {
+      const messages = await listMessages.call(this.messagesRepository, conversationId, 12);
+      return messages.map((item) => ({
+        role: typeof item.role === "string" ? item.role : undefined,
+        content: typeof item.content === "string" ? item.content : null
+      }));
+    } catch {
+      return [];
+    }
+  }
+
+  private async listRelevantSpecialistExamples(metadata: Record<string, unknown> | null | undefined) {
+    const leadProfile = readLeadProfile(metadata);
+    try {
+      const repository = this.specialistTrainingExamplesRepository || new SpecialistTrainingExamplesRepository();
+      return await repository.listSimilarExamples({
+        intent: typeof leadProfile.ultima_intencao === "string" ? leadProfile.ultima_intencao : null,
+        stage: typeof leadProfile.stage === "string" ? leadProfile.stage : null,
+        objection: typeof leadProfile.main_objection === "string" ? leadProfile.main_objection : null,
+        limit: 3
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private async isBotEcho(conversationId: string, message: IncomingEvolutionMessage) {
+    const listMessages = (this.messagesRepository as unknown as {
+      listMessagesByConversationId?: (conversationId: string, limit?: number) => Promise<Array<Record<string, unknown>>>;
+    }).listMessagesByConversationId;
+
+    if (!listMessages) {
+      return false;
+    }
+
+    const recentMessages = await listMessages.call(this.messagesRepository, conversationId, 12);
+    const messageHash = createCustomerMessageHash(message.text);
+    const messageDate = getMessageDate(message).getTime();
+
+    return recentMessages.some((recent) => {
+      if (recent.role !== "assistant") {
+        return false;
+      }
+
+      const metadata = recent.metadata && typeof recent.metadata === "object" ? recent.metadata as Record<string, unknown> : {};
+      const content = typeof recent.content === "string" ? recent.content : "";
+      const sameContent = createCustomerMessageHash(content) === messageHash || metadata.content_hash === messageHash;
+      if (!sameContent) {
+        return false;
+      }
+
+      const sentAt = typeof metadata.sent_at === "string" ? new Date(metadata.sent_at).getTime() : null;
+      if (!sentAt || Number.isNaN(sentAt)) {
+        return true;
+      }
+
+      return Math.abs(messageDate - sentAt) <= 90_000;
+    });
+  }
+
+  private async recordSpecialistTrainingExample({
+    webhookEventId,
+    conversation,
+    customer,
+    message,
+    messageAt
+  }: {
+    webhookEventId: string;
+    conversation: { id: string; metadata?: Record<string, unknown> | null };
+    customer: { id: string; phone?: string | null };
+    message: IncomingEvolutionMessage;
+    messageAt: string;
+  }) {
+    try {
+      const listMessages = (this.messagesRepository as unknown as {
+        listMessagesByConversationId?: (conversationId: string, limit?: number) => Promise<Array<Record<string, unknown>>>;
+      }).listMessagesByConversationId;
+      const recentMessages = listMessages ? await listMessages.call(this.messagesRepository, conversation.id, 20) : [];
+      const customerLastMessage = [...recentMessages].reverse().find((item) => item.role === "customer");
+      const botPreviousMessage = [...recentMessages].reverse().find((item) => item.role === "assistant");
+      const botCreatedAt = typeof botPreviousMessage?.created_at === "string" ? new Date(botPreviousMessage.created_at).getTime() : null;
+      const specialistAt = new Date(messageAt).getTime();
+      const botWasOverridden = Boolean(botCreatedAt && specialistAt - botCreatedAt <= 10 * 60 * 1000);
+      const leadProfile = readLeadProfile(conversation.metadata);
+
+      const repository = this.specialistTrainingExamplesRepository || new SpecialistTrainingExamplesRepository();
+      await repository.createExample({
+        conversation_id: conversation.id,
+        customer_id: customer.id,
+        customer_phone: customer.phone || message.phone,
+        customer_last_message: typeof customerLastMessage?.content === "string" ? customerLastMessage.content : null,
+        bot_previous_message: typeof botPreviousMessage?.content === "string" ? botPreviousMessage.content : null,
+        specialist_message: message.text,
+        inferred_intent: typeof leadProfile.ultima_intencao === "string" ? leadProfile.ultima_intencao : null,
+        inferred_stage: typeof leadProfile.stage === "string" ? leadProfile.stage : typeof leadProfile.etapa_atual === "string" ? leadProfile.etapa_atual : null,
+        inferred_objection: typeof leadProfile.main_objection === "string" ? leadProfile.main_objection : typeof leadProfile.objecao_principal === "string" ? leadProfile.objecao_principal : null,
+        reason: botWasOverridden ? "correction" : "human_takeover",
+        bot_response_was_overridden: botWasOverridden,
+        metadata: { webhookEventId, externalMessageId: message.externalMessageId }
+      });
+    } catch (error) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "specialist_training_example_failed",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, error: error instanceof Error ? error.message : "unknown_error" }
+      });
+    }
   }
 
   private async notifyHumanOwner({
@@ -583,6 +799,15 @@ function getMessageDate(message: IncomingEvolutionMessage) {
   return new Date();
 }
 
+function extractLastQuestion(text: string) {
+  const questions = text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith("?"));
+
+  return questions.at(-1) || null;
+}
+
 function isHumanHandoffRequest(text: string) {
   return /\b(falar|fala|conversar|chamar|atendente|humano|pessoa|especialista|suporte humano|vendedor|consultor|responsavel)\b/i.test(text) &&
     /\b(humano|atendente|especialista|pessoa|alguem|algu[eé]m|vendedor|consultor|responsavel)\b/i.test(text);
@@ -698,7 +923,9 @@ function buildLeadProfilePatch(text: string, intent: string, metadata: Record<st
   const existing = readLeadProfile(metadata);
   const patch: Record<string, unknown> = {
     ultima_intencao: intent,
-    etapa_atual: mapIntentToStage(intent)
+    etapa_atual: mapIntentToStage(intent),
+    stage: mapIntentToStage(intent),
+    last_customer_answer: text
   };
 
   if (!existing.intencao_inicial) {
@@ -708,19 +935,62 @@ function buildLeadProfilePatch(text: string, intent: string, metadata: Record<st
   const plan = detectPlanInterest(normalized);
   if (plan) {
     patch.plano_interesse = plan;
+    patch.selected_plan = normalizePlanId(plan);
     patch.nivel_interesse = "quente";
   }
 
   const device = detectDevice(normalized);
   if (device) {
     patch.aparelho = device;
+    patch.device = normalizeDeviceId(device);
   }
 
+  const lastBotQuestion = typeof existing.last_bot_question === "string" ? normalizeFreeText(existing.last_bot_question) : "";
+  if (/\b(ativar|ativacao|liberar acesso|codigo|c[oó]digo)\b/.test(normalized)) {
+    patch.wants_activation = true;
+  }
+  if (/\b(renovar|renovacao|recarga|recarregar)\b/.test(normalized)) {
+    patch.wants_recharge = true;
+  }
+  if (/\b(nao paguei|nao fiz o pagamento|ainda nao paguei|n paguei|nem paguei)\b/.test(normalized)) {
+    patch.has_paid = false;
+    patch.payment_status = "not_paid";
+    patch.enviou_comprovante = false;
+    patch.nivel_interesse = "quente";
+  }
+  if (/\b(ja paguei|paguei|fiz o pagamento|feito o pagamento|pagamento feito|acabei de pagar)\b/.test(normalized)) {
+    patch.has_paid = true;
+    patch.payment_status = "paid_unverified";
+    patch.nivel_interesse = "quente";
+  }
+  if (/\b(ja baixei|baixei|download feito|fiz o download)\b/.test(normalized) ||
+      (/^(sim|s|ja|já|ok|feito|consegui)$/.test(normalized) && /\b(baixou|download|instalou|instalar)\b/.test(lastBotQuestion))) {
+    patch.downloaded_app = true;
+    patch.pediu_download = true;
+    patch.nivel_interesse = "quente";
+  }
+  if (/\b(ja instalei|instalei|instalado|app instalado)\b/.test(normalized)) {
+    patch.downloaded_app = true;
+    patch.installed_app = true;
+    patch.pediu_download = true;
+    patch.nivel_interesse = "quente";
+  }
+  if (/\b(ja usei|ja tenho|uso|ja conheco|ja conheço)\b/.test(normalized)) {
+    patch.used_app_before = true;
+    patch.nivel_interesse = "quente";
+  }
+  if (/\b(preco|preco|valor|valores|quanto custa|planos?)\b/.test(normalized)) {
+    patch.asked_price = true;
+  }
+  if (/\b(telas?|aparelhos ao mesmo tempo)\b/.test(normalized)) {
+    patch.asked_screens = true;
+  }
   if (/\b(download|baixar|apk|downloader|instalar|instalacao)\b/.test(normalized)) {
     patch.pediu_download = true;
   }
   if (/\b(teste|gratis|gratuito|free trial)\b/.test(normalized)) {
     patch.pediu_teste_gratis = true;
+    patch.wants_test = true;
     patch.nivel_interesse = "morno";
   }
   if (/\bpix\b/.test(normalized)) {
@@ -738,6 +1008,7 @@ function buildLeadProfilePatch(text: string, intent: string, metadata: Record<st
   const objection = detectMainObjection(normalized);
   if (objection) {
     patch.objecao_principal = existing.objecao_principal || objection;
+    patch.main_objection = existing.main_objection || objection;
     if (existing.objecao_principal && existing.objecao_principal !== objection) {
       patch.segunda_objecao = objection;
     }
@@ -745,8 +1016,17 @@ function buildLeadProfilePatch(text: string, intent: string, metadata: Record<st
 
   patch.resumo_curto = buildShortConversationSummary(patch, existing);
   patch.proxima_acao = suggestNextAction(patch, existing);
+  patch.next_best_action = patch.proxima_acao;
 
   return patch;
+}
+
+function normalizeFreeText(text: string) {
+  return text
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function mapIntentToStage(intent: string) {
@@ -773,6 +1053,12 @@ function detectPlanInterest(normalized: string) {
   return null;
 }
 
+function normalizePlanId(plan: string) {
+  if (plan === "3 meses") return "3_meses";
+  if (plan === "6 meses") return "6_meses";
+  return plan;
+}
+
 function detectDevice(normalized: string) {
   if (/\btv box|android tv|televisao android\b/.test(normalized)) return "TV Box / Android TV";
   if (/\bsmart tv|tv\b/.test(normalized)) return "TV";
@@ -780,6 +1066,14 @@ function detectDevice(normalized: string) {
   if (/\biphone|ios\b/.test(normalized)) return "iPhone";
   if (/\bcomputador|pc|notebook\b/.test(normalized)) return "Computador";
   return null;
+}
+
+function normalizeDeviceId(device: string) {
+  if (device === "TV Box / Android TV") return "tvbox";
+  if (device === "Celular Android") return "android_phone";
+  if (device === "TV") return "smart_tv";
+  if (device === "iPhone") return "iphone";
+  return "unknown";
 }
 
 function detectMainObjection(normalized: string) {

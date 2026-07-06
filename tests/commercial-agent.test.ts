@@ -7,6 +7,7 @@ import { ChatAgentService } from "@/services/agent/chat-agent.service";
 import { PlansService } from "@/services/plans.service";
 import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
 import { MAIN_MENU } from "@/lib/whatsapp/menus";
+import { CUSTOMER_SAFE_FALLBACK, sanitizeCustomerMessage, validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
 
 const plan = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -99,6 +100,100 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
 }
 
 describe("commercial WhatsApp agent", () => {
+  it("blocks internal debug text before it reaches the customer", () => {
+    for (const message of [
+      "Resolvido por regra local sem uso de IA.",
+      "debug intent=buy_plan",
+      '{"schema":"lead_profile","requires_human":false}',
+      "OpenAI Responses API"
+    ]) {
+      const result = sanitizeCustomerMessage(message);
+      expect(result.blocked).toBe(true);
+      expect(result.text).toBe(CUSTOMER_SAFE_FALLBACK);
+    }
+  });
+
+  it("blocks responses that repeat facts already known in the lead profile", () => {
+    expect(validateResponseAgainstLeadProfile("Voce ja baixou?", { downloaded_app: true }).valid).toBe(false);
+    expect(validateResponseAgainstLeadProfile("Qual aparelho voce vai usar?", { device: "tvbox" }).valid).toBe(false);
+    expect(validateResponseAgainstLeadProfile("Qual plano voce quer?", { selected_plan: "mensal" }).valid).toBe(false);
+    expect(validateResponseAgainstLeadProfile("Se ja pagou, envie o comprovante.", { has_paid: false }).valid).toBe(false);
+  });
+
+  it.each([
+    ["Ativar", {}, "mensal de R$ 25", "comprovante"],
+    ["Nao paguei ainda", {}, "3 dias", "comprovante"],
+    ["Mensal", { wants_activation: true }, "Pix ou cart\u00e3o", "Qual plano"],
+    ["Ja baixei", { device: "tvbox" }, "3 dias", "ja baixou"],
+    ["Sim", { last_bot_question: "Voce ja baixou o app?" }, "ativa\u00e7\u00e3o", "ja baixou"],
+    ["Ja usei", {}, "renovar o acesso", "qual aparelho"]
+  ])("advances contextual message %s without repeating the funnel", async (message, leadProfile, expected, forbidden) => {
+    const { service } = createChatAgent();
+    const result = await service.generateCommercialReply({
+      message,
+      classification: { intent: "unknown", confidence: 0.95, summary: "contexto", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: leadProfile } },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain(expected);
+    expect(result.reply.toLowerCase()).not.toContain(forbidden.toLowerCase());
+  });
+
+  it("replaces an unsafe agent reply in the real WhatsApp send path", async () => {
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+    const auditService = { createAuditLog: vi.fn(async () => ({})) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+        createConversation: vi.fn(),
+        updateConversationMetadata: vi.fn(async () => ({})),
+        touchConversation: vi.fn(async () => ({}))
+      } as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      { classify: vi.fn(async () => ({ intent: "unknown", confidence: 1, summary: "teste", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({ reply: "Resolvido por regra local sem uso de IA." })) } as never,
+      evolutionService as never,
+      auditService as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { createExample: vi.fn() } as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "unsafe-reply-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "quero ajuda",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: CUSTOMER_SAFE_FALLBACK
+    });
+    expect(auditService.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "customer_message_safety_blocked" })
+    );
+  });
+
   it("answers prices in human text without sending a menu", async () => {
     const { service, plansService } = createChatAgent();
 
@@ -942,8 +1037,13 @@ describe("commercial WhatsApp agent", () => {
     };
     const messagesRepository = {
       findByExternalMessageId: vi.fn(async () => null),
-      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+      listMessagesByConversationId: vi.fn(async () => [
+        { role: "customer", content: "Nao consigo ativar", created_at: "2026-07-04T21:18:00.000Z" },
+        { role: "assistant", content: "Vou verificar.", created_at: "2026-07-04T21:19:00.000Z" }
+      ])
     };
+    const specialistTrainingExamplesRepository = { createExample: vi.fn(async (data) => data) };
     const intentClassifier = { classify: vi.fn(async () => ({ intent: "pix_payment", confidence: 1, summary: "pix", suggested_reply: "" })) };
     const chatAgent = {
       generateCommercialReply: vi.fn(async () => ({
@@ -972,7 +1072,8 @@ describe("commercial WhatsApp agent", () => {
       { createAuditLog: vi.fn(async () => ({})) } as never,
       {} as never,
       {} as never,
-      {} as never
+      {} as never,
+      { createExample: vi.fn(async (data) => data) } as never
     );
 
     const result = await service.processIncomingMessage({
@@ -1580,8 +1681,13 @@ describe("commercial WhatsApp agent", () => {
     };
     const messagesRepository = {
       findByExternalMessageId: vi.fn(async () => null),
-      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+      listMessagesByConversationId: vi.fn(async () => [
+        { role: "customer", content: "Nao consigo ativar", created_at: "2026-07-04T21:18:00.000Z" },
+        { role: "assistant", content: "Vou verificar.", created_at: "2026-07-04T21:19:00.000Z" }
+      ])
     };
+    const specialistTrainingExamplesRepository = { createExample: vi.fn(async (data) => data) };
     const intentClassifier = { classify: vi.fn() };
     const chatAgent = { generateCommercialReply: vi.fn() };
     const evolutionService = { sendTextMessage: vi.fn() };
@@ -1595,7 +1701,8 @@ describe("commercial WhatsApp agent", () => {
       { createAuditLog: vi.fn(async () => ({})) } as never,
       {} as never,
       {} as never,
-      {} as never
+      {} as never,
+      specialistTrainingExamplesRepository as never
     );
 
     const result = await service.processIncomingMessage({
@@ -1619,6 +1726,13 @@ describe("commercial WhatsApp agent", () => {
 
     expect(result.status).toBe("ignored");
     expect(messagesRepository.createMessage).toHaveBeenCalledWith(expect.objectContaining({ role: "human_agent" }));
+    expect(specialistTrainingExamplesRepository.createExample).toHaveBeenCalledWith(
+      expect.objectContaining({
+        specialist_message: expect.any(String),
+        reason: "correction",
+        bot_response_was_overridden: true
+      })
+    );
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
@@ -1643,8 +1757,10 @@ describe("commercial WhatsApp agent", () => {
     };
     const messagesRepository = {
       findByExternalMessageId: vi.fn(async () => null),
-      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+      listMessagesByConversationId: vi.fn(async () => [])
     };
+    const specialistTrainingExamplesRepository = { createExample: vi.fn(async (data) => data) };
     const intentClassifier = { classify: vi.fn() };
     const chatAgent = { generateCommercialReply: vi.fn() };
     const evolutionService = { sendTextMessage: vi.fn() };
@@ -1658,7 +1774,8 @@ describe("commercial WhatsApp agent", () => {
       { createAuditLog: vi.fn(async () => ({})) } as never,
       {} as never,
       {} as never,
-      {} as never
+      {} as never,
+      specialistTrainingExamplesRepository as never
     );
 
     const result = await service.processIncomingMessage({
@@ -1693,6 +1810,64 @@ describe("commercial WhatsApp agent", () => {
     expect(intentClassifier.classify).not.toHaveBeenCalled();
     expect(chatAgent.generateCommercialReply).not.toHaveBeenCalled();
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("classifies a matching from-me webhook as bot echo instead of specialist training", async () => {
+    const sentAt = "2026-07-04T21:20:00.000Z";
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(),
+      listMessagesByConversationId: vi.fn(async () => [
+        {
+          role: "assistant",
+          content: "Mensagem automatica do bot",
+          created_at: sentAt,
+          metadata: { sender_type: "bot", sent_at: sentAt }
+        }
+      ])
+    };
+    const specialistTrainingExamplesRepository = { createExample: vi.fn() };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+        createConversation: vi.fn(),
+        updateConversationMetadata: vi.fn(),
+        touchConversation: vi.fn()
+      } as never,
+      messagesRepository as never,
+      { classify: vi.fn() } as never,
+      { generateCommercialReply: vi.fn() } as never,
+      { sendTextMessage: vi.fn() } as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      specialistTrainingExamplesRepository as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "bot-echo-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Mensagem automatica do bot",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: new Date(sentAt).getTime() / 1000,
+        fromMe: true,
+        isGroup: false
+      }
+    });
+
+    expect(result.status).toBe("ignored");
+    expect(messagesRepository.createMessage).not.toHaveBeenCalled();
+    expect(specialistTrainingExamplesRepository.createExample).not.toHaveBeenCalled();
   });
 
   it("keeps the bot quiet after recent specialist activity even if requires_human is missing", async () => {
