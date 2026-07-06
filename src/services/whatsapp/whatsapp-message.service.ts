@@ -74,17 +74,6 @@ export class WhatsappMessageService {
       }));
 
     if (message.fromMe) {
-      if (!conversation.metadata?.requires_human) {
-        await this.auditService.createAuditLog({
-          actor_type: "webhook",
-          action: "from_me_message_ignored_without_handoff",
-          entity_type: "conversations",
-          entity_id: conversation.id,
-          metadata: { webhookEventId, externalMessageId: message.externalMessageId }
-        });
-        return { status: "ignored" as const };
-      }
-
       const messageAt = getMessageDate(message).toISOString();
       await this.messagesRepository.createMessage({
         conversation_id: conversation.id,
@@ -137,7 +126,7 @@ export class WhatsappMessageService {
         webhookEventId
       }
     });
-    const customerMessageAt = getMessageDate(message).toISOString();
+      const customerMessageAt = getMessageDate(message).toISOString();
     conversation.metadata = {
       ...(conversation.metadata || {}),
       last_customer_message_at: customerMessageAt,
@@ -145,11 +134,6 @@ export class WhatsappMessageService {
       awaiting_customer_action: null
     };
     await this.conversationsRepository.updateConversationMetadata(conversation.id, conversation.metadata);
-
-    if (isReceiptMessage(message)) {
-      const reply = await this.handleReceiptMessage({ webhookEventId, message, customer, conversation });
-      return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification: { intent: "receipt_sent" } });
-    }
 
     const resumeBot = conversation.metadata?.requires_human && isBotResumeRequest(message.text);
     const staleFreeTrialHandoff = conversation.metadata?.requires_human && isStaleFreeTrialHandoff(conversation.metadata);
@@ -192,6 +176,26 @@ export class WhatsappMessageService {
         metadata: { webhookEventId, externalMessageId: message.externalMessageId }
       });
       return { status: "ignored" as const };
+    }
+
+    if (isRecentSpecialistActivity(conversation.metadata)) {
+      await this.auditService.createAuditLog({
+        actor_type: "ai_agent",
+        action: "recent_human_activity_auto_reply_skipped",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: {
+          webhookEventId,
+          externalMessageId: message.externalMessageId,
+          lastSpecialistMessageAt: conversation.metadata?.last_specialist_message_at
+        }
+      });
+      return { status: "ignored" as const };
+    }
+
+    if (isReceiptMessage(message)) {
+      const reply = await this.handleReceiptMessage({ webhookEventId, message, customer, conversation });
+      return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification: { intent: "receipt_sent" } });
     }
 
     let effectiveMessage = message.text;
@@ -541,6 +545,15 @@ function isHumanHandoffTimeoutExpired(metadata: Record<string, unknown> | null |
   }
 
   return now.getTime() - referenceDate.getTime() >= HUMAN_HANDOFF_TIMEOUT_MS;
+}
+
+function isRecentSpecialistActivity(metadata: Record<string, unknown> | null | undefined, now = new Date()) {
+  const specialistMessageAt = firstValidMetadataDate(metadata?.last_specialist_message_at);
+  if (!specialistMessageAt) {
+    return false;
+  }
+
+  return now.getTime() - specialistMessageAt.getTime() < HUMAN_HANDOFF_TIMEOUT_MS;
 }
 
 function firstValidMetadataDate(...values: unknown[]) {

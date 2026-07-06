@@ -1431,6 +1431,124 @@ describe("commercial WhatsApp agent", () => {
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
 
+  it("marks any manual from-me message as specialist takeover even without previous handoff", async () => {
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({
+        id: "conversation-id",
+        metadata: {}
+      })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+    };
+    const intentClassifier = { classify: vi.fn() };
+    const chatAgent = { generateCommercialReply: vi.fn() };
+    const evolutionService = { sendTextMessage: vi.fn() };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "manual-specialist-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Estou falando com você por aqui.",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1783200000,
+        fromMe: true,
+        isGroup: false
+      }
+    });
+
+    expect(result.status).toBe("ignored");
+    expect(messagesRepository.createMessage).toHaveBeenCalledWith(expect.objectContaining({ role: "human_agent" }));
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        requires_human: true,
+        handoff_reason: "human_agent_reply",
+        last_specialist_message_at: "2026-07-04T21:20:00.000Z"
+      })
+    );
+    expect(intentClassifier.classify).not.toHaveBeenCalled();
+    expect(chatAgent.generateCommercialReply).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("keeps the bot quiet after recent specialist activity even if requires_human is missing", async () => {
+    const recentSpecialistMessageAt = new Date(Date.now() - 2 * 60 * 1000).toISOString();
+    const intentClassifier = { classify: vi.fn() };
+    const chatAgent = { generateCommercialReply: vi.fn() };
+    const evolutionService = { sendTextMessage: vi.fn() };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({
+          id: "conversation-id",
+          metadata: { last_specialist_message_at: recentSpecialistMessageAt }
+        })),
+        createConversation: vi.fn(),
+        updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+        touchConversation: vi.fn(async () => ({}))
+      } as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "recent-specialist-without-flag-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "qual chave pix?",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(result.status).toBe("ignored");
+    expect(intentClassifier.classify).not.toHaveBeenCalled();
+    expect(chatAgent.generateCommercialReply).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+  });
+
   it("auto-resumes stale free trial handoffs from the old flow", async () => {
     const conversationsRepository = {
       findByExternalConversationId: vi.fn(async () => ({
