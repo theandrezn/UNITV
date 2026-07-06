@@ -42,7 +42,9 @@ function createService(conversations: Array<Record<string, unknown>>) {
 describe("WhatsappFollowupService", () => {
   it("builds human commercial follow-up text", () => {
     const valuesFollowup = buildFollowupText({ followup_key: "values", plan_interest: "mensal" });
-    expect(valuesFollowup).toContain("plano mensal");
+    expect(valuesFollowup).toBe("Você se interessou pelos valores? Posso te indicar o melhor plano pra começar ✅");
+    expect(valuesFollowup).not.toContain("pagamento");
+    expect(valuesFollowup).not.toContain("comprovante");
     expect(valuesFollowup).not.toContain("Ver planos");
     expect(valuesFollowup).not.toContain("Fazer teste grátis");
     expect(valuesFollowup).not.toContain("Comprar agora");
@@ -104,11 +106,11 @@ describe("WhatsappFollowupService", () => {
         customer_id: "customer-id",
         customers: { id: "customer-id", phone: "5511999998888", name: "Maria Cliente" },
         metadata: {
-          followup_key: "pix",
+          followup_key: "payment_choice",
           followup_due_at: "2026-07-06T11:59:00.000Z",
           last_bot_message_at: "2026-07-06T11:54:00.000Z",
           last_customer_message_at: "2026-07-06T11:53:00.000Z",
-          last_followup_stage_id: "pix:send_proof:1",
+          last_followup_stage_id: "buy_plan:payment_choice:1",
           followup_count: 0,
           lead_profile: {
             selected_plan: "mensal",
@@ -146,14 +148,32 @@ describe("WhatsappFollowupService", () => {
 
   it("does not offer the promotional recovery twice or to cold leads", () => {
     expect(shouldSendPromoRecoveryFollowup({
-      followup_key: "pix",
+      followup_key: "payment_choice",
       lead_profile: { selected_plan: "mensal", special_promo_followup_sent: true }
+    })).toBe(false);
+    expect(shouldSendPromoRecoveryFollowup({
+      followup_key: "values",
+      lead_profile: { selected_plan: "mensal", nivel_interesse: "quente" }
+    })).toBe(false);
+    expect(shouldSendPromoRecoveryFollowup({
+      followup_key: "pix",
+      lead_profile: { selected_plan: "mensal", pediu_pix: true, nivel_interesse: "quente" }
     })).toBe(false);
     expect(shouldSendPromoRecoveryFollowup({
       followup_key: "welcome_activation",
       lead_profile: { nivel_interesse: "frio" }
     })).toBe(false);
     expect(buildPromoRecoveryFollowupText({ lead_profile: {} })).toContain("condi");
+  });
+
+  it("uses stage-specific copy for payment choice and sent Pix follow-ups", () => {
+    const paymentChoice = buildFollowupText({ followup_key: "payment_choice" });
+    expect(paymentChoice).toContain("Vou te passar a chave PIX agora");
+    expect(paymentChoice).not.toContain("Conseguiu fazer o pagamento?");
+
+    const pixFollowup = buildFollowupText({ followup_key: "pix" });
+    expect(pixFollowup).toContain("Conseguiu fazer o pagamento?");
+    expect(pixFollowup).toContain("comprovante");
   });
 
   it("does not send when the customer already replied after the bot", async () => {

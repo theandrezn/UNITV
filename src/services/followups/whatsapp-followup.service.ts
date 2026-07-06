@@ -143,7 +143,7 @@ export class WhatsappFollowupService {
 
 export function shouldSendPromoRecoveryFollowup(metadata: Record<string, unknown>) {
   const key = String(metadata.followup_key || "");
-  if (!["pix", "plan_choice", "values"].includes(key)) {
+  if (key !== "payment_choice") {
     return false;
   }
 
@@ -189,7 +189,6 @@ export function buildPromoRecoveryFollowupText(
 
 export function buildFollowupText(metadata: Record<string, unknown>) {
   const key = String(metadata.followup_key || "generic");
-  const planInterest = formatPlanInterest(metadata.plan_interest);
   const device = String(metadata.device || "");
 
   if (key === "welcome_activation") {
@@ -197,14 +196,15 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
   }
 
   if (key === "values") {
-    if (planInterest) {
-      return `Você quer seguir com o plano ${planInterest} ou prefere fazer o teste grátis de 3 dias primeiro?`;
-    }
-    return "Você se interessou pelos valores? Posso te indicar o melhor plano para começar?";
+    return "Você se interessou pelos valores? Posso te indicar o melhor plano pra começar ✅";
   }
 
   if (key === "plan_choice") {
     return "Conseguiu escolher o plano? O mensal é R$ 25 para começar, e o anual é o melhor custo-benefício. Qual você prefere?";
+  }
+
+  if (key === "payment_choice") {
+    return "Fechado ✅ Vou te passar a chave PIX agora. Assim que fizer o pagamento, me envia o comprovante por aqui que já libero sua recarga.";
   }
 
   if (key === "download" || key === "install") {
@@ -228,7 +228,7 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
   }
 
   if (key === "pix") {
-    return "Conseguiu fazer o pagamento? Depois você consegue enviar o comprovante aqui para validar?";
+    return "Conseguiu fazer o pagamento? Assim que enviar o comprovante por aqui, eu já valido e libero sua recarga ✅";
   }
 
   if (key === "proof") {
@@ -277,13 +277,6 @@ function getSkipReason(metadata: Record<string, unknown>, now: Date) {
 function readCustomerPhone(conversation: ConversationRow) {
   const phone = conversation.customers?.phone || conversation.external_conversation_id || "";
   return phone.split("@")[0]?.replace(/\D/g, "") || null;
-}
-
-function formatPlanInterest(value: unknown) {
-  if (typeof value !== "string" || !value || value === "unknown") {
-    return "";
-  }
-  return value.replace(/_/g, " ");
 }
 
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {

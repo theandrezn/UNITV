@@ -1160,10 +1160,18 @@ function inferFollowupKey(
 ) {
   const reply = output.reply.toLowerCase();
   if (intent === "greeting") return "welcome_activation";
-  if (output.copyText || output.media || intent === "pix_payment") return "pix";
+  if (output.copyText || output.media) return "pix";
+  if (intent === "pix_payment") {
+    if (/qual plano|mensal|3 meses|6 meses|anual/i.test(output.reply)) return "plan_choice";
+    return "payment_choice";
+  }
   if (intent === "receipt_sent" || /\bcomprovante\b/i.test(reply)) return "proof";
   if (intent === "ask_price") return "values";
-  if (intent === "buy_plan" || intent === "renew_plan") return output.menu?.id === "plans" ? "plan_choice" : "pix";
+  if (intent === "buy_plan" || intent === "renew_plan") {
+    if (output.menu?.id === "plans" || /qual .*ativar|qual plano|hoje temos/i.test(output.reply)) return "plan_choice";
+    if (/pix ou cart[aã]o|prefere pagar/i.test(output.reply)) return "payment_choice";
+    return "plan_choice";
+  }
   if (intent === "free_trial") return "test";
   if (intent === "technical_support") {
     if (/download|baixar|apk/i.test(reply)) return "download";
@@ -1181,6 +1189,7 @@ function inferAwaitingAction(key: string) {
     values: "choose_plan",
     welcome_activation: "answer_welcome_intent",
     plan_choice: "choose_plan",
+    payment_choice: "choose_payment_method",
     download: "confirm_download",
     install: "install_app",
     test: "confirm_test",
@@ -1195,6 +1204,7 @@ function inferAwaitingAction(key: string) {
 
 function inferConversationStage(intent: string, key: string) {
   if (key === "pix") return "aguardando_pix";
+  if (key === "payment_choice") return "pagamento";
   if (key === "welcome_activation") return "boas_vindas";
   if (key === "proof") return "aguardando_comprovante";
   if (key === "download" || key === "install") return "instalacao";
