@@ -60,6 +60,18 @@ describe("WhatsappFollowupService", () => {
     expect(buildFollowupText({ followup_key: "install", device: "unknown" })).toContain("Android ou Play Store?");
   });
 
+  it("uses renewal wording after values when the customer wants recarga", () => {
+    const renewalFollowup = buildFollowupText({
+      followup_key: "values",
+      conversation_stage: "recarga",
+      lead_profile: { wants_recharge: true, ultima_intencao: "renew_plan" }
+    });
+
+    expect(renewalFollowup).toBe("Você se interessou pelos valores? Posso te indicar o melhor plano pra renovar ✅");
+    expect(renewalFollowup).not.toContain("pagamento");
+    expect(renewalFollowup).not.toContain("comprovante");
+  });
+
   it("sends a due follow-up once for the current stage", async () => {
     const now = new Date("2026-07-06T12:00:00.000Z");
     const { service, evolutionService, messagesRepository, conversationsRepository } = createService([

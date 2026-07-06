@@ -190,12 +190,16 @@ export function buildPromoRecoveryFollowupText(
 export function buildFollowupText(metadata: Record<string, unknown>) {
   const key = String(metadata.followup_key || "generic");
   const device = String(metadata.device || "");
+  const profile = readLeadProfile(metadata);
 
   if (key === "welcome_activation") {
     return "Você quer que eu te passe os valores ou prefere fazer o teste grátis de 3 dias?";
   }
 
   if (key === "values") {
+    if (isRenewalFollowup(metadata, profile)) {
+      return "Você se interessou pelos valores? Posso te indicar o melhor plano pra renovar ✅";
+    }
     return "Você se interessou pelos valores? Posso te indicar o melhor plano pra começar ✅";
   }
 
@@ -282,6 +286,17 @@ function readCustomerPhone(conversation: ConversationRow) {
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
   const profile = metadata?.lead_profile;
   return profile && typeof profile === "object" && !Array.isArray(profile) ? (profile as Record<string, unknown>) : {};
+}
+
+function isRenewalFollowup(metadata: Record<string, unknown>, profile: Record<string, unknown>) {
+  return Boolean(
+    profile.wants_recharge ||
+      profile.wants_renewal ||
+      profile.renovacao ||
+      profile.ultima_intencao === "renew_plan" ||
+      metadata.conversation_stage === "recarga" ||
+      metadata.awaiting_customer_action === "renew_plan"
+  );
 }
 
 function readFirstName(value: unknown) {
