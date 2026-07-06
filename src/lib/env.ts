@@ -35,7 +35,12 @@ const serverEnvSchema = z.object({
   UNITV_DAILY_AUDIT_MINUTE: z.string().optional(),
   UNITV_MIDDAY_AUDIT_ENABLED: z.string().optional(),
   UNITV_AUDIT_USE_AI_SUMMARY: z.string().optional(),
-  OPENAI_MODEL_AUDIT_SUMMARY: z.string().optional()
+  OPENAI_MODEL_AUDIT_SUMMARY: z.string().optional(),
+  UNITV_HOT_LEAD_ALERTS_ENABLED: z.string().optional(),
+  UNITV_HOT_LEAD_ALERT_DEDUPE_MINUTES: z.string().optional(),
+  UNITV_HOT_LEAD_ALERT_ADMIN_PHONE: z.string().optional(),
+  UNITV_HOT_LEAD_ALERT_MIN_TEMPERATURE: z.enum(["frio", "morno", "quente", "muito_quente"]).optional(),
+  UNITV_HOT_LEAD_ALERT_FORMAT: z.enum(["full", "compact"]).optional()
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -181,4 +186,15 @@ export function getDailyAuditConfig() {
 function parseIntegerEnv(value: string | undefined, fallback: number) {
   const parsed = Number.parseInt(value || "", 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+export function getHotLeadAlertConfig() {
+  const env = getServerEnv();
+  return {
+    enabled: env.UNITV_HOT_LEAD_ALERTS_ENABLED !== "false",
+    dedupeMinutes: parseIntegerEnv(env.UNITV_HOT_LEAD_ALERT_DEDUPE_MINUTES, 30),
+    adminPhone: env.UNITV_HOT_LEAD_ALERT_ADMIN_PHONE || env.UNITV_DAILY_AUDIT_ADMIN_PHONE || "558699802602",
+    minTemperature: env.UNITV_HOT_LEAD_ALERT_MIN_TEMPERATURE || "quente",
+    format: env.UNITV_HOT_LEAD_ALERT_FORMAT || "full"
+  };
 }

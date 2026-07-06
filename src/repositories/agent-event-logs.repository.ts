@@ -29,7 +29,10 @@ export type AgentEventType =
   | "response_sanitized"
   | "debug_blocked"
   | "handoff_started"
-  | "handoff_resumed";
+  | "handoff_resumed"
+  | "hot_lead_detected"
+  | "hot_lead_alert_sent"
+  | "hot_lead_alert_failed";
 
 export type AgentEventSource =
   | "webhook"
