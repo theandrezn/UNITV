@@ -360,6 +360,18 @@ export class WhatsappMessageService {
     }
 
     const leadProfilePatch = buildLeadProfilePatch(message.text, classification.intent, conversation.metadata);
+    if (leadProfilePatch.accepted_special_promo) {
+      effectiveMessage = "mensal pix promocao";
+      classification = {
+        intent: "pix_payment",
+        confidence: 1,
+        summary: "Cliente aceitou a promocao de recuperacao e pediu Pix.",
+        suggested_reply: ""
+      };
+      leadProfilePatch.ultima_intencao = classification.intent;
+      leadProfilePatch.etapa_atual = mapIntentToStage(classification.intent);
+      leadProfilePatch.stage = mapIntentToStage(classification.intent);
+    }
     if (Object.keys(leadProfilePatch).length) {
       const currentLeadProfile = readLeadProfile(conversation.metadata);
       const nextMetadata = {
@@ -1282,6 +1294,16 @@ function buildLeadProfilePatch(text: string, intent: string, metadata: Record<st
     patch.pediu_pix = true;
     patch.nivel_interesse = "quente";
   }
+  if (isSpecialPromoAcceptance(normalized, existing)) {
+    patch.accepted_special_promo = true;
+    patch.special_promo_accepted_at = new Date().toISOString();
+    patch.special_promo_offer = existing.special_promo_offer || "mensal_19_99_first_2_months";
+    patch.selected_plan = existing.selected_plan || "mensal";
+    patch.plano_interesse = existing.plano_interesse || "mensal";
+    patch.pediu_pix = true;
+    patch.nivel_interesse = "muito_quente";
+    patch.payment_status = existing.payment_status || "not_paid";
+  }
   if (/\b(comprovante|recibo|print do pagamento|paguei|ja paguei|fiz o pagamento)\b/.test(normalized)) {
     patch.enviou_comprovante = true;
     patch.nivel_interesse = "quente";
@@ -1342,6 +1364,16 @@ function normalizePlanId(plan: string) {
   if (plan === "3 meses") return "3_meses";
   if (plan === "6 meses") return "6_meses";
   return plan;
+}
+
+function isSpecialPromoAcceptance(normalized: string, existing: Record<string, unknown>) {
+  if (!existing.special_promo_followup_sent || existing.accepted_special_promo) {
+    return false;
+  }
+  return (
+    /^(sim|s|quero|ok|pode|pode mandar|manda|manda pix|manda o pix|vou querer|fechado|bora|aceito)$/.test(normalized) ||
+    /\b(quero aproveitar|pode mandar|manda o pix|manda pix|vou querer|aceito|fechado)\b/.test(normalized)
+  );
 }
 
 function detectMainObjection(normalized: string) {

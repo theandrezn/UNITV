@@ -33,6 +33,9 @@ const LOW_CONFIDENCE_REPLY =
 const PLANS_TEXT = ["Mensal — R$ 25", "3 meses — R$ 70", "6 meses — R$ 120", "Anual — R$ 200"].join("\n");
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 
+const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
+const SPECIAL_PROMO_MONTHLY_PRICE_CENTS = 1999;
+
 type CommercialReplyInput = {
   message: string;
   classification: IntentClassification;
@@ -118,6 +121,10 @@ export class ChatAgentService {
     const deterministicInstallationReply = intent === "technical_support" ? getInstallationReply(message) : null;
     if (deterministicInstallationReply) {
       return deterministicInstallationReply;
+    }
+
+    if (intent === "pix_payment" && isSpecialPromoAccepted(leadProfile)) {
+      return this.generatePixPayment(input, knowledge);
     }
 
     if (shouldUseAIResponse({
@@ -647,7 +654,30 @@ export class ChatAgentService {
     input: CommercialReplyInput,
     knowledge: Array<{ category?: string; content?: string }>
   ): Promise<CommercialReplyResult> {
-    const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+    const leadProfile = readLeadProfile(input.conversation.metadata);
+    const promoAccepted = isSpecialPromoAccepted(leadProfile);
+    let order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+    if (!order && promoAccepted) {
+      const plans = await this.plansService.listActivePlans();
+      const monthlyPlan = findMonthlyPlan(plans);
+      if (monthlyPlan) {
+        order = await this.ordersService.createOrder({
+          customer_id: input.customer.id,
+          product_id: String(monthlyPlan.product_id),
+          plan_id: String(monthlyPlan.id),
+          status: "pending_payment",
+          amount_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+          currency: String(monthlyPlan.currency || "BRL"),
+          metadata: {
+            source: "whatsapp_agent",
+            webhookEventId: input.webhookEventId,
+            special_promo_offer: SPECIAL_PROMO_OFFER_ID,
+            special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+            original_price_cents: Number(monthlyPlan.price_cents)
+          }
+        } as never);
+      }
+    }
     if (!order) {
       const plans = await this.plansService.listActivePlans();
       const menu = shouldUseMenu(input.message) && plans.length ? buildPlansMenu(plans) : null;
@@ -660,10 +690,11 @@ export class ChatAgentService {
     const metadata = readOrderMetadata(order);
     const existingQrCode = readMetadataString(metadata, "mercado_pago_pix_qr_code");
     const existingTicketUrl = readMetadataString(metadata, "mercado_pago_pix_ticket_url");
-    if (existingQrCode) {
+    const existingQrCodeMatchesPromo = metadata.special_promo_offer === SPECIAL_PROMO_OFFER_ID;
+    if (existingQrCode && (!promoAccepted || existingQrCodeMatchesPromo)) {
       return {
         order,
-        reply: formatPixReply(order, existingQrCode, existingTicketUrl),
+        reply: formatPixReply(order, existingQrCode, existingTicketUrl, promoAccepted),
         copyText: existingQrCode
       };
     }
@@ -679,14 +710,28 @@ export class ChatAgentService {
     }
 
     try {
+      const needsPromoOrderUpdate = promoAccepted &&
+        (Number(order.amount_cents) !== SPECIAL_PROMO_MONTHLY_PRICE_CENTS || metadata.special_promo_offer !== SPECIAL_PROMO_OFFER_ID);
+      const paymentOrder = needsPromoOrderUpdate
+        ? await this.ordersService.updateOrder(String(order.id), {
+            amount_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+            metadata: {
+              ...metadata,
+              special_promo_offer: SPECIAL_PROMO_OFFER_ID,
+              special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+              original_price_cents: metadata.original_price_cents || Number(order.amount_cents)
+            }
+          })
+        : order;
+      const paymentOrderMetadata = readOrderMetadata(paymentOrder);
       const pix = await this.mercadoPagoService.createPixPayment({
         order: {
-          id: String(order.id),
-          order_number: String(order.order_number),
-          customer_id: String(order.customer_id),
-          plan_id: String(order.plan_id),
-          amount_cents: Number(order.amount_cents),
-          currency: String(order.currency || "BRL")
+          id: String(paymentOrder.id),
+          order_number: String(paymentOrder.order_number),
+          customer_id: String(paymentOrder.customer_id),
+          plan_id: String(paymentOrder.plan_id),
+          amount_cents: Number(paymentOrder.amount_cents),
+          currency: String(paymentOrder.currency || "BRL")
         },
         plan,
         payer: { email: buildMercadoPagoPixEmail(order, input.customer.id) }
@@ -696,7 +741,7 @@ export class ChatAgentService {
         payment_provider: "mercado_pago",
         payment_reference: pix.id,
         metadata: {
-          ...metadata,
+          ...paymentOrderMetadata,
           mercado_pago_pix_payment_id: pix.id,
           mercado_pago_pix_qr_code: pix.qrCode,
           mercado_pago_pix_ticket_url: pix.ticketUrl,
@@ -713,13 +758,13 @@ export class ChatAgentService {
 
       return {
         order,
-        reply: formatPixReply(order, pix.qrCode, pix.ticketUrl),
+        reply: formatPixReply(paymentOrder, pix.qrCode, pix.ticketUrl, promoAccepted),
         copyText: pix.qrCode,
         media: {
           base64: pix.qrCodeBase64,
           mimetype: "image/png",
-          fileName: `pix-${String(order.order_number)}.png`,
-          caption: `QR Code Pix do pedido ${String(order.order_number)}`
+          fileName: `pix-${String(paymentOrder.order_number)}.png`,
+          caption: `QR Code Pix do pedido ${String(paymentOrder.order_number)}`
         }
       };
     } catch (error) {
@@ -1169,7 +1214,20 @@ function readOrderPlan(order: Record<string, unknown>) {
   return { name: "Plano UNiTV", slug: "unitv" };
 }
 
-function formatPixReply(order: Record<string, unknown>, _qrCode: string, _ticketUrl: string | null) {
+function formatPixReply(order: Record<string, unknown>, _qrCode: string, _ticketUrl: string | null, promoAccepted = false) {
+  if (promoAccepted) {
+    return [
+      "Perfeito ✅",
+      "Vou te passar a chave PIX agora.",
+      "Assim que fizer o pagamento, me manda o comprovante por aqui que eu já libero seu acesso.",
+      "Condição especial aplicada: R$ 19,99 nos 2 primeiros meses.",
+      `PIX do pedido ${String(order.order_number)}`,
+      "Vou enviar o Pix Copia e Cola na próxima mensagem para facilitar a cópia.",
+      "Toque e segure na próxima mensagem e escolha copiar.",
+      "A confirmação é automática pelo Mercado Pago. Não precisa enviar comprovante."
+    ].join("\n\n");
+  }
+
   return [
     `PIX do pedido ${String(order.order_number)}`,
     "Vou enviar o Pix Copia e Cola na próxima mensagem para facilitar a cópia.",
@@ -1185,4 +1243,16 @@ function formatCardReply(checkoutUrl: string) {
 function buildMercadoPagoPixEmail(order: Record<string, unknown>, customerId: string) {
   const reference = String(order.order_number || order.id || customerId).toLowerCase().replace(/[^a-z0-9]+/g, "-");
   return `pix-${reference}@unitv.com.br`;
+}
+
+function isSpecialPromoAccepted(leadProfile: Record<string, unknown>) {
+  return leadProfile.accepted_special_promo === true && leadProfile.special_promo_offer === SPECIAL_PROMO_OFFER_ID;
+}
+
+function findMonthlyPlan(plans: Array<Record<string, unknown>>) {
+  return plans.find((plan) => {
+    const slug = String(plan.slug || "").toLowerCase();
+    const name = String(plan.name || "").toLowerCase();
+    return slug.includes("mensal") || name.includes("mensal") || Number(plan.duration_days) === 30;
+  }) || null;
 }

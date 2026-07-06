@@ -8,6 +8,7 @@ import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
 const HUMAN_SILENCE_WINDOW_MS = 5 * 60 * 1000;
+const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 
 type ConversationRow = {
   id: string;
@@ -63,15 +64,31 @@ export class WhatsappFollowupService {
       }
 
       const stageId = String(metadata.last_followup_stage_id || randomUUID());
-      const followupText = buildFollowupText(metadata);
+      const promoRecovery = shouldSendPromoRecoveryFollowup(metadata);
+      const followupText = promoRecovery ? buildPromoRecoveryFollowupText(metadata, conversation) : buildFollowupText(metadata);
       const sendResult = await this.evolutionService.sendTextMessage({ phone, text: followupText });
+      const leadProfile = readLeadProfile(metadata);
       const nextMetadata = {
         ...metadata,
         followup_due_at: null,
         followup_sent_at: now.toISOString(),
         followup_sent_stage_id: stageId,
         followup_count: Number(metadata.followup_count || 0) + 1,
-        last_followup_stage_id: stageId
+        last_followup_stage_id: stageId,
+        ...(promoRecovery
+          ? {
+              promo_followup_sent_at: now.toISOString(),
+              promo_followup_stage_id: stageId,
+              lead_profile: {
+                ...leadProfile,
+                special_promo_followup_sent: true,
+                special_promo_followup_sent_at: now.toISOString(),
+                special_promo_offer: SPECIAL_PROMO_OFFER_ID,
+                next_best_action: "cliente_confirmar_promocao_para_receber_pix",
+                proxima_acao: "cliente confirmar promocao para receber Pix"
+              }
+            }
+          : {})
       };
 
       await this.messagesRepository.createMessage({
@@ -81,7 +98,7 @@ export class WhatsappFollowupService {
         content: followupText,
         content_type: "text",
         external_message_id: `followup:${conversation.id}:${stageId}`,
-        metadata: { sendResult, followup_key: metadata.followup_key, stageId }
+        metadata: { sendResult, followup_key: metadata.followup_key, stageId, promo_recovery: promoRecovery }
       });
       await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
       await this.conversationsRepository.touchConversation(conversation.id, now.toISOString());
@@ -90,7 +107,7 @@ export class WhatsappFollowupService {
         action: "whatsapp_followup_sent",
         entity_type: "conversations",
         entity_id: conversation.id,
-        metadata: { followup_key: metadata.followup_key, stageId, sendResult }
+        metadata: { followup_key: metadata.followup_key, stageId, sendResult, promo_recovery: promoRecovery }
       });
       await this.safeCreateAgentEvent({
         conversation_id: conversation.id,
@@ -104,7 +121,8 @@ export class WhatsappFollowupService {
         metadata: {
           followup_key: metadata.followup_key,
           followup_count: nextMetadata.followup_count,
-          stageId
+          stageId,
+          promo_recovery: promoRecovery
         }
       });
 
@@ -121,6 +139,52 @@ export class WhatsappFollowupService {
       return null;
     }
   }
+}
+
+export function shouldSendPromoRecoveryFollowup(metadata: Record<string, unknown>) {
+  const key = String(metadata.followup_key || "");
+  if (!["pix", "plan_choice", "values"].includes(key)) {
+    return false;
+  }
+
+  const profile = readLeadProfile(metadata);
+  if (metadata.promo_followup_sent_at || profile.special_promo_followup_sent) {
+    return false;
+  }
+
+  if (
+    profile.payment_status === "confirmed" ||
+    profile.payment_status === "paid" ||
+    profile.order_status === "paid" ||
+    profile.codigo_enviado === true ||
+    profile.converted === true
+  ) {
+    return false;
+  }
+
+  return Boolean(
+    profile.nivel_interesse === "quente" ||
+      profile.nivel_interesse === "muito_quente" ||
+      profile.pediu_pix ||
+      profile.wants_activation ||
+      profile.wants_recharge ||
+      profile.selected_plan ||
+      profile.plano_interesse ||
+      metadata.plan_interest
+  );
+}
+
+export function buildPromoRecoveryFollowupText(
+  metadata: Record<string, unknown>,
+  conversation?: Pick<ConversationRow, "customers">
+) {
+  const firstName = readFirstName(conversation?.customers?.name || readLeadProfile(metadata).nome);
+  const prefix = firstName ? `${firstName}, consigo` : "Consigo";
+  return [
+    `${prefix} fazer uma condição especial pra você começar hoje.`,
+    "Pra ter você como nosso cliente, libero os 2 primeiros meses por R$ 19,99 cada.",
+    "Se quiser aproveitar, me confirma aqui que já te mando a chave PIX e deixo sua ativação pronta ✅"
+  ].join("\n\n");
 }
 
 export function buildFollowupText(metadata: Record<string, unknown>) {
@@ -220,6 +284,19 @@ function formatPlanInterest(value: unknown) {
     return "";
   }
   return value.replace(/_/g, " ");
+}
+
+function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
+  const profile = metadata?.lead_profile;
+  return profile && typeof profile === "object" && !Array.isArray(profile) ? (profile as Record<string, unknown>) : {};
+}
+
+function readFirstName(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  const firstName = value.trim().split(/\s+/)[0] || "";
+  return firstName.replace(/[^\p{L}'-]/gu, "");
 }
 
 function isRecentDate(value: unknown, now: Date, windowMs: number) {

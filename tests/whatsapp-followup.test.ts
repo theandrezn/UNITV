@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { buildFollowupText, WhatsappFollowupService } from "@/services/followups/whatsapp-followup.service";
+import {
+  buildFollowupText,
+  buildPromoRecoveryFollowupText,
+  shouldSendPromoRecoveryFollowup,
+  WhatsappFollowupService
+} from "@/services/followups/whatsapp-followup.service";
 
 function createService(conversations: Array<Record<string, unknown>>) {
   const conversationsRepository = {
@@ -89,6 +94,66 @@ describe("WhatsappFollowupService", () => {
         followup_count: 1
       })
     );
+  });
+
+  it("sends a one-time promotional recovery follow-up for hot leads before payment", async () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const { service, evolutionService, conversationsRepository } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888", name: "Maria Cliente" },
+        metadata: {
+          followup_key: "pix",
+          followup_due_at: "2026-07-06T11:59:00.000Z",
+          last_bot_message_at: "2026-07-06T11:54:00.000Z",
+          last_customer_message_at: "2026-07-06T11:53:00.000Z",
+          last_followup_stage_id: "pix:send_proof:1",
+          followup_count: 0,
+          lead_profile: {
+            selected_plan: "mensal",
+            nivel_interesse: "quente",
+            payment_status: "not_paid"
+          }
+        }
+      }
+    ]);
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result.sent).toBe(1);
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Maria, consigo fazer uma condi")
+      })
+    );
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("R$ 19,99")
+      })
+    );
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        promo_followup_sent_at: now.toISOString(),
+        lead_profile: expect.objectContaining({
+          special_promo_followup_sent: true,
+          special_promo_offer: "mensal_19_99_first_2_months"
+        })
+      })
+    );
+  });
+
+  it("does not offer the promotional recovery twice or to cold leads", () => {
+    expect(shouldSendPromoRecoveryFollowup({
+      followup_key: "pix",
+      lead_profile: { selected_plan: "mensal", special_promo_followup_sent: true }
+    })).toBe(false);
+    expect(shouldSendPromoRecoveryFollowup({
+      followup_key: "welcome_activation",
+      lead_profile: { nivel_interesse: "frio" }
+    })).toBe(false);
+    expect(buildPromoRecoveryFollowupText({ lead_profile: {} })).toContain("condi");
   });
 
   it("does not send when the customer already replied after the bot", async () => {
