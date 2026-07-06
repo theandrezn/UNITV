@@ -65,4 +65,16 @@ export class ConversationsRepository {
 
     return assertSupabaseSuccess(data || [], error);
   }
+
+  async listOpenConversations(limit = 200) {
+    const { data, error } = await this.supabase
+      .from("conversations")
+      .select("*, customers(id, name, phone)")
+      .eq("channel", "whatsapp")
+      .eq("status", "open")
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error);
+  }
 }

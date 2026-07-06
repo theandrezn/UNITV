@@ -14,6 +14,7 @@ import { resolveMenuSelection, type WhatsAppMenu } from "@/lib/whatsapp/menus";
 
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
+const CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 
 type ProcessIncomingMessageInput = {
   webhookEventId: string;
@@ -136,6 +137,14 @@ export class WhatsappMessageService {
         webhookEventId
       }
     });
+    const customerMessageAt = getMessageDate(message).toISOString();
+    conversation.metadata = {
+      ...(conversation.metadata || {}),
+      last_customer_message_at: customerMessageAt,
+      followup_due_at: null,
+      awaiting_customer_action: null
+    };
+    await this.conversationsRepository.updateConversationMetadata(conversation.id, conversation.metadata);
 
     if (isReceiptMessage(message)) {
       const reply = await this.handleReceiptMessage({ webhookEventId, message, customer, conversation });
@@ -261,11 +270,12 @@ export class WhatsappMessageService {
     }
 
     if (commercialReply.menu) {
-      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
+      conversation.metadata = {
         ...(conversation.metadata || {}),
         last_menu_id: commercialReply.menu.id,
         last_menu_sent_at: new Date().toISOString()
-      });
+      };
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, conversation.metadata);
     }
 
     return this.sendAndStoreAssistantReply({
@@ -299,7 +309,7 @@ export class WhatsappMessageService {
     webhookEventId: string;
     message: IncomingEvolutionMessage;
     customer: { id: string };
-    conversation: { id: string };
+    conversation: { id: string; metadata?: Record<string, unknown> | null };
     reply: string;
     classification: Record<string, unknown>;
     media?: { base64: string; mimetype: string; fileName: string; caption: string };
@@ -364,7 +374,15 @@ export class WhatsappMessageService {
       }
     });
 
-    await this.conversationsRepository.touchConversation(conversation.id);
+    const now = new Date();
+    const followupState = buildFollowupState({ reply, classification, menu, copyText, followUpMessages, media }, conversation.metadata, now);
+    const nextMetadata = {
+      ...(conversation.metadata || {}),
+      last_bot_message_at: now.toISOString(),
+      ...followupState
+    };
+    await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
+    await this.conversationsRepository.touchConversation(conversation.id, now.toISOString());
     await this.auditService.createAuditLog({
       actor_type: "ai_agent",
       action: "evolution_reply_sent",
@@ -560,6 +578,94 @@ function isHumanHandoffRequest(text: string) {
 function isBotResumeRequest(text: string) {
   return /\b(ativar|reativar|voltar|retomar|liberar|reiniciar)\b/i.test(text) &&
     /\b(bot|agente|automatico|autom[aá]tico|atendimento automatico|atendimento autom[aá]tico)\b/i.test(text);
+}
+
+function buildFollowupState(
+  output: {
+    reply: string;
+    classification: Record<string, unknown>;
+    menu?: WhatsAppMenu;
+    copyText?: string;
+    followUpMessages?: string[];
+    media?: unknown;
+  },
+  metadata: Record<string, unknown> | null | undefined,
+  now: Date
+) {
+  const intent = String(output.classification.intent || "");
+  const key = inferFollowupKey(output, intent);
+  if (!key) {
+    return {
+      followup_key: null,
+      followup_due_at: null,
+      awaiting_customer_action: null
+    };
+  }
+
+  const stageId = `${intent || "conversation"}:${key}:${now.getTime()}`;
+  return {
+    followup_key: key,
+    followup_due_at: new Date(now.getTime() + CUSTOMER_FOLLOWUP_DELAY_MS).toISOString(),
+    followup_sent_at: null,
+    followup_sent_stage_id: null,
+    followup_count: 0,
+    last_followup_stage_id: stageId,
+    awaiting_customer_action: inferAwaitingAction(key),
+    conversation_stage: inferConversationStage(intent, key),
+    plan_interest: metadata?.lead_profile && typeof metadata.lead_profile === "object"
+      ? (metadata.lead_profile as Record<string, unknown>).plano_interesse || metadata.plan_interest || null
+      : metadata?.plan_interest || null,
+    device: metadata?.lead_profile && typeof metadata.lead_profile === "object"
+      ? (metadata.lead_profile as Record<string, unknown>).aparelho || metadata.device || null
+      : metadata?.device || null
+  };
+}
+
+function inferFollowupKey(
+  output: { reply: string; classification: Record<string, unknown>; menu?: WhatsAppMenu; copyText?: string; media?: unknown },
+  intent: string
+) {
+  const reply = output.reply.toLowerCase();
+  if (output.copyText || output.media || intent === "pix_payment") return "pix";
+  if (intent === "receipt_sent" || /\bcomprovante\b/i.test(reply)) return "proof";
+  if (intent === "ask_price") return "values";
+  if (intent === "buy_plan" || intent === "renew_plan") return output.menu?.id === "plans" ? "plan_choice" : "pix";
+  if (intent === "free_trial") return "test";
+  if (intent === "technical_support") {
+    if (/download|baixar|apk/i.test(reply)) return "download";
+    return "install";
+  }
+  if (/telas?|aparelhos ao mesmo tempo/i.test(reply)) return "screens";
+  if (intent === "human_help") return "support";
+  if (output.menu?.id === "plans") return "plan_choice";
+  if (output.menu?.id === "install") return "download";
+  return null;
+}
+
+function inferAwaitingAction(key: string) {
+  const actions: Record<string, string> = {
+    values: "choose_plan",
+    plan_choice: "choose_plan",
+    download: "confirm_download",
+    install: "install_app",
+    test: "confirm_test",
+    pix: "send_proof",
+    proof: "send_proof",
+    screens: "answer_screens",
+    support: "human_support",
+    generic: "none"
+  };
+  return actions[key] || "none";
+}
+
+function inferConversationStage(intent: string, key: string) {
+  if (key === "pix") return "aguardando_pix";
+  if (key === "proof") return "aguardando_comprovante";
+  if (key === "download" || key === "install") return "instalacao";
+  if (key === "test") return "teste";
+  if (key === "values" || key === "plan_choice") return "valores";
+  if (intent === "human_help") return "humano";
+  return "qualificacao";
 }
 
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {

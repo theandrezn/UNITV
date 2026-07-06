@@ -10,6 +10,8 @@ const serverEnvSchema = z.object({
   SUPABASE_DB_URL: z.string().optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_MODEL: z.string().optional(),
+  OPENAI_MODEL_SALES_AGENT: z.string().optional(),
+  OPENAI_MODEL_INTENT: z.string().optional(),
   APP_ENV: appEnvSchema.default("development"),
   APP_BASE_URL: z.string().url("APP_BASE_URL must be a valid URL").optional().or(z.literal("")),
   WEBHOOK_SECRET: z.string().optional(),
@@ -130,4 +132,14 @@ export function getAppEnv() {
 
 export function getOpenAIModel() {
   return getServerEnv().OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+}
+
+export function getOpenAIIntentModel() {
+  const env = getServerEnv();
+  return env.OPENAI_MODEL_INTENT || env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || "gpt-5.4-mini";
+}
+
+export function getOpenAISalesAgentModel() {
+  const env = getServerEnv();
+  return env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || "gpt-5.4-mini";
 }

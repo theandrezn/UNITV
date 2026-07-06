@@ -1,6 +1,6 @@
 import "server-only";
 import OpenAI from "openai";
-import { getOpenAIEnv, getOpenAIModel } from "@/lib/env";
+import { getOpenAIEnv, getOpenAIIntentModel, getOpenAIModel, getOpenAISalesAgentModel } from "@/lib/env";
 
 export function createOpenAIClient() {
   const env = getOpenAIEnv();
@@ -12,4 +12,12 @@ export function createOpenAIClient() {
 
 export function getDefaultOpenAIModel() {
   return getOpenAIModel();
+}
+
+export function getIntentOpenAIModel() {
+  return getOpenAIIntentModel();
+}
+
+export function getSalesAgentOpenAIModel() {
+  return getOpenAISalesAgentModel();
 }

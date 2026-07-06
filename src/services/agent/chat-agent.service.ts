@@ -10,6 +10,7 @@ import { OrdersService } from "@/services/orders.service";
 import { MercadoPagoService } from "@/services/payments/mercadopago.service";
 import { PlansService } from "@/services/plans.service";
 import { buildNoAccessCodeAvailableMessage, buildPostPurchaseMessages } from "@/lib/unitv/post-purchase-messages";
+import { findUnitvObjectionReply } from "@/lib/unitv/objection-map";
 import {
   buildPlansMenu,
   CONTINUATION_MENU,
@@ -89,7 +90,7 @@ export class ChatAgentService {
     const knowledge = await this.knowledgeService.searchKnowledge(message);
     const intent = input.classification.intent === "support" ? "technical_support" : input.classification.intent;
 
-    const salesObjectionReply = getSalesObjectionReply(message);
+    const salesObjectionReply = findUnitvObjectionReply(message) || getSalesObjectionReply(message);
     if ((intent === "unknown" || intent === "technical_support") && salesObjectionReply) {
       return {
         reply: salesObjectionReply.reply,

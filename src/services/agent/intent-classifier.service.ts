@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
-import { createOpenAIClient, getDefaultOpenAIModel } from "@/lib/openai/client";
+import { createOpenAIClient, getDefaultOpenAIModel, getIntentOpenAIModel } from "@/lib/openai/client";
+import { UNITV_INTENT_JSON_SCHEMA, UNITV_INTENT_SYSTEM_PROMPT } from "./unitv-sales-ai-prompt";
 
 export const intentSchema = z.enum([
   "greeting",
@@ -43,30 +44,104 @@ export class IntentClassifierService {
     }
 
     const client = createOpenAIClient();
-    const completion = await client.chat.completions.create({
-      model: getDefaultOpenAIModel(),
-      messages: [
-        {
-          role: "system",
-          content:
-            "Classifique a intenção do cliente UniTV usando apenas: greeting, buy_plan, renew_plan, ask_price, ask_payment, card_payment, pix_payment, free_trial, receipt_sent, activation_help, technical_support, human_help, unknown. Use card_payment quando pedir pagamento por cartão ou link de pagamento. Use pix_payment quando pedir Pix, chave Pix, QR Code ou Pix Copia e Cola. Use free_trial quando pedir teste grátis. Responda somente JSON válido com intent, confidence, summary e suggested_reply. Nunca ofereça código de ativação."
-        },
-        {
-          role: "user",
-          content: input.message
-        }
-      ],
-      response_format: { type: "json_object" },
-      temperature: 0
-    });
-
-    const content = completion.choices[0]?.message.content;
+    const content = await classifyWithResponsesApi(client, input.message);
     if (!content) {
-      return fallbackClassification;
+      const completion = await client.chat.completions.create({
+        model: getDefaultOpenAIModel(),
+        messages: [
+          {
+            role: "system",
+            content:
+              `${UNITV_INTENT_SYSTEM_PROMPT}\nResponda somente JSON valido com intent, confidence, summary e suggested_reply.`
+          },
+          {
+            role: "user",
+            content: input.message
+          }
+        ],
+        response_format: { type: "json_object" },
+        temperature: 0
+      });
+
+      return parseClassification(completion.choices[0]?.message.content);
     }
 
+    return parseClassification(content);
+  }
+}
+
+async function classifyWithResponsesApi(client: unknown, message: string) {
+  const responsesClient = client as {
+    responses?: {
+      create: (input: Record<string, unknown>) => Promise<{ output_text?: string; output?: unknown[] }>;
+    };
+  };
+  if (!responsesClient.responses?.create) {
+    return null;
+  }
+
+  const response = await responsesClient.responses.create({
+    model: getIntentOpenAIModel(),
+    input: [
+      {
+        role: "system",
+        content: [{ type: "input_text", text: UNITV_INTENT_SYSTEM_PROMPT }]
+      },
+      {
+        role: "user",
+        content: [{ type: "input_text", text: message }]
+      }
+    ],
+    text: {
+      format: {
+        type: "json_schema",
+        name: "unitv_intent_classification",
+        schema: UNITV_INTENT_JSON_SCHEMA,
+        strict: true
+      }
+    }
+  });
+
+  return response.output_text || extractResponseText(response.output);
+}
+
+function extractResponseText(output: unknown) {
+  if (!Array.isArray(output)) {
+    return null;
+  }
+
+  for (const item of output) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+    const content = (item as { content?: unknown }).content;
+    if (!Array.isArray(content)) {
+      continue;
+    }
+    for (const part of content) {
+      if (!part || typeof part !== "object") {
+        continue;
+      }
+      const text = (part as { text?: unknown }).text;
+      if (typeof text === "string" && text.trim()) {
+        return text;
+      }
+    }
+  }
+
+  return null;
+}
+
+function parseClassification(content: string | null | undefined) {
+  if (!content) {
+    return fallbackClassification;
+  }
+
+  try {
     const parsed = intentClassificationSchema.safeParse(JSON.parse(content));
     return parsed.success ? parsed.data : fallbackClassification;
+  } catch {
+    return fallbackClassification;
   }
 }
 

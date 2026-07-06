@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 const openAIClient = {
+  responses: {
+    create: vi.fn()
+  },
   chat: {
     completions: {
       create: vi.fn()
@@ -12,7 +15,8 @@ const openAIClient = {
 
 vi.mock("@/lib/openai/client", () => ({
   createOpenAIClient: vi.fn(() => openAIClient),
-  getDefaultOpenAIModel: vi.fn(() => "test-model")
+  getDefaultOpenAIModel: vi.fn(() => "test-model"),
+  getIntentOpenAIModel: vi.fn(() => "intent-test-model")
 }));
 
 import { createOpenAIClient } from "@/lib/openai/client";
@@ -41,19 +45,13 @@ describe("IntentClassifierService", () => {
 
   it("uses OpenAI only when the local rules cannot classify the message", async () => {
     vi.clearAllMocks();
-    openAIClient.chat.completions.create.mockResolvedValueOnce({
-      choices: [
-        {
-          message: {
-            content: JSON.stringify({
-              intent: "unknown",
-              confidence: 0.5,
-              summary: "Mensagem ambigua.",
-              suggested_reply: "Como posso te ajudar?"
-            })
-          }
-        }
-      ]
+    openAIClient.responses.create.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        intent: "unknown",
+        confidence: 0.5,
+        summary: "Mensagem ambigua.",
+        suggested_reply: "Como posso te ajudar?"
+      })
     });
     const service = new IntentClassifierService();
 
@@ -61,6 +59,7 @@ describe("IntentClassifierService", () => {
 
     expect(result.intent).toBe("unknown");
     expect(createOpenAIClient).toHaveBeenCalledTimes(1);
-    expect(openAIClient.chat.completions.create).toHaveBeenCalledTimes(1);
+    expect(openAIClient.responses.create).toHaveBeenCalledTimes(1);
+    expect(openAIClient.chat.completions.create).not.toHaveBeenCalled();
   });
 });
