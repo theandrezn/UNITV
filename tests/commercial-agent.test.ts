@@ -742,8 +742,8 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.menu).toBeUndefined();
-    expect(result.reply).toContain("Eu te ajudo.");
-    expect(result.reply).toContain("Você vai instalar onde");
+    expect(result.reply).toContain("Eu te mando o caminho certo.");
+    expect(result.reply).toContain("TV Box Android, Android TV, Fire Stick ou celular Android?");
     expect(result.reply).not.toContain("TV pelo Downloader");
   });
 
@@ -760,7 +760,7 @@ describe("commercial WhatsApp agent", () => {
 
     expect(result.reply).toContain("Downloader by AFTVnews");
     expect(result.reply).toContain("8322904");
-    expect(result.reply).toContain("https://www.youtube.com/watch?v=XlCPDdqnOuI");
+    expect(result.reply).toContain("https://www.youtube.com/watch?v=LBBAbs2-I0c");
   });
 
   it("sends the Android download link without the general menu", async () => {
@@ -775,10 +775,47 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("UniTV_mobile_3.21.6.apk");
+    expect(result.reply).toContain("https://www.youtube.com/watch?v=LBBAbs2-I0c");
     expect(result.reply.trim().endsWith("?")).toBe(true);
     expect(result.menu).toBeUndefined();
     expect(result.reply).not.toContain("Ver planos");
     expect(result.reply).not.toContain("Fazer teste grátis");
+  });
+
+  it.each([
+    ["minha tv é samsung", "Play Store", "mediafire.com"],
+    ["minha tv é lg", "Play Store", "mediafire.com"],
+    ["tenho iphone", "TV Box", "mediafire.com"],
+    ["tenho roku", "não tenho instalação compatível", "mediafire.com"]
+  ])("blocks incompatible direct download for %s", async (message, expected, forbidden) => {
+    const { service } = createChatAgent();
+    const result = await service.generateCommercialReply({
+      message,
+      classification: { intent: "technical_support", confidence: 0.99, summary: "aparelho", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain(expected);
+    expect(result.reply).not.toContain(forbidden);
+    expect(result.menu).toBeUndefined();
+  });
+
+  it("does not resend installation when the lead profile says the app was already downloaded", async () => {
+    const { service } = createChatAgent();
+    const result = await service.generateCommercialReply({
+      message: "manda o link de novo",
+      classification: { intent: "technical_support", confidence: 0.99, summary: "download", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: { downloaded_app: true, device: "tvbox_android" } } },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("já baixou o app");
+    expect(result.reply).toContain("teste grátis de 3 dias");
+    expect(result.reply).not.toContain("mediafire.com");
+    expect(result.reply).not.toContain("8322904");
   });
 
   it("answers screen questions without inventing a number or sending a menu", async () => {

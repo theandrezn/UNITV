@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { createOpenAIClient, getDefaultOpenAIModel, getIntentOpenAIModel } from "@/lib/openai/client";
 import { UNITV_INTENT_JSON_SCHEMA, UNITV_INTENT_SYSTEM_PROMPT } from "./unitv-sales-ai-prompt";
+import { isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
 
 export const intentSchema = z.enum([
   "greeting",
@@ -209,7 +210,7 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     return fixedClassification("receipt_sent", "Cliente mencionou comprovante.");
   }
 
-  if (/\b(instalar|instalacao|instalação|baixar|download|dowload|apk|tutorial|downloader|tv box|android tv|celular|codigo downloader|link nao funciona|link não funciona)\b/.test(text)) {
+  if (isUnitvInstallationRequest(text) || /\b(codigo downloader|link nao funciona|link não funciona)\b/.test(text)) {
     return fixedClassification("technical_support", "Cliente pediu instalação ou download.");
   }
 

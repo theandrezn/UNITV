@@ -24,7 +24,10 @@ const INTERNAL_PATTERNS = [
 const BAD_CUSTOMER_PATTERNS = [
   /consigo te ajudar com a ativa[cç][aã]o,\s*mas n[aã]o libero c[oó]digo automaticamente/i,
   /coleta o problema/i,
-  /^suporte!!$/i
+  /^suporte!!$/i,
+  /funciona em qualquer tv/i,
+  /serve para iphone/i,
+  /^escolha uma op[cç][aã]o/i
 ];
 
 export type CustomerMessageSafetyResult = {
@@ -63,7 +66,10 @@ export function validateResponseAgainstLeadProfile(
     return { valid: false, reason: "asks_download_again" };
   }
 
-  if ((profile.device === "tvbox" || profile.aparelho === "TV Box / Android TV") && /\b(qual aparelho|onde vai instalar|vai usar onde)\b/.test(normalized)) {
+  if (
+    typeof profile.device === "string" && profile.device !== "unknown" &&
+    /\b(qual aparelho|onde vai instalar|vai usar onde|qual aparelho voce usa|qual aparelho você usa)\b/.test(normalized)
+  ) {
     return { valid: false, reason: "asks_device_again" };
   }
 
@@ -73,6 +79,17 @@ export function validateResponseAgainstLeadProfile(
 
   if ((profile.has_paid === false || profile.payment_status === "not_paid") && /\b(se ja pagou|se já pagou|envie o comprovante|mand[ae] o comprovante)\b/.test(normalized)) {
     return { valid: false, reason: "asks_receipt_when_not_paid" };
+  }
+
+  if (
+    (
+      profile.device_compatible === false ||
+      profile.device_compatible === "unknown" ||
+      ["iphone", "roku", "samsung_tv", "lg_tv", "computer"].includes(String(profile.device || ""))
+    ) &&
+    /(mediafire\.com|\b8322904\b|baixe o apk|use esse link)/i.test(response)
+  ) {
+    return { valid: false, reason: "sends_installation_to_unconfirmed_device" };
   }
 
   if (recentBotMessages.some((previous) => areSimilar(normalized, normalize(previous)))) {

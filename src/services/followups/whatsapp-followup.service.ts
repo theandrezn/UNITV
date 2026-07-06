@@ -118,18 +118,20 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
     return "Conseguiu escolher o plano? O mensal é R$ 25 para começar, e o anual é o melhor custo-benefício. Qual você prefere?";
   }
 
-  if (key === "download") {
-    if (/celular/i.test(device)) {
-      return "Conseguiu fazer o download no celular? Se travou em alguma etapa, me fala onde parou que eu te ajudo?";
+  if (key === "download" || key === "install") {
+    if (/android_phone|celular/i.test(device)) {
+      return "Conseguiu baixar no celular Android? Se aparecer aviso de segurança, me fala que eu te oriento?";
     }
-    if (/tv box|android tv/i.test(device)) {
-      return "Conseguiu fazer o download na TV Box? Se travou em alguma etapa, me fala onde parou que eu te ajudo?";
+    if (/tvbox_android|tv box/i.test(device)) {
+      return "Conseguiu instalar na TV Box? Se travou, me diga se foi no link APK ou no Downloader?";
     }
-    return "Conseguiu fazer o download? Se travou em alguma etapa, me fala onde parou que eu te ajudo?";
-  }
-
-  if (key === "install") {
-    return "Conseguiu instalar? Se travou em alguma etapa, me fala qual apareceu?";
+    if (/android_tv_google_tv|android tv|google tv/i.test(device)) {
+      return "Conseguiu encontrar o Downloader na Play Store da TV?";
+    }
+    if (/firestick|fire stick/i.test(device)) {
+      return "Conseguiu abrir o Downloader no Fire Stick e digitar o código 8322904?";
+    }
+    return "Conseguiu confirmar se seu aparelho tem Android ou Play Store?";
   }
 
   if (key === "test") {

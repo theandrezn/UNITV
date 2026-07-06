@@ -20,6 +20,11 @@ import {
 import { SpecialistTrainingExamplesRepository } from "@/repositories/specialist-training-examples.repository";
 import { buildMaskedConversationExcerpt, maskSpecialistTrainingText } from "@/lib/whatsapp/specialist-training-privacy";
 import { SpecialistInterventionAnalysisService } from "@/services/agent/specialist-intervention-analysis.service";
+import {
+  detectUnitvDevice,
+  isUnitvInstallationRequest,
+  UNITV_DEVICE_COMPATIBILITY
+} from "@/lib/unitv/device-compatibility";
 
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
@@ -306,6 +311,22 @@ export class WhatsappMessageService {
       recentMessages,
       specialistExamples
     });
+    if (commercialReply.leadProfilePatch) {
+      const currentLeadProfile = readLeadProfile(conversation.metadata);
+      const nextMetadata = {
+        ...(conversation.metadata || {}),
+        lead_profile: {
+          ...currentLeadProfile,
+          downloaded_app: currentLeadProfile.downloaded_app ?? false,
+          installed_app: currentLeadProfile.installed_app ?? false,
+          last_download_url_sent: currentLeadProfile.last_download_url_sent ?? null,
+          ...commercialReply.leadProfilePatch,
+          updated_at: new Date().toISOString()
+        }
+      };
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
+      conversation.metadata = nextMetadata;
+    }
     const reply = commercialReply.reply;
 
     if (!reply) {
@@ -948,7 +969,7 @@ function buildFollowupState(
       ? (metadata.lead_profile as Record<string, unknown>).plano_interesse || metadata.plan_interest || null
       : metadata?.plan_interest || null,
     device: metadata?.lead_profile && typeof metadata.lead_profile === "object"
-      ? (metadata.lead_profile as Record<string, unknown>).aparelho || metadata.device || null
+      ? (metadata.lead_profile as Record<string, unknown>).device || (metadata.lead_profile as Record<string, unknown>).aparelho || metadata.device || null
       : metadata?.device || null
   };
 }
@@ -1033,10 +1054,12 @@ function buildLeadProfilePatch(text: string, intent: string, metadata: Record<st
     patch.nivel_interesse = "quente";
   }
 
-  const device = detectDevice(normalized);
-  if (device) {
-    patch.aparelho = device;
-    patch.device = normalizeDeviceId(device);
+  if (isUnitvInstallationRequest(text)) {
+    const device = detectUnitvDevice(text);
+    const deviceConfig = UNITV_DEVICE_COMPATIBILITY[device];
+    patch.aparelho = deviceConfig.label;
+    patch.device = device;
+    patch.device_compatible = deviceConfig.compatible;
   }
 
   const lastBotQuestion = typeof existing.last_bot_question === "string" ? normalizeFreeText(existing.last_bot_question) : "";
@@ -1151,23 +1174,6 @@ function normalizePlanId(plan: string) {
   if (plan === "3 meses") return "3_meses";
   if (plan === "6 meses") return "6_meses";
   return plan;
-}
-
-function detectDevice(normalized: string) {
-  if (/\btv box|android tv|televisao android\b/.test(normalized)) return "TV Box / Android TV";
-  if (/\bsmart tv|tv\b/.test(normalized)) return "TV";
-  if (/\bcelular|android|mobile\b/.test(normalized)) return "Celular Android";
-  if (/\biphone|ios\b/.test(normalized)) return "iPhone";
-  if (/\bcomputador|pc|notebook\b/.test(normalized)) return "Computador";
-  return null;
-}
-
-function normalizeDeviceId(device: string) {
-  if (device === "TV Box / Android TV") return "tvbox";
-  if (device === "Celular Android") return "android_phone";
-  if (device === "TV") return "smart_tv";
-  if (device === "iPhone") return "iphone";
-  return "unknown";
 }
 
 function detectMainObjection(normalized: string) {

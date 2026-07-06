@@ -33,6 +33,10 @@ describe("IntentClassifierService", () => {
     ["manda o pix copia e cola", "pix_payment"],
     ["quero pagar no cartao", "card_payment"],
     ["quero download no celular", "technical_support"],
+    ["minha tv é samsung", "technical_support"],
+    ["tenho LG", "technical_support"],
+    ["tenho fire stick", "technical_support"],
+    ["tenho roku", "technical_support"],
     ["ja paguei", "unknown"]
   ] as const)("classifies %s locally without calling OpenAI", async (message, intent) => {
     vi.clearAllMocks();

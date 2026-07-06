@@ -21,6 +21,7 @@ import {
   type WhatsAppMenu
 } from "@/lib/whatsapp/menus";
 import { SalesResponseAIService, shouldUseAIResponse } from "@/services/agent/sales-response-ai.service";
+import { getUnitvInstallationGuidance, isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
 
 export const INITIAL_UNITV_REPLY =
   "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\n" +
@@ -56,6 +57,7 @@ type CommercialReplyResult = {
   menu?: WhatsAppMenu;
   sendTextBeforeMenu?: boolean;
   copyText?: string;
+  leadProfilePatch?: Record<string, unknown>;
   media?: {
     base64: string;
     mimetype: string;
@@ -104,6 +106,18 @@ export class ChatAgentService {
     const leadProfile = readLeadProfile(input.conversation.metadata);
 
     const contextualReply = getContextualCommercialReply(message, leadProfile);
+    if (leadProfile.downloaded_app === true && intent === "technical_support" && isInstallationMessage(message)) {
+      return {
+        reply:
+          "Perfeito. Como você já baixou o app, agora posso te ajudar com a ativação. " +
+          "Você quer liberar o teste grátis de 3 dias ou já ativar o mensal de R$ 25?"
+      };
+    }
+    const deterministicInstallationReply = intent === "technical_support" ? getInstallationReply(message) : null;
+    if (deterministicInstallationReply) {
+      return deterministicInstallationReply;
+    }
+
     if (shouldUseAIResponse({
       message,
       intent,
@@ -187,7 +201,7 @@ export class ChatAgentService {
         reply:
           "Claro. O teste grátis é de 3 dias.\n\n" +
           "Primeiro você instala o app no aparelho, depois seguimos com a liberação do teste.\n\n" +
-          "Você vai usar na TV, TV Box ou celular Android?",
+          "Você vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?",
         menu: allowMenu ? INSTALL_MENU : undefined,
         sendTextBeforeMenu: allowMenu
       };
@@ -874,7 +888,7 @@ function isPaymentDoneMessage(message: string) {
 }
 
 function isInstallationMessage(message: string) {
-  return /\b(instalar|instalacao|instalação|baixar|download|apk|tutorial|link|downloader|aparelho|smart tv|tv box|android|iphone|computador)\b/i.test(message);
+  return isUnitvInstallationRequest(message);
 }
 
 function getInstallationReply(message: string): CommercialReplyResult | null {
@@ -896,60 +910,8 @@ function getInstallationReply(message: string): CommercialReplyResult | null {
         "3️⃣ Em qual etapa você travou"
     };
   }
-
-  if (/\b(video|tutorial)\b/.test(normalized)) {
-    return {
-      reply:
-        "🎥 Tutorial de instalação UNiTV:\n\n" +
-        "https://www.youtube.com/watch?v=XlCPDdqnOuI\n\n" +
-        "Depois de assistir, você vai instalar na TV ou no celular?"
-    };
-  }
-
-  if (/\b(celular|mobile)\b/.test(normalized) && /\b(apk|baixar|download|dowload|instalar)\b/.test(normalized)) {
-    return {
-      reply:
-        "📱 Download UNiTV para celular Android\n\n" +
-        "Use este link para baixar a versão mobile:\n\n" +
-        "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file\n\n" +
-        "Depois de instalar, você quer seguir com o teste grátis ou ativar um plano?"
-    };
-  }
-
-  if (/\b(tv|televisao|tv box|android tv|stb)\b/.test(normalized) && /\b(apk|baixar|download|dowload)\b/.test(normalized)) {
-    return {
-      reply:
-        "📺 Download UNiTV para TV\n\n" +
-        "Use este link para baixar a versão de TV:\n\n" +
-        "https://www.mediafire.com/file_premium/tjgxo5756ftbx02/unitv_stb_4.19.apk/file\n\n" +
-        "Essa versão é indicada para TV Box, Android TV ou aparelhos compatíveis.\n\n" +
-        "Depois de instalar, você quer seguir com o teste grátis ou ativar um plano?"
-    };
-  }
-
-  if (/\b(downloader|codigo|cod|tv)\b/.test(normalized) && /\b(instalar|instalacao|downloader|codigo|cod|tv)\b/.test(normalized)) {
-    return {
-      reply:
-        "📺 Instalação na TV pelo Downloader\n\n" +
-        "1️⃣ Instale o Downloader\n\n" +
-        "Abra a Play Store da sua TV e pesquise:\n\n" +
-        "Downloader by AFTVnews\n\n" +
-        "O ícone é laranja. Depois clique em instalar.\n\n" +
-        "2️⃣ Ative Fontes Desconhecidas\n\n" +
-        "Vá em:\n\n" +
-        "Configurações → Segurança → Fontes desconhecidas\n\n" +
-        "Ative a permissão para o Downloader.\n\n" +
-        "3️⃣ Instale o UNiTV\n\n" +
-        "Abra o aplicativo Downloader e digite o código:\n\n" +
-        "8322904\n\n" +
-        "Depois siga as instruções na tela.\n\n" +
-        "Tutorial:\n" +
-        "https://www.youtube.com/watch?v=XlCPDdqnOuI\n\n" +
-        "Conseguiu chegar nessa etapa?"
-    };
-  }
-
-  return null;
+  const guidance = getUnitvInstallationGuidance(message);
+  return guidance ? { reply: guidance.reply, leadProfilePatch: guidance.leadProfilePatch } : null;
 }
 
 function shouldUseMenu(message: string) {
@@ -977,8 +939,8 @@ function ensureQuestionForContext(reply: string, intent: IntentClassification["i
     ask_price: "Você quer começar pelo mensal ou prefere o melhor custo-benefício?",
     buy_plan: "Qual plano você quer ativar?",
     renew_plan: "Você quer renovar um acesso que já tem ou ativar um novo plano?",
-    free_trial: "Você vai usar na TV, TV Box ou celular Android?",
-    technical_support: "Você vai instalar na TV, TV Box ou celular Android?",
+    free_trial: "Você vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?",
+    technical_support: "Você vai instalar em TV Box Android, Android TV, Fire Stick ou celular Android?",
     pix_payment: "Qual plano você quer ativar?",
     receipt_sent: "Pode me enviar o comprovante por aqui?",
     support: "Qual aparelho você está usando?",
@@ -1116,7 +1078,7 @@ function getSalesObjectionReply(message: string): { reply: string; menu?: WhatsA
   if (/\b(iphone|ios)\b/.test(normalized)) {
     return {
       reply:
-        "No momento eu preciso confirmar a melhor forma para iPhone.\n\nVocê quer usar no iPhone ou tem também TV/TV Box?",
+        "No iPhone eu não tenho instalação Android para enviar.\n\nVocê teria uma TV Box, Android TV, Fire Stick ou celular Android para usar?",
       menu: CONTINUATION_MENU
     };
   }

@@ -48,14 +48,14 @@ values
   (
     'instalacao',
     'Como instalar a UNiTV pelo Downloader',
-    E'Passo 1: Instale o Downloader\n- Abra a Play Store da TV.\n- Pesquise por: Downloader by AFTVnews.\n- O icone e laranja.\n- Clique em instalar.\n\nPasso 2: Ative Fontes Desconhecidas\n- Va em Configuracoes.\n- Entre em Seguranca.\n- Procure Fontes desconhecidas.\n- Ative a opcao para o Downloader.\n\nPasso 3: Instale o UNiTV\n- Abra o aplicativo Downloader.\n- Digite o codigo: 5950878.\n- Siga as instrucoes de instalacao na tela.',
+    E'Passo 1: Instale o Downloader\n- Abra a Play Store da TV.\n- Pesquise por: Downloader by AFTVnews.\n- O icone e laranja.\n- Clique em instalar.\n\nPasso 2: Ative Fontes Desconhecidas\n- Va em Configuracoes.\n- Entre em Seguranca.\n- Procure Fontes desconhecidas.\n- Ative a opcao para o Downloader.\n\nPasso 3: Instale o UNiTV\n- Abra o aplicativo Downloader.\n- Digite o codigo: 8322904.\n- Siga as instrucoes de instalacao na tela.',
     'active',
     '{"official": true}'::jsonb
   ),
   (
     'codigo_instalacao',
     'Codigo do Downloader',
-    'Codigo UNiTV para o Downloader: 5950878.',
+    'Codigo UNiTV para o Downloader: 8322904.',
     'active',
     '{"official": true}'::jsonb
   ),
@@ -69,7 +69,7 @@ values
   (
     'tutorial',
     'Tutorial em video',
-    E'Tutorial de instalacao:\nhttps://www.youtube.com/watch?v=XlCPDdqnOuI',
+    E'Tutorial de instalacao:\nhttps://www.youtube.com/watch?v=LBBAbs2-I0c',
     'active',
     '{"official": true}'::jsonb
   ),

@@ -103,7 +103,7 @@ const rules: ObjectionRule[] = [
     followupKey: "support",
     menu: CONTINUATION_MENU,
     buildReply: () =>
-      "No momento eu preciso confirmar a melhor forma para iPhone.\n\nVocê quer usar no iPhone ou tem também TV/TV Box?"
+      "No iPhone eu não tenho instalação Android para enviar.\n\nVocê teria uma TV Box, Android TV, Fire Stick ou celular Android para usar?"
   },
   {
     id: "trust",
