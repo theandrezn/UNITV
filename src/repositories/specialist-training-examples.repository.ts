@@ -106,6 +106,17 @@ export class SpecialistTrainingExamplesRepository {
     return assertSupabaseSuccess(data, error);
   }
 
+  async listExamplesBetween(periodStart: string, periodEnd: string) {
+    const { data, error } = await this.supabase
+      .from("specialist_training_examples")
+      .select("*")
+      .gte("created_at", periodStart)
+      .lte("created_at", periodEnd)
+      .order("created_at", { ascending: true });
+
+    return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+  }
+
   private async markExampleUsed(id: string, usedCount: number) {
     const { error } = await this.supabase
       .from("specialist_training_examples")

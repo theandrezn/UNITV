@@ -27,7 +27,15 @@ const serverEnvSchema = z.object({
   EVOLUTION_API_KEY: z.string().optional(),
   EVOLUTION_INSTANCE_NAME: z.string().optional(),
   EVOLUTION_WEBHOOK_SECRET: z.string().optional(),
-  EVOLUTION_WEBHOOK_VERIFY_TOKEN: z.string().optional()
+  EVOLUTION_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
+  UNITV_AUDIT_TIMEZONE: z.string().optional(),
+  UNITV_DAILY_AUDIT_ENABLED: z.string().optional(),
+  UNITV_DAILY_AUDIT_ADMIN_PHONE: z.string().optional(),
+  UNITV_DAILY_AUDIT_HOUR: z.string().optional(),
+  UNITV_DAILY_AUDIT_MINUTE: z.string().optional(),
+  UNITV_MIDDAY_AUDIT_ENABLED: z.string().optional(),
+  UNITV_AUDIT_USE_AI_SUMMARY: z.string().optional(),
+  OPENAI_MODEL_AUDIT_SUMMARY: z.string().optional()
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
@@ -154,4 +162,23 @@ export function getOpenAIStrongSalesAgentModel() {
 export function isWhatsAppMainMenuEnabled() {
   const value = process.env.WHATSAPP_ENABLE_MAIN_MENU;
   return value === "true" || value === "1";
+}
+
+export function getDailyAuditConfig() {
+  const env = getServerEnv();
+  return {
+    timezone: env.UNITV_AUDIT_TIMEZONE || "America/Sao_Paulo",
+    enabled: env.UNITV_DAILY_AUDIT_ENABLED !== "false",
+    adminPhone: env.UNITV_DAILY_AUDIT_ADMIN_PHONE || "558699802602",
+    hour: parseIntegerEnv(env.UNITV_DAILY_AUDIT_HOUR, 23),
+    minute: parseIntegerEnv(env.UNITV_DAILY_AUDIT_MINUTE, 55),
+    middayEnabled: env.UNITV_MIDDAY_AUDIT_ENABLED === "true" || env.UNITV_MIDDAY_AUDIT_ENABLED === "1",
+    useAiSummary: env.UNITV_AUDIT_USE_AI_SUMMARY === "true" || env.UNITV_AUDIT_USE_AI_SUMMARY === "1",
+    aiSummaryModel: env.OPENAI_MODEL_AUDIT_SUMMARY || "gpt-5.4-mini"
+  };
+}
+
+function parseIntegerEnv(value: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(value || "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }

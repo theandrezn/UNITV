@@ -49,6 +49,8 @@ type CommercialReplyInput = {
 
 type CommercialReplyResult = {
   reply: string;
+  responseSource?: "ai" | "local_rule";
+  responseRule?: string;
   order?: Record<string, unknown>;
   requiresHuman?: boolean;
   notifyOwner?: boolean;
@@ -134,12 +136,12 @@ export class ChatAgentService {
         useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
       });
       if (aiReply) {
-        return { reply: aiReply };
+        return { reply: aiReply, responseSource: "ai", responseRule: "sales_response_ai" };
       }
     }
 
     if (contextualReply) {
-      return contextualReply;
+      return { ...contextualReply, responseSource: "local_rule", responseRule: "contextual_reply" };
     }
 
     const salesObjectionReply = findUnitvObjectionReply(message) || getSalesObjectionReply(message);

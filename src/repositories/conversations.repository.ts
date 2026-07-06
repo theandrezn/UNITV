@@ -77,4 +77,17 @@ export class ConversationsRepository {
 
     return assertSupabaseSuccess(data || [], error);
   }
+
+  async listTouchedBetween(periodStart: string, periodEnd: string, limit = 1000) {
+    const { data, error } = await this.supabase
+      .from("conversations")
+      .select("*, customers(id, name, phone)")
+      .eq("channel", "whatsapp")
+      .or(`last_message_at.gte.${periodStart},created_at.gte.${periodStart},updated_at.gte.${periodStart}`)
+      .lte("created_at", periodEnd)
+      .order("last_message_at", { ascending: false, nullsFirst: false })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+  }
 }

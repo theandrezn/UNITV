@@ -43,4 +43,15 @@ export class MessagesRepository {
 
     return assertSupabaseSuccess(data || [], error);
   }
+
+  async listMessagesBetween(periodStart: string, periodEnd: string) {
+    const { data, error } = await this.supabase
+      .from("messages")
+      .select("*, conversations(id, metadata, customers(id, phone))")
+      .gte("created_at", periodStart)
+      .lte("created_at", periodEnd)
+      .order("created_at", { ascending: true });
+
+    return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+  }
 }

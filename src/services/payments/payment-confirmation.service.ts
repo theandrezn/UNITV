@@ -7,6 +7,7 @@ import { PaymentsService } from "@/services/payments.service";
 import { WebhooksService } from "@/services/webhooks.service";
 import { buildNoAccessCodeAvailableMessage, buildPostPurchaseMessages } from "@/lib/unitv/post-purchase-messages";
 import { MercadoPagoService } from "./mercadopago.service";
+import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 
 const ADMIN_WHATSAPP_PHONE = "558699802602";
 
@@ -25,7 +26,8 @@ export class PaymentConfirmationService {
     private readonly webhooksService = new WebhooksService(),
     private readonly auditService = new AuditService(),
     private readonly evolutionService = new EvolutionService(),
-    private readonly activationCodesService = new ActivationCodesService()
+    private readonly activationCodesService = new ActivationCodesService(),
+    private readonly agentEventLogService?: AgentEventLogService
   ) {}
 
   async process(input: ProcessPaymentInput) {
@@ -104,6 +106,18 @@ export class PaymentConfirmationService {
       }
 
       await this.audit(orderId, "mercado_pago_payment_confirmed", order, payment);
+      await this.safeCreateAgentEvent({
+        customer_phone: readOrderCustomerPhone(transitioned as Record<string, unknown>),
+        event_type: "payment_confirmed",
+        event_source: "payment_webhook",
+        plan_interest: readOrderPlanSlug(transitioned as Record<string, unknown>),
+        metadata: {
+          order_id: orderId,
+          order_number: String((transitioned as Record<string, unknown>).order_number || order.order_number || ""),
+          payment_id: payment.id,
+          amount_cents: payment.amountCents
+        }
+      });
       await this.sendConfirmation(transitioned as Record<string, unknown>);
       return { status: "paid" as const, orderId };
     }
@@ -199,6 +213,17 @@ export class PaymentConfirmationService {
       entity_id: String(order.id),
       metadata: { code_id: reservedCode.id }
     });
+    await this.safeCreateAgentEvent({
+      customer_phone: readOrderCustomerPhone(order),
+      event_type: "converted",
+      event_source: "payment_webhook",
+      plan_interest: readOrderPlanSlug(order),
+      metadata: {
+        order_id: String(order.id),
+        order_number: String(order.order_number || ""),
+        code_id: reservedCode.id
+      }
+    });
 
     return String(reservedCode.code);
   }
@@ -219,6 +244,14 @@ export class PaymentConfirmationService {
       }
     });
   }
+
+  private safeCreateAgentEvent(input: Parameters<AgentEventLogService["safeCreateEvent"]>[0]) {
+    try {
+      return (this.agentEventLogService || new AgentEventLogService()).safeCreateEvent(input);
+    } catch {
+      return null;
+    }
+  }
 }
 
 function mapPaymentStatus(status: string) {
@@ -233,4 +266,22 @@ function mapPaymentStatus(status: string) {
 function readMetadataString(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
   return typeof value === "string" && value ? value : null;
+}
+
+function readOrderCustomerPhone(order: Record<string, unknown>) {
+  const customers = order.customers;
+  if (customers && typeof customers === "object" && !Array.isArray(customers)) {
+    const phone = (customers as { phone?: unknown }).phone;
+    return typeof phone === "string" ? phone : null;
+  }
+  return null;
+}
+
+function readOrderPlanSlug(order: Record<string, unknown>) {
+  const plans = order.plans;
+  if (plans && typeof plans === "object" && !Array.isArray(plans)) {
+    const slug = (plans as { slug?: unknown }).slug;
+    return typeof slug === "string" ? slug : null;
+  }
+  return typeof order.plan_id === "string" ? order.plan_id : null;
 }

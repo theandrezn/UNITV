@@ -20,6 +20,7 @@ import {
 import { SpecialistTrainingExamplesRepository } from "@/repositories/specialist-training-examples.repository";
 import { buildMaskedConversationExcerpt, maskSpecialistTrainingText } from "@/lib/whatsapp/specialist-training-privacy";
 import { SpecialistInterventionAnalysisService } from "@/services/agent/specialist-intervention-analysis.service";
+import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 import {
   detectUnitvDevice,
   isUnitvInstallationRequest,
@@ -48,7 +49,8 @@ export class WhatsappMessageService {
     private readonly receiptsService = new ReceiptsService(),
     private readonly agentActionsService = new AgentActionsService(),
     private readonly specialistTrainingExamplesRepository?: SpecialistTrainingExamplesRepository,
-    private readonly specialistInterventionAnalysis = new SpecialistInterventionAnalysisService()
+    private readonly specialistInterventionAnalysis = new SpecialistInterventionAnalysisService(),
+    private readonly agentEventLogService?: AgentEventLogService
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -120,6 +122,14 @@ export class WhatsappMessageService {
           sent_by_system: false
         }
       });
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: "specialist_message",
+        event_source: "webhook",
+        message_id: message.externalMessageId,
+        metadata: { webhookEventId, text: message.text }
+      });
 
       const existingLeadProfile = readLeadProfile(conversation.metadata);
       const pausedMetadata = {
@@ -145,6 +155,14 @@ export class WhatsappMessageService {
         entity_type: "conversations",
         entity_id: conversation.id,
         metadata: { webhookEventId, externalMessageId: message.externalMessageId, lastSpecialistMessageAt: messageAt }
+      });
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: "human_intervention",
+        event_source: "specialist_training",
+        message_id: message.externalMessageId,
+        metadata: { webhookEventId, reason: "manual_specialist_message" }
       });
       const learned = await this.recordSpecialistTrainingExample({
         webhookEventId,
@@ -189,6 +207,14 @@ export class WhatsappMessageService {
         webhookEventId
       }
     });
+    await this.safeCreateAgentEvent({
+      conversation_id: conversation.id,
+      customer_phone: message.phone,
+      event_type: "customer_message",
+      event_source: "webhook",
+      message_id: message.externalMessageId,
+      metadata: { webhookEventId, text: message.text, messageType: message.messageType }
+    });
     await this.updateSpecialistExampleSuccessSignal(conversation.id, message.text, conversation.metadata);
       const customerMessageAt = getMessageDate(message).toISOString();
     conversation.metadata = {
@@ -220,6 +246,14 @@ export class WhatsappMessageService {
         requires_human: false,
         handoff_reason: null
       };
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: "handoff_resumed",
+        event_source: "webhook",
+        message_id: message.externalMessageId,
+        metadata: { webhookEventId, resolved_by: handoffResolvedBy }
+      });
     }
 
     if (conversation.metadata?.requires_human) {
@@ -258,6 +292,14 @@ export class WhatsappMessageService {
     }
 
     if (isReceiptMessage(message)) {
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: "proof_sent",
+        event_source: "webhook",
+        message_id: message.externalMessageId,
+        metadata: { webhookEventId, hasMedia: message.hasMedia }
+      });
       const reply = await this.handleReceiptMessage({ webhookEventId, message, customer, conversation });
       return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification: { intent: "receipt_sent" } });
     }
@@ -299,6 +341,21 @@ export class WhatsappMessageService {
       await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
       conversation.metadata = nextMetadata;
     }
+    for (const eventType of inferCustomerAgentEvents(message.text, classification.intent, leadProfilePatch)) {
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: eventType,
+        event_source: "webhook",
+        intent: classification.intent,
+        stage: typeof leadProfilePatch.stage === "string" ? leadProfilePatch.stage : null,
+        objection: typeof leadProfilePatch.main_objection === "string" ? leadProfilePatch.main_objection : null,
+        device: typeof leadProfilePatch.device === "string" ? leadProfilePatch.device : null,
+        plan_interest: typeof leadProfilePatch.selected_plan === "string" ? leadProfilePatch.selected_plan : null,
+        message_id: message.externalMessageId,
+        metadata: { webhookEventId }
+      });
+    }
 
     const recentMessages = await this.listRecentConversationMessages(conversation.id);
     const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata, message.text);
@@ -310,6 +367,23 @@ export class WhatsappMessageService {
       webhookEventId,
       recentMessages,
       specialistExamples
+    });
+    await this.safeCreateAgentEvent({
+      conversation_id: conversation.id,
+      customer_phone: message.phone,
+      event_type: commercialReply.responseSource === "ai" ? "ai_called" : "local_rule_used",
+      event_source: "chat_agent",
+      intent: classification.intent,
+      stage: String(readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).etapa_atual || ""),
+      objection: String(readLeadProfile(conversation.metadata).main_objection || readLeadProfile(conversation.metadata).objecao_principal || ""),
+      device: String(readLeadProfile(conversation.metadata).device || ""),
+      plan_interest: String(readLeadProfile(conversation.metadata).selected_plan || readLeadProfile(conversation.metadata).plano_interesse || ""),
+      message_id: message.externalMessageId,
+      metadata: {
+        webhookEventId,
+        rule: commercialReply.responseRule || "deterministic_reply",
+        confidence: classification.confidence
+      }
     });
     if (commercialReply.leadProfilePatch) {
       const currentLeadProfile = readLeadProfile(conversation.metadata);
@@ -348,6 +422,24 @@ export class WhatsappMessageService {
         handoff_requested_at: new Date().toISOString()
       };
       await this.conversationsRepository.updateConversationMetadata(conversation.id, handoffMetadata);
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: "handoff_started",
+        event_source: "chat_agent",
+        intent: classification.intent,
+        message_id: message.externalMessageId,
+        metadata: { webhookEventId, reason: classification.intent }
+      });
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: "support_requested",
+        event_source: "chat_agent",
+        intent: classification.intent,
+        message_id: message.externalMessageId,
+        metadata: { webhookEventId }
+      });
       await this.notifyHumanOwner({
         webhookEventId,
         customer,
@@ -484,6 +576,16 @@ export class WhatsappMessageService {
         menu: menu ? { id: menu.id, title: menu.title } : null
       }
     });
+    await this.safeCreateAgentEvent({
+      conversation_id: conversation.id,
+      customer_phone: message.phone,
+      event_type: "bot_message",
+      event_source: "chat_agent",
+      intent: typeof classification.intent === "string" ? classification.intent : null,
+      stage: String(readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).etapa_atual || ""),
+      message_id: `assistant:${message.externalMessageId}`,
+      metadata: { webhookEventId, reply: safeReply }
+    });
 
     const now = new Date();
     const followupState = buildFollowupState({ reply: safeReply, classification, menu, copyText, followUpMessages: safeFollowUpMessages, media }, conversation.metadata, now);
@@ -515,6 +617,14 @@ export class WhatsappMessageService {
     });
 
     return { status: "processed" as const, reply: safeReply };
+  }
+
+  private safeCreateAgentEvent(input: Parameters<AgentEventLogService["safeCreateEvent"]>[0]) {
+    try {
+      return (this.agentEventLogService || new AgentEventLogService()).safeCreateEvent(input);
+    } catch {
+      return null;
+    }
   }
 
   private async sanitizeAndValidateCustomerText({
@@ -550,6 +660,16 @@ export class WhatsappMessageService {
         entity_type: "conversations",
         entity_id: conversation.id,
         metadata: { webhookEventId, reason: blockedReason || sanitized.reason, originalText: text }
+      });
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        event_type: blockedReason === "similar_to_recent_bot_message" || blockedReason === "asks_device_again" || blockedReason === "asks_download_again"
+          ? "repetition_blocked"
+          : sanitized.reason === "internal_debug"
+            ? "debug_blocked"
+            : "response_sanitized",
+        event_source: "system",
+        metadata: { webhookEventId, reason: blockedReason || sanitized.reason, proposed_response_excerpt: text }
       });
     }
 
@@ -1211,6 +1331,23 @@ function inferSpecialistExampleSuccessSignal(message: string): "positive" | "neu
     return "positive";
   }
   return "neutral";
+}
+
+function inferCustomerAgentEvents(text: string, intent: string, leadProfilePatch: Record<string, unknown>) {
+  const normalized = normalizeFreeText(text);
+  const events = new Set<Parameters<AgentEventLogService["safeCreateEvent"]>[0]["event_type"]>();
+
+  if (intent === "ask_price" || leadProfilePatch.asked_price) events.add("price_asked");
+  if (intent === "free_trial" || leadProfilePatch.wants_test || leadProfilePatch.pediu_teste_gratis) events.add("test_asked");
+  if (intent === "pix_payment" || leadProfilePatch.pediu_pix) events.add("pix_asked");
+  if (intent === "receipt_sent" || leadProfilePatch.enviou_comprovante) events.add("proof_sent");
+  if (intent === "human_help" || leadProfilePatch.precisou_humano) events.add("support_requested");
+  if (leadProfilePatch.selected_plan || leadProfilePatch.plano_interesse) events.add("plan_selected");
+  if (/\b(download|baixar|apk|link)\b/.test(normalized) || leadProfilePatch.pediu_download) events.add("download_asked");
+  if (/\b(instalar|instalacao|downloader|play store)\b/.test(normalized)) events.add("installation_asked");
+  if (/\b(erro|nao consigo|nao baixa|nao abre|travou|nao instala|link nao funciona)\b/.test(normalized)) events.add("install_stuck");
+
+  return [...events];
 }
 
 function extractEvolutionProviderMessageId(value: unknown): string | null {

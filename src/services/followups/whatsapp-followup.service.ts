@@ -4,6 +4,7 @@ import { ConversationsRepository } from "@/repositories/conversations.repository
 import { MessagesRepository } from "@/repositories/messages.repository";
 import { EvolutionService } from "@/services/evolution/evolution.service";
 import { AuditService } from "@/services/audit.service";
+import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
 const HUMAN_SILENCE_WINDOW_MS = 5 * 60 * 1000;
@@ -27,7 +28,8 @@ export class WhatsappFollowupService {
     private readonly conversationsRepository = new ConversationsRepository(),
     private readonly messagesRepository = new MessagesRepository(),
     private readonly evolutionService = new EvolutionService(),
-    private readonly auditService = new AuditService()
+    private readonly auditService = new AuditService(),
+    private readonly agentEventLogService?: AgentEventLogService
   ) {}
 
   async processDueFollowups(now = new Date()): Promise<FollowupResult> {
@@ -90,11 +92,34 @@ export class WhatsappFollowupService {
         entity_id: conversation.id,
         metadata: { followup_key: metadata.followup_key, stageId, sendResult }
       });
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: phone,
+        event_type: "followup_sent",
+        event_source: "followup_job",
+        stage: typeof metadata.conversation_stage === "string" ? metadata.conversation_stage : null,
+        device: typeof metadata.device === "string" ? metadata.device : null,
+        plan_interest: typeof metadata.plan_interest === "string" ? metadata.plan_interest : null,
+        message_id: `followup:${conversation.id}:${stageId}`,
+        metadata: {
+          followup_key: metadata.followup_key,
+          followup_count: nextMetadata.followup_count,
+          stageId
+        }
+      });
 
       sent++;
     }
 
     return { checked: conversations.length, sent, skipped };
+  }
+
+  private safeCreateAgentEvent(input: Parameters<AgentEventLogService["safeCreateEvent"]>[0]) {
+    try {
+      return (this.agentEventLogService || new AgentEventLogService()).safeCreateEvent(input);
+    } catch {
+      return null;
+    }
   }
 }
 
