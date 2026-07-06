@@ -1822,7 +1822,7 @@ describe("commercial WhatsApp agent", () => {
           role: "assistant",
           content: "Mensagem automatica do bot",
           created_at: sentAt,
-          metadata: { sender_type: "bot", sent_at: sentAt }
+          metadata: { sender_type: "bot", sent_at: sentAt, provider_message_id: "bot-echo-id" }
         }
       ])
     };
@@ -1855,7 +1855,7 @@ describe("commercial WhatsApp agent", () => {
         remoteJid: "5511999998888@s.whatsapp.net",
         phone: "5511999998888",
         contactName: "Cliente",
-        text: "Mensagem automatica do bot",
+        text: "Eco com texto alterado pelo provedor",
         messageType: "conversation",
         hasMedia: false,
         media: {},

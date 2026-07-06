@@ -11,6 +11,8 @@ type SpecialistExample = {
   customer_last_message?: string | null;
   bot_previous_message?: string | null;
   specialist_message?: string | null;
+  style_notes?: string | null;
+  inferred_specialist_action?: string | null;
 };
 
 type GenerateSalesResponseInput = {
@@ -49,7 +51,9 @@ const SYSTEM_PROMPT = [
   "Downloader TV: 8322904.",
   "APK Android: https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file",
   "APK TV Box/Android TV: https://www.mediafire.com/file_premium/tjgxo5756ftbx02/unitv_stb_4.19.apk/file",
-  "Tutorial: https://www.youtube.com/watch?v=XlCPDdqnOuI"
+  "Tutorial: https://www.youtube.com/watch?v=XlCPDdqnOuI",
+  "Use exemplos reais do especialista como referencia de logica e estilo, nunca como texto para copiar cegamente.",
+  "Ignore preco, Pix, link ou codigo de exemplos se divergirem dos dados oficiais acima."
 ].join("\n");
 
 export class SalesResponseAIService {

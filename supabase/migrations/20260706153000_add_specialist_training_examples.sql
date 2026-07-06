@@ -29,5 +29,8 @@ drop policy if exists "Service role can manage specialist training examples" on 
 create policy "Service role can manage specialist training examples"
   on public.specialist_training_examples
   for all
-  using (auth.role() = 'service_role')
-  with check (auth.role() = 'service_role');
+  to service_role
+  using (true)
+  with check (true);
+
+revoke all on table public.specialist_training_examples from anon, authenticated;

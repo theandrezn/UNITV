@@ -18,6 +18,8 @@ import {
   validateResponseAgainstLeadProfile
 } from "@/lib/whatsapp/customer-message-safety";
 import { SpecialistTrainingExamplesRepository } from "@/repositories/specialist-training-examples.repository";
+import { buildMaskedConversationExcerpt, maskSpecialistTrainingText } from "@/lib/whatsapp/specialist-training-privacy";
+import { SpecialistInterventionAnalysisService } from "@/services/agent/specialist-intervention-analysis.service";
 
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
@@ -40,7 +42,8 @@ export class WhatsappMessageService {
     private readonly ordersService = new OrdersService(),
     private readonly receiptsService = new ReceiptsService(),
     private readonly agentActionsService = new AgentActionsService(),
-    private readonly specialistTrainingExamplesRepository?: SpecialistTrainingExamplesRepository
+    private readonly specialistTrainingExamplesRepository?: SpecialistTrainingExamplesRepository,
+    private readonly specialistInterventionAnalysis = new SpecialistInterventionAnalysisService()
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -107,17 +110,29 @@ export class WhatsappMessageService {
           hasMedia: message.hasMedia,
           timestamp: message.timestamp,
           webhookEventId,
-          fromMe: true
+          fromMe: true,
+          sender_type: "specialist",
+          sent_by_system: false
         }
       });
 
-      await this.conversationsRepository.updateConversationMetadata(conversation.id, {
+      const existingLeadProfile = readLeadProfile(conversation.metadata);
+      const pausedMetadata = {
         ...(conversation.metadata || {}),
         requires_human: true,
+        human_intervention_detected: true,
         handoff_reason: conversation.metadata?.handoff_reason || "human_agent_reply",
         handoff_requested_at: conversation.metadata?.handoff_requested_at || messageAt,
-        last_specialist_message_at: messageAt
-      });
+        last_specialist_message_at: messageAt,
+        lead_profile: {
+          ...existingLeadProfile,
+          last_specialist_message_at: messageAt,
+          specialist_intervention_count: Number(existingLeadProfile.specialist_intervention_count || 0) + 1,
+          learned_from_specialist: true
+        }
+      };
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, pausedMetadata);
+      conversation.metadata = pausedMetadata;
       await this.conversationsRepository.touchConversation(conversation.id, messageAt);
       await this.auditService.createAuditLog({
         actor_type: "human_admin",
@@ -126,13 +141,30 @@ export class WhatsappMessageService {
         entity_id: conversation.id,
         metadata: { webhookEventId, externalMessageId: message.externalMessageId, lastSpecialistMessageAt: messageAt }
       });
-      await this.recordSpecialistTrainingExample({
+      const learned = await this.recordSpecialistTrainingExample({
         webhookEventId,
         conversation,
         customer,
         message,
         messageAt
       });
+      if (learned) {
+        const leadProfile = readLeadProfile(conversation.metadata);
+        const learnedMetadata = {
+          ...(conversation.metadata || {}),
+          lead_profile: {
+            ...leadProfile,
+            last_specialist_summary: learned.summary,
+            bot_response_was_overridden: learned.botResponseWasOverridden,
+            stage: learned.analysis.inferred_stage,
+            next_best_action: learned.analysis.next_best_action,
+            learned_pattern: learned.analysis.learned_pattern,
+            learned_from_specialist: true
+          }
+        };
+        await this.conversationsRepository.updateConversationMetadata(conversation.id, learnedMetadata);
+        conversation.metadata = learnedMetadata;
+      }
 
       return { status: "ignored" as const };
     }
@@ -152,6 +184,7 @@ export class WhatsappMessageService {
         webhookEventId
       }
     });
+    await this.updateSpecialistExampleSuccessSignal(conversation.id, message.text, conversation.metadata);
       const customerMessageAt = getMessageDate(message).toISOString();
     conversation.metadata = {
       ...(conversation.metadata || {}),
@@ -263,7 +296,7 @@ export class WhatsappMessageService {
     }
 
     const recentMessages = await this.listRecentConversationMessages(conversation.id);
-    const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata);
+    const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata, message.text);
     const commercialReply = await this.chatAgent.generateCommercialReply({
       message: effectiveMessage,
       classification,
@@ -420,6 +453,8 @@ export class WhatsappMessageService {
         sender_type: "bot",
         content_hash: createCustomerMessageHash(safeReply),
         sent_at: new Date().toISOString(),
+        sent_by_system: true,
+        provider_message_id: extractEvolutionProviderMessageId(sendResult),
         sendResult,
         copyTextSendResult,
         followUpSendResults,
@@ -519,14 +554,16 @@ export class WhatsappMessageService {
     }
   }
 
-  private async listRelevantSpecialistExamples(metadata: Record<string, unknown> | null | undefined) {
+  private async listRelevantSpecialistExamples(metadata: Record<string, unknown> | null | undefined, customerMessage: string) {
     const leadProfile = readLeadProfile(metadata);
     try {
       const repository = this.specialistTrainingExamplesRepository || new SpecialistTrainingExamplesRepository();
-      return await repository.listSimilarExamples({
+      return await repository.getRelevantSpecialistExamples({
         intent: typeof leadProfile.ultima_intencao === "string" ? leadProfile.ultima_intencao : null,
         stage: typeof leadProfile.stage === "string" ? leadProfile.stage : null,
         objection: typeof leadProfile.main_objection === "string" ? leadProfile.main_objection : null,
+        device: typeof leadProfile.device === "string" ? leadProfile.device : null,
+        customerMessage,
         limit: 3
       });
     } catch {
@@ -553,6 +590,9 @@ export class WhatsappMessageService {
       }
 
       const metadata = recent.metadata && typeof recent.metadata === "object" ? recent.metadata as Record<string, unknown> : {};
+      if (metadata.provider_message_id === message.externalMessageId) {
+        return true;
+      }
       const content = typeof recent.content === "string" ? recent.content : "";
       const sameContent = createCustomerMessageHash(content) === messageHash || metadata.content_hash === messageHash;
       if (!sameContent) {
@@ -585,29 +625,64 @@ export class WhatsappMessageService {
       const listMessages = (this.messagesRepository as unknown as {
         listMessagesByConversationId?: (conversationId: string, limit?: number) => Promise<Array<Record<string, unknown>>>;
       }).listMessagesByConversationId;
-      const recentMessages = listMessages ? await listMessages.call(this.messagesRepository, conversation.id, 20) : [];
+      const allRecentMessages = listMessages ? await listMessages.call(this.messagesRepository, conversation.id, 20) : [];
+      const recentMessages = allRecentMessages
+        .filter((item) => item.external_message_id !== message.externalMessageId)
+        .slice(-8);
       const customerLastMessage = [...recentMessages].reverse().find((item) => item.role === "customer");
       const botPreviousMessage = [...recentMessages].reverse().find((item) => item.role === "assistant");
       const botCreatedAt = typeof botPreviousMessage?.created_at === "string" ? new Date(botPreviousMessage.created_at).getTime() : null;
       const specialistAt = new Date(messageAt).getTime();
-      const botWasOverridden = Boolean(botCreatedAt && specialistAt - botCreatedAt <= 10 * 60 * 1000);
+      const botWasOverridden = Boolean(
+        botCreatedAt && specialistAt >= botCreatedAt && specialistAt - botCreatedAt <= 10 * 60 * 1000
+      );
       const leadProfile = readLeadProfile(conversation.metadata);
+      const customerLastText = typeof customerLastMessage?.content === "string" ? customerLastMessage.content : null;
+      const botPreviousText = typeof botPreviousMessage?.content === "string" ? botPreviousMessage.content : null;
+      const conversationExcerpt = buildMaskedConversationExcerpt(recentMessages, message.text);
+      const maskedCustomerMessage = maskSpecialistTrainingText(customerLastText);
+      const maskedBotMessage = maskSpecialistTrainingText(botPreviousText);
+      const maskedSpecialistMessage = maskSpecialistTrainingText(message.text) || "";
+      const analysis = await this.specialistInterventionAnalysis.analyzeSpecialistIntervention({
+        customerLastMessage: maskedCustomerMessage,
+        botPreviousMessage: maskedBotMessage,
+        specialistMessage: maskedSpecialistMessage,
+        conversationExcerpt,
+        leadProfile
+      });
 
       const repository = this.specialistTrainingExamplesRepository || new SpecialistTrainingExamplesRepository();
       await repository.createExample({
         conversation_id: conversation.id,
         customer_id: customer.id,
         customer_phone: customer.phone || message.phone,
-        customer_last_message: typeof customerLastMessage?.content === "string" ? customerLastMessage.content : null,
-        bot_previous_message: typeof botPreviousMessage?.content === "string" ? botPreviousMessage.content : null,
-        specialist_message: message.text,
-        inferred_intent: typeof leadProfile.ultima_intencao === "string" ? leadProfile.ultima_intencao : null,
-        inferred_stage: typeof leadProfile.stage === "string" ? leadProfile.stage : typeof leadProfile.etapa_atual === "string" ? leadProfile.etapa_atual : null,
-        inferred_objection: typeof leadProfile.main_objection === "string" ? leadProfile.main_objection : typeof leadProfile.objecao_principal === "string" ? leadProfile.objecao_principal : null,
+        source: "whatsapp",
+        customer_last_message: maskedCustomerMessage,
+        bot_previous_message: maskedBotMessage,
+        specialist_message: maskedSpecialistMessage,
+        conversation_excerpt: conversationExcerpt,
+        inferred_intent: analysis.inferred_intent,
+        inferred_stage: analysis.inferred_stage,
+        inferred_objection: analysis.inferred_objection,
+        inferred_customer_state: analysis.inferred_customer_state,
+        inferred_specialist_action: analysis.inferred_specialist_action,
+        why_specialist_intervened: analysis.why_specialist_intervened,
+        style_notes: analysis.style_notes,
+        should_copy_style: true,
         reason: botWasOverridden ? "correction" : "human_takeover",
         bot_response_was_overridden: botWasOverridden,
-        metadata: { webhookEventId, externalMessageId: message.externalMessageId }
+        human_intervention_detected: true,
+        success_signal: "unknown",
+        metadata: {
+          webhookEventId,
+          externalMessageId: message.externalMessageId,
+          device: leadProfile.device || leadProfile.aparelho || null,
+          summary: analysis.summary,
+          learned_pattern: analysis.learned_pattern,
+          next_best_action: analysis.next_best_action
+        }
       });
+      return { analysis, summary: analysis.summary, botResponseWasOverridden: botWasOverridden };
     } catch (error) {
       await this.auditService.createAuditLog({
         actor_type: "system",
@@ -616,6 +691,25 @@ export class WhatsappMessageService {
         entity_id: conversation.id,
         metadata: { webhookEventId, error: error instanceof Error ? error.message : "unknown_error" }
       });
+      return null;
+    }
+  }
+
+  private async updateSpecialistExampleSuccessSignal(
+    conversationId: string,
+    customerMessage: string,
+    metadata: Record<string, unknown> | null | undefined
+  ) {
+    if (!readLeadProfile(metadata).learned_from_specialist) {
+      return;
+    }
+
+    const signal = inferSpecialistExampleSuccessSignal(customerMessage);
+    try {
+      const repository = this.specialistTrainingExamplesRepository || new SpecialistTrainingExamplesRepository();
+      await repository.markLatestConversationExampleSignal(conversationId, signal);
+    } catch {
+      // Training telemetry must never interrupt customer service.
     }
   }
 
@@ -1100,4 +1194,37 @@ function suggestNextAction(patch: Record<string, unknown>, existing: Record<stri
   if (stage === "escolha_plano" || stage === "recarga") return "confirmar plano e forma de pagamento";
   if (patch.precisou_humano) return "aguardar especialista";
   return "responder dúvida e conduzir ao próximo passo";
+}
+
+function inferSpecialistExampleSuccessSignal(message: string): "positive" | "neutral" | "negative" {
+  const normalized = normalizeFreeText(message);
+  if (/\b(errado|nao entendeu|nao e isso|nao quero|desisto|cancelar)\b/.test(normalized)) {
+    return "negative";
+  }
+  if (/\b(sim|ok|pode|quero|mensal|anual|pix|cartao|paguei|feito|consegui)\b/.test(normalized)) {
+    return "positive";
+  }
+  return "neutral";
+}
+
+function extractEvolutionProviderMessageId(value: unknown): string | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  for (const key of ["id", "messageId", "message_id", "provider_message_id"]) {
+    if (typeof record[key] === "string" && record[key]) {
+      return record[key];
+    }
+  }
+
+  for (const key of ["key", "data", "message", "text", "menu"]) {
+    const nested = extractEvolutionProviderMessageId(record[key]);
+    if (nested) {
+      return nested;
+    }
+  }
+
+  return null;
 }
