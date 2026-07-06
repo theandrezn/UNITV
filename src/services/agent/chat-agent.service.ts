@@ -11,6 +11,7 @@ import { MercadoPagoService } from "@/services/payments/mercadopago.service";
 import { PlansService } from "@/services/plans.service";
 import { buildNoAccessCodeAvailableMessage, buildPostPurchaseMessages } from "@/lib/unitv/post-purchase-messages";
 import { findUnitvObjectionReply } from "@/lib/unitv/objection-map";
+import { isWhatsAppMainMenuEnabled } from "@/lib/env";
 import {
   buildPlansMenu,
   CONTINUATION_MENU,
@@ -27,6 +28,7 @@ const LOW_CONFIDENCE_REPLY =
   "Claro, eu te ajudo.\n\nMe confirma uma coisa: você quer comprar um plano, renovar um acesso ou precisa de ajuda com instalação?";
 
 const PLANS_TEXT = ["Mensal — R$ 25", "3 meses — R$ 70", "6 meses — R$ 120", "Anual — R$ 200"].join("\n");
+const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 
 type CommercialReplyInput = {
   message: string;
@@ -89,13 +91,14 @@ export class ChatAgentService {
 
     const knowledge = await this.knowledgeService.searchKnowledge(message);
     const intent = input.classification.intent === "support" ? "technical_support" : input.classification.intent;
+    const allowMenu = shouldUseMenu(message);
 
     const salesObjectionReply = findUnitvObjectionReply(message) || getSalesObjectionReply(message);
     if ((intent === "unknown" || intent === "technical_support") && salesObjectionReply) {
       return {
         reply: salesObjectionReply.reply,
-        menu: salesObjectionReply.menu,
-        sendTextBeforeMenu: Boolean(salesObjectionReply.menu)
+        menu: allowMenu ? salesObjectionReply.menu : undefined,
+        sendTextBeforeMenu: allowMenu && Boolean(salesObjectionReply.menu)
       };
     }
 
@@ -105,10 +108,12 @@ export class ChatAgentService {
       if (objection?.content) {
         return {
           reply: objection.content,
-          menu: objectionCategory === "objecao_preco" || objectionCategory === "objecao_concorrencia"
+          menu: allowMenu && (objectionCategory === "objecao_preco" || objectionCategory === "objecao_concorrencia")
             ? buildPlansMenu(await this.plansService.listActivePlans())
-            : CONTINUATION_MENU,
-          sendTextBeforeMenu: true
+            : allowMenu
+              ? CONTINUATION_MENU
+              : undefined,
+          sendTextBeforeMenu: allowMenu
         };
       }
     }
@@ -137,8 +142,8 @@ export class ChatAgentService {
       return {
         reply:
           "Consigo te ajudar com a ativação, mas não libero código automaticamente. Se já pagou, envie o comprovante por aqui para conferência manual.",
-        menu: CONTINUATION_MENU,
-        sendTextBeforeMenu: true
+        menu: allowMenu ? CONTINUATION_MENU : undefined,
+        sendTextBeforeMenu: allowMenu
       };
     }
 
@@ -148,14 +153,14 @@ export class ChatAgentService {
           "Claro. O teste grátis é de 3 dias.\n\n" +
           "Primeiro você instala o app no aparelho, depois seguimos com a liberação do teste.\n\n" +
           "Você vai usar na TV, TV Box ou celular Android?",
-        menu: INSTALL_MENU,
-        sendTextBeforeMenu: true
+        menu: allowMenu ? INSTALL_MENU : undefined,
+        sendTextBeforeMenu: allowMenu
       };
     }
 
     if (intent === "ask_price") {
       const plans = await this.plansService.listActivePlans();
-      const menu = plans.length ? buildPlansMenu(plans) : null;
+      const menu = allowMenu && plans.length ? buildPlansMenu(plans) : null;
       const objectionReply = salesObjectionReply?.reply;
       return {
         reply: objectionReply ||
@@ -186,16 +191,16 @@ export class ChatAgentService {
     if (intent === "ask_payment") {
       return {
         reply: "Claro. Você pode pagar com Pix ou cartão pelo Mercado Pago.\n\nSe já escolheu o plano, me diga qual é para eu gerar o pagamento certinho.",
-        menu: PAYMENT_MENU,
-        sendTextBeforeMenu: true
+        menu: allowMenu ? PAYMENT_MENU : undefined,
+        sendTextBeforeMenu: allowMenu
       };
     }
 
     if (intent === "receipt_sent") {
       return {
         reply: "Envie a foto ou o PDF do comprovante aqui na conversa. O pagamento será encaminhado para validação.",
-        menu: CONTINUATION_MENU,
-        sendTextBeforeMenu: true
+        menu: allowMenu ? CONTINUATION_MENU : undefined,
+        sendTextBeforeMenu: allowMenu
       };
     }
 
@@ -213,12 +218,22 @@ export class ChatAgentService {
       });
 
       if (!plan) {
-        const menu = plans.length ? buildPlansMenu(plans) : null;
+        const menu = allowMenu && plans.length ? buildPlansMenu(plans) : null;
+        if (intent === "renew_plan" && isRenewalLeadMessage(message)) {
+          return {
+            reply:
+              "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\n" +
+              "Claro, eu te ajudo com a recarga. Você quer renovar um acesso que já tem ou ativar um novo plano?",
+            menu: menu || undefined,
+            sendTextBeforeMenu: Boolean(menu)
+          };
+        }
+
         return {
           reply:
-            "Perfeito.\n\nQual plano você quer ativar?\n\n" +
+            "Perfeito, eu te ajudo.\n\nHoje temos:\n" +
             PLANS_TEXT +
-            "\n\nSe você quer o melhor custo-benefício, recomendo o anual.",
+            "\n\nO mensal é bom para começar, e o anual é o melhor custo-benefício.\n\nQual você quer ativar?",
           menu: menu || undefined,
           sendTextBeforeMenu: Boolean(menu)
         };
@@ -281,8 +296,8 @@ export class ChatAgentService {
 
       return {
         order,
-        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\n${PAYMENT_MENU.fallbackText}`,
-        menu: PAYMENT_MENU
+        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\n${PAYMENT_TEXT}`,
+        menu: allowMenu ? PAYMENT_MENU : undefined
       };
     }
 
@@ -299,13 +314,10 @@ export class ChatAgentService {
       if (isInstallationMessage(message)) {
         return {
           reply:
-            "Claro, eu te ajudo.\n\n" +
-            "Você quer baixar onde?\n\n" +
-            "1. Celular Android\n" +
-            "2. TV Box / Televisão Android\n" +
-            "3. TV pelo Downloader",
-          menu: INSTALL_MENU,
-          sendTextBeforeMenu: true
+            "Eu te ajudo.\n\n" +
+            "Você vai instalar onde: TV, TV Box ou celular Android?",
+          menu: allowMenu ? INSTALL_MENU : undefined,
+          sendTextBeforeMenu: allowMenu
         };
       }
 
@@ -314,13 +326,13 @@ export class ChatAgentService {
         "Me diga qual aparelho/app você usa, o erro que aparece e se sua internet está funcionando. Assim eu te ajudo melhor.";
       return {
         reply: supportReply,
-        menu: CONTINUATION_MENU,
-        sendTextBeforeMenu: true
+        menu: allowMenu ? CONTINUATION_MENU : undefined,
+        sendTextBeforeMenu: allowMenu
       };
     }
 
     if (intent === "greeting") {
-      return { reply: INITIAL_UNITV_REPLY, menu: MAIN_MENU, sendTextBeforeMenu: true };
+      return { reply: INITIAL_UNITV_REPLY, menu: allowMenu ? MAIN_MENU : undefined, sendTextBeforeMenu: allowMenu };
     }
 
     return { reply: this.generateReply(input) };
@@ -333,9 +345,9 @@ export class ChatAgentService {
     const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
     if (!order) {
       const plans = await this.plansService.listActivePlans();
-      const menu = plans.length ? buildPlansMenu(plans) : null;
+      const menu = shouldUseMenu(input.message) && plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: menu?.fallbackText || "Ainda não encontrei um pedido aberto. Vou encaminhar para atendimento humano.",
+        reply: "Ainda não encontrei um pedido aberto. Me diga qual plano você quer ativar: mensal, 3 meses, 6 meses ou anual.",
         menu: menu || undefined
       };
     }
@@ -403,10 +415,9 @@ export class ChatAgentService {
     let order = await this.ordersService.findLatestOrderByCustomerId(input.customer.id);
     if (!order) {
       const plans = await this.plansService.listActivePlans();
-      const menu = plans.length ? buildPlansMenu(plans) : null;
+      const menu = shouldUseMenu(input.message) && plans.length ? buildPlansMenu(plans) : null;
       return {
         reply:
-          menu?.fallbackText ||
           "FEITO. Ainda não encontrei um pedido seu aqui. Escolha o plano para eu gerar o pagamento corretamente.",
         menu: menu || undefined
       };
@@ -588,9 +599,9 @@ export class ChatAgentService {
     const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
     if (!order) {
       const plans = await this.plansService.listActivePlans();
-      const menu = plans.length ? buildPlansMenu(plans) : null;
+      const menu = shouldUseMenu(input.message) && plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: menu?.fallbackText || "Ainda não encontrei um pedido aberto. Vou encaminhar para atendimento humano.",
+        reply: "Ainda não encontrei um pedido aberto. Me diga qual plano você quer ativar: mensal, 3 meses, 6 meses ou anual.",
         menu: menu || undefined
       };
     }
@@ -728,6 +739,16 @@ function isFreeTrialMessage(message: string) {
   return /\b(teste|gratis|gratuito|free trial)\b/i.test(message);
 }
 
+function isRenewalLeadMessage(message: string) {
+  const normalized = message
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return /\b(recarga|renovar|renovacao|codigo unitv)\b/.test(normalized) && !/\b(mensal|3 meses|6 meses|anual|trimestral|semestral)\b/.test(normalized);
+}
+
 function isPixPaymentMessage(message: string) {
   return /\b(pix|chave pix|copia e cola|qr code)\b/i.test(message);
 }
@@ -823,6 +844,20 @@ function getInstallationReply(message: string): CommercialReplyResult | null {
   }
 
   return null;
+}
+
+function shouldUseMenu(message: string) {
+  if (isWhatsAppMainMenuEnabled()) {
+    return true;
+  }
+
+  const normalized = message
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return /\b(menu|opcoes|opcao|lista de opcoes|me manda as opcoes|manda menu|quais opcoes)\b/.test(normalized);
 }
 
 function getObjectionKnowledgeCategory(message: string) {

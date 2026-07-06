@@ -36,7 +36,11 @@ function createService(conversations: Array<Record<string, unknown>>) {
 
 describe("WhatsappFollowupService", () => {
   it("builds human commercial follow-up text", () => {
-    expect(buildFollowupText({ followup_key: "values", plan_interest: "mensal" })).toContain("plano mensal");
+    const valuesFollowup = buildFollowupText({ followup_key: "values", plan_interest: "mensal" });
+    expect(valuesFollowup).toContain("plano mensal");
+    expect(valuesFollowup).not.toContain("Ver planos");
+    expect(valuesFollowup).not.toContain("Fazer teste grátis");
+    expect(valuesFollowup).not.toContain("Comprar agora");
     expect(buildFollowupText({ followup_key: "download", device: "TV Box / Android TV" })).toContain("Downloader");
   });
 

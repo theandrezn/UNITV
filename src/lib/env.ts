@@ -12,6 +12,7 @@ const serverEnvSchema = z.object({
   OPENAI_MODEL: z.string().optional(),
   OPENAI_MODEL_SALES_AGENT: z.string().optional(),
   OPENAI_MODEL_INTENT: z.string().optional(),
+  WHATSAPP_ENABLE_MAIN_MENU: z.string().optional(),
   APP_ENV: appEnvSchema.default("development"),
   APP_BASE_URL: z.string().url("APP_BASE_URL must be a valid URL").optional().or(z.literal("")),
   WEBHOOK_SECRET: z.string().optional(),
@@ -142,4 +143,9 @@ export function getOpenAIIntentModel() {
 export function getOpenAISalesAgentModel() {
   const env = getServerEnv();
   return env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || "gpt-5.4-mini";
+}
+
+export function isWhatsAppMainMenuEnabled() {
+  const value = process.env.WHATSAPP_ENABLE_MAIN_MENU;
+  return value === "true" || value === "1";
 }

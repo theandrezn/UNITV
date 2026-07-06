@@ -99,7 +99,7 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
 }
 
 describe("commercial WhatsApp agent", () => {
-  it("answers prices from Supabase plans", async () => {
+  it("answers prices in human text without sending a menu", async () => {
     const { service, plansService } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -113,10 +113,13 @@ describe("commercial WhatsApp agent", () => {
     expect(plansService.listActivePlans).toHaveBeenCalled();
     expect(result.reply).toContain("O mensal fica R$ 25");
     expect(result.reply).toContain("custo-benefício");
-    expect(result.menu).toEqual(expect.objectContaining({ id: "plans", title: "Escolha seu plano UNiTV" }));
+    expect(result.menu).toBeUndefined();
+    expect(result.reply).not.toContain("Ver planos");
+    expect(result.reply).not.toContain("Fazer teste grátis");
+    expect(result.reply).not.toContain("Comprar agora");
   });
 
-  it("opens the main selectable menu for a greeting", async () => {
+  it("answers greeting with the human welcome and no main menu", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -127,12 +130,38 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.menu).toEqual(expect.objectContaining({ id: "main" }));
     expect(result.reply).toContain("Meu nome é André");
-    expect(result.sendTextBeforeMenu).toBe(true);
+    expect(result.menu).toBeUndefined();
+    expect(result.sendTextBeforeMenu).toBe(false);
+    expect(result.reply).not.toContain("Ver planos");
+    expect(result.reply).not.toContain("Fazer teste grátis");
+    expect(result.reply).not.toContain("Comprar agora");
+    expect(result.reply).not.toContain("Aprender a instalar");
+    expect(result.reply).not.toContain("Enviar comprovante");
+    expect(result.reply).not.toContain("Falar com especialista");
   });
 
-  it("offers selectable payment methods", async () => {
+  it("answers an ad recharge lead as Andre without sending a menu", async () => {
+    const { service, ordersService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Olá! Quero fazer Recarga Código UNITV",
+      classification: { intent: "renew_plan", confidence: 0.99, summary: "recarga", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.reply).toContain("Meu nome é André");
+    expect(result.reply).toContain("renovar um acesso que já tem ou ativar um novo plano");
+    expect(result.menu).toBeUndefined();
+    expect(result.reply).not.toContain("Ver planos");
+    expect(result.reply).not.toContain("Fazer teste grátis");
+    expect(result.reply).not.toContain("Comprar agora");
+  });
+
+  it("answers payment question without a selectable menu", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -143,9 +172,9 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.menu).toEqual(expect.objectContaining({ id: "payment" }));
     expect(result.reply).toContain("Pix ou cartão");
-    expect(result.sendTextBeforeMenu).toBe(true);
+    expect(result.menu).toBeUndefined();
+    expect(result.sendTextBeforeMenu).toBe(false);
   });
 
   it("creates an order when the requested plan is clear", async () => {
@@ -173,9 +202,8 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(result.reply).not.toContain("Cartao:");
     expect(result.reply).not.toContain("Para gerar o Pix Copia e Cola");
-    expect(result.reply).toContain("Pagar com Pix");
-    expect(result.reply).toContain("Pagar com cartão");
-    expect(result.menu).toEqual(expect.objectContaining({ id: "payment" }));
+    expect(result.reply).toContain("Pix ou cartão");
+    expect(result.menu).toBeUndefined();
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
   });
 
@@ -255,8 +283,8 @@ describe("commercial WhatsApp agent", () => {
     expect(result.requiresHuman).not.toBe(true);
     expect(result.reply).toContain("3 dias");
     expect(result.reply).toContain("Primeiro você instala o app");
-    expect(result.menu).toEqual(expect.objectContaining({ id: "install" }));
-    expect(result.sendTextBeforeMenu).toBe(true);
+    expect(result.menu).toBeUndefined();
+    expect(result.sendTextBeforeMenu).toBe(false);
     expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
       expect.objectContaining({ action_name: "handoff_to_human" })
     );
@@ -561,12 +589,32 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("Qual plano você quer ativar?");
+    expect(result.reply).toContain("Qual você quer ativar?");
     expect(result.reply).toContain("Mensal — R$ 25");
-    expect(result.menu).toEqual(expect.objectContaining({ id: "plans" }));
+    expect(result.menu).toBeUndefined();
+    expect(result.reply).not.toContain("Ver planos");
   });
 
-  it("offers the installation menu for installation requests", async () => {
+  it("answers a direct purchase request consultively without a menu", async () => {
+    const { service, ordersService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "comprar plano",
+      classification: { intent: "buy_plan", confidence: 0.95, summary: "compra", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.reply).toContain("Perfeito, eu te ajudo.");
+    expect(result.reply).toContain("Mensal — R$ 25");
+    expect(result.reply).toContain("Qual você quer ativar?");
+    expect(result.menu).toBeUndefined();
+    expect(result.reply).not.toContain("Falar com especialista");
+  });
+
+  it("asks where to install without sending the installation menu", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -577,9 +625,10 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.menu).toEqual(expect.objectContaining({ id: "install" }));
-    expect(result.reply).toContain("Claro, eu te ajudo.");
-    expect(result.reply).toContain("TV pelo Downloader");
+    expect(result.menu).toBeUndefined();
+    expect(result.reply).toContain("Eu te ajudo.");
+    expect(result.reply).toContain("Você vai instalar onde");
+    expect(result.reply).not.toContain("TV pelo Downloader");
   });
 
   it("sends downloader instructions with the current test code and tutorial link", async () => {
@@ -598,6 +647,39 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toContain("https://www.youtube.com/watch?v=XlCPDdqnOuI");
   });
 
+  it("sends the Android download link without the general menu", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "como baixar no celular?",
+      classification: { intent: "technical_support", confidence: 0.99, summary: "download", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("UniTV_mobile_3.21.6.apk");
+    expect(result.menu).toBeUndefined();
+    expect(result.reply).not.toContain("Ver planos");
+    expect(result.reply).not.toContain("Fazer teste grátis");
+  });
+
+  it("answers screen questions without inventing a number or sending a menu", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "quantas telas?",
+      classification: { intent: "unknown", confidence: 0.95, summary: "telas", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("quantos aparelhos");
+    expect(result.reply).not.toContain("2 telas");
+    expect(result.menu).toBeUndefined();
+  });
+
   it("answers objections from trained knowledge and keeps a next step", async () => {
     const { service, knowledgeService } = createChatAgent();
     knowledgeService.searchKnowledge.mockResolvedValueOnce([
@@ -613,8 +695,8 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("depende da internet");
-    expect(result.menu).toEqual(expect.objectContaining({ id: "continue" }));
-    expect(result.sendTextBeforeMenu).toBe(true);
+    expect(result.menu).toBeUndefined();
+    expect(result.sendTextBeforeMenu).toBe(false);
   });
 
   it("marks handoff when the customer asks for a human", async () => {
