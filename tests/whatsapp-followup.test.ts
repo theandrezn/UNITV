@@ -41,7 +41,12 @@ describe("WhatsappFollowupService", () => {
     expect(valuesFollowup).not.toContain("Ver planos");
     expect(valuesFollowup).not.toContain("Fazer teste grátis");
     expect(valuesFollowup).not.toContain("Comprar agora");
-    expect(buildFollowupText({ followup_key: "download", device: "TV Box / Android TV" })).toContain("Downloader");
+    expect(buildFollowupText({ followup_key: "welcome_activation" })).toBe(
+      "Você quer que eu te passe os valores ou prefere fazer o teste grátis de 3 dias?"
+    );
+    const downloadFollowup = buildFollowupText({ followup_key: "download", device: "TV Box / Android TV" });
+    expect(downloadFollowup).toContain("Conseguiu fazer o download");
+    expect(downloadFollowup.trim().endsWith("?")).toBe(true);
   });
 
   it("sends a due follow-up once for the current stage", async () => {

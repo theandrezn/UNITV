@@ -639,6 +639,7 @@ function inferFollowupKey(
   intent: string
 ) {
   const reply = output.reply.toLowerCase();
+  if (intent === "greeting") return "welcome_activation";
   if (output.copyText || output.media || intent === "pix_payment") return "pix";
   if (intent === "receipt_sent" || /\bcomprovante\b/i.test(reply)) return "proof";
   if (intent === "ask_price") return "values";
@@ -658,6 +659,7 @@ function inferFollowupKey(
 function inferAwaitingAction(key: string) {
   const actions: Record<string, string> = {
     values: "choose_plan",
+    welcome_activation: "answer_welcome_intent",
     plan_choice: "choose_plan",
     download: "confirm_download",
     install: "install_app",
@@ -673,6 +675,7 @@ function inferAwaitingAction(key: string) {
 
 function inferConversationStage(intent: string, key: string) {
   if (key === "pix") return "aguardando_pix";
+  if (key === "welcome_activation") return "boas_vindas";
   if (key === "proof") return "aguardando_comprovante";
   if (key === "download" || key === "install") return "instalacao";
   if (key === "test") return "teste";

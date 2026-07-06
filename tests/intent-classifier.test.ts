@@ -25,6 +25,8 @@ import { IntentClassifierService } from "@/services/agent/intent-classifier.serv
 describe("IntentClassifierService", () => {
   it.each([
     ["oi", "greeting"],
+    ["Olq", "greeting"],
+    ["mais informações", "greeting"],
     ["quero fazer teste gratis", "free_trial"],
     ["quanto custa o mensal?", "ask_price"],
     ["quero comprar um codigo", "buy_plan"],

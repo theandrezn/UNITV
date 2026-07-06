@@ -22,7 +22,8 @@ import {
 } from "@/lib/whatsapp/menus";
 
 export const INITIAL_UNITV_REPLY =
-  "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André, como posso ajudar?";
+  "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\n" +
+  "Você quer ver os valores, fazer o teste grátis ou precisa de ajuda para instalar?";
 
 const LOW_CONFIDENCE_REPLY =
   "Claro, eu te ajudo.\n\nMe confirma uma coisa: você quer comprar um plano, renovar um acesso ou precisa de ajuda com instalação?";
@@ -80,7 +81,7 @@ export class ChatAgentService {
     }
 
     const suggestedReply = sanitizeReply(input.classification.suggested_reply);
-    return suggestedReply || INITIAL_UNITV_REPLY;
+    return ensureQuestionForContext(suggestedReply || INITIAL_UNITV_REPLY, input.classification.intent);
   }
 
   async generateCommercialReply(input: CommercialReplyInput): Promise<CommercialReplyResult> {
@@ -198,7 +199,7 @@ export class ChatAgentService {
 
     if (intent === "receipt_sent") {
       return {
-        reply: "Envie a foto ou o PDF do comprovante aqui na conversa. O pagamento será encaminhado para validação.",
+        reply: "Perfeito. Pode me enviar a foto ou o PDF do comprovante aqui para eu encaminhar para validação?",
         menu: allowMenu ? CONTINUATION_MENU : undefined,
         sendTextBeforeMenu: allowMenu
       };
@@ -347,7 +348,7 @@ export class ChatAgentService {
       const plans = await this.plansService.listActivePlans();
       const menu = shouldUseMenu(input.message) && plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: "Ainda não encontrei um pedido aberto. Me diga qual plano você quer ativar: mensal, 3 meses, 6 meses ou anual.",
+        reply: "Ainda não encontrei um pedido aberto. Qual plano você quer ativar: mensal, 3 meses, 6 meses ou anual?",
         menu: menu || undefined
       };
     }
@@ -601,7 +602,7 @@ export class ChatAgentService {
       const plans = await this.plansService.listActivePlans();
       const menu = shouldUseMenu(input.message) && plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: "Ainda não encontrei um pedido aberto. Me diga qual plano você quer ativar: mensal, 3 meses, 6 meses ou anual.",
+        reply: "Ainda não encontrei um pedido aberto. Qual plano você quer ativar: mensal, 3 meses, 6 meses ou anual?",
         menu: menu || undefined
       };
     }
@@ -796,7 +797,7 @@ function getInstallationReply(message: string): CommercialReplyResult | null {
       reply:
         "🎥 Tutorial de instalação UNiTV:\n\n" +
         "https://www.youtube.com/watch?v=XlCPDdqnOuI\n\n" +
-        "Depois de assistir, me diga se você vai instalar na TV ou no celular."
+        "Depois de assistir, você vai instalar na TV ou no celular?"
     };
   }
 
@@ -806,7 +807,7 @@ function getInstallationReply(message: string): CommercialReplyResult | null {
         "📱 Download UNiTV para celular Android\n\n" +
         "Use este link para baixar a versão mobile:\n\n" +
         "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file\n\n" +
-        "Após instalar, abra o aplicativo e me avise para seguir com a ativação."
+        "Depois de instalar, você quer seguir com o teste grátis ou ativar um plano?"
     };
   }
 
@@ -817,7 +818,7 @@ function getInstallationReply(message: string): CommercialReplyResult | null {
         "Use este link para baixar a versão de TV:\n\n" +
         "https://www.mediafire.com/file_premium/tjgxo5756ftbx02/unitv_stb_4.19.apk/file\n\n" +
         "Essa versão é indicada para TV Box, Android TV ou aparelhos compatíveis.\n\n" +
-        "Depois de instalar, me avise para seguir com a ativação."
+        "Depois de instalar, você quer seguir com o teste grátis ou ativar um plano?"
     };
   }
 
@@ -858,6 +859,41 @@ function shouldUseMenu(message: string) {
     .replace(/[\u0300-\u036f]/g, "");
 
   return /\b(menu|opcoes|opcao|lista de opcoes|me manda as opcoes|manda menu|quais opcoes)\b/.test(normalized);
+}
+
+function ensureQuestionForContext(reply: string, intent: IntentClassification["intent"]) {
+  const trimmed = reply.trim();
+  if (!trimmed || trimmed.includes("?") || isFinalNonInteractiveReply(trimmed)) {
+    return trimmed;
+  }
+
+  const questions: Partial<Record<IntentClassification["intent"], string>> = {
+    greeting: "Você quer ver os valores, fazer o teste grátis ou precisa de ajuda para instalar?",
+    ask_price: "Você quer começar pelo mensal ou prefere o melhor custo-benefício?",
+    buy_plan: "Qual plano você quer ativar?",
+    renew_plan: "Você quer renovar um acesso que já tem ou ativar um novo plano?",
+    free_trial: "Você vai usar na TV, TV Box ou celular Android?",
+    technical_support: "Você vai instalar na TV, TV Box ou celular Android?",
+    pix_payment: "Qual plano você quer ativar?",
+    receipt_sent: "Pode me enviar o comprovante por aqui?",
+    support: "Qual aparelho você está usando?",
+    human_help: "Pode me mandar mais detalhes por aqui?"
+  };
+
+  const question = questions[intent] || "Você quer ajuda com valores, teste grátis ou instalação?";
+  return `${trimmed}\n\n${question}`;
+}
+
+function isFinalNonInteractiveReply(reply: string) {
+  const normalized = reply
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return (
+    /\b(seu codigo de acesso|codigo de acesso|comunidade oficial|pagamento confirmado|agradecemos pela sua compra)\b/.test(normalized) ||
+    /\b(aviso|alerta|administrador|cadastre\/libere|sem codigo disponivel)\b/.test(normalized)
+  );
 }
 
 function getObjectionKnowledgeCategory(message: string) {

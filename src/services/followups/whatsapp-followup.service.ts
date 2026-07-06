@@ -103,29 +103,33 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
   const planInterest = formatPlanInterest(metadata.plan_interest);
   const device = String(metadata.device || "");
 
+  if (key === "welcome_activation") {
+    return "Você quer que eu te passe os valores ou prefere fazer o teste grátis de 3 dias?";
+  }
+
   if (key === "values") {
     if (planInterest) {
       return `Você quer seguir com o plano ${planInterest} ou prefere fazer o teste grátis de 3 dias primeiro?`;
     }
-    return "Você se interessou pelos valores? Posso te indicar o melhor plano para começar.";
+    return "Você se interessou pelos valores? Posso te indicar o melhor plano para começar?";
   }
 
   if (key === "plan_choice") {
-    return "Conseguiu escolher o plano? O mensal é R$ 25 para começar, e o anual é o melhor custo-benefício.";
+    return "Conseguiu escolher o plano? O mensal é R$ 25 para começar, e o anual é o melhor custo-benefício. Qual você prefere?";
   }
 
   if (key === "download") {
     if (/celular/i.test(device)) {
-      return "Conseguiu fazer o download no celular? Depois que instalar, me avisa que eu te ajudo com o teste ou ativação.";
+      return "Conseguiu fazer o download no celular? Se travou em alguma etapa, me fala onde parou que eu te ajudo?";
     }
     if (/tv box|android tv/i.test(device)) {
-      return "Conseguiu fazer o download na TV Box? Se preferir, também posso te orientar pelo Downloader com o código 8322904.";
+      return "Conseguiu fazer o download na TV Box? Se travou em alguma etapa, me fala onde parou que eu te ajudo?";
     }
-    return "Você conseguiu fazer o download? Se me disser se é celular, TV Box ou TV, eu te mando o caminho certinho.";
+    return "Conseguiu fazer o download? Se travou em alguma etapa, me fala onde parou que eu te ajudo?";
   }
 
   if (key === "install") {
-    return "Conseguiu instalar? Se travou em alguma etapa, me diga onde parou que eu te ajudo.";
+    return "Conseguiu instalar? Se travou em alguma etapa, me fala qual apareceu?";
   }
 
   if (key === "test") {
@@ -133,7 +137,7 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
   }
 
   if (key === "pix") {
-    return "Conseguiu fazer o pagamento? Assim que fizer, envie o comprovante aqui para seguir com a ativação.";
+    return "Conseguiu fazer o pagamento? Depois você consegue enviar o comprovante aqui para validar?";
   }
 
   if (key === "proof") {
@@ -141,14 +145,14 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
   }
 
   if (key === "screens") {
-    return "Conseguiu ver em quantos aparelhos quer usar? Me diga quais são que eu te oriento certinho.";
+    return "Você quer usar em quantos aparelhos ao mesmo tempo?";
   }
 
   if (key === "support") {
-    return "Conseguiu resolver ou ainda precisa de ajuda? Me mande o erro ou o aparelho que está usando.";
+    return "Ainda precisa de ajuda? Me mande o erro ou o aparelho que está usando?";
   }
 
-  return "Você ainda precisa de ajuda com plano, download ou ativação?";
+  return "Você ainda precisa de ajuda com valores, download ou ativação?";
 }
 
 function isDue(value: unknown, now: Date) {

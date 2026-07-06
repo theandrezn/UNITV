@@ -131,6 +131,10 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("Meu nome é André");
+    expect(result.reply).toContain("Você quer ver os valores");
+    expect(result.reply).toContain("fazer o teste grátis");
+    expect(result.reply).toContain("precisa de ajuda para instalar?");
+    expect(result.reply.trim().endsWith("?")).toBe(true);
     expect(result.menu).toBeUndefined();
     expect(result.sendTextBeforeMenu).toBe(false);
     expect(result.reply).not.toContain("Ver planos");
@@ -139,6 +143,23 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("Aprender a instalar");
     expect(result.reply).not.toContain("Enviar comprovante");
     expect(result.reply).not.toContain("Falar com especialista");
+  });
+
+  it("answers typo greeting with activation question and no menu", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Olq",
+      classification: { intent: "greeting", confidence: 0.95, summary: "saudacao com typo", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("Meu nome é André");
+    expect(result.reply).toContain("Você quer ver os valores");
+    expect(result.reply.trim().endsWith("?")).toBe(true);
+    expect(result.menu).toBeUndefined();
   });
 
   it("answers an ad recharge lead as Andre without sending a menu", async () => {
@@ -659,6 +680,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("UniTV_mobile_3.21.6.apk");
+    expect(result.reply.trim().endsWith("?")).toBe(true);
     expect(result.menu).toBeUndefined();
     expect(result.reply).not.toContain("Ver planos");
     expect(result.reply).not.toContain("Fazer teste grátis");
@@ -695,6 +717,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("depende da internet");
+    expect(result.reply.trim().endsWith("?")).toBe(true);
     expect(result.menu).toBeUndefined();
     expect(result.sendTextBeforeMenu).toBe(false);
   });
@@ -805,6 +828,41 @@ describe("commercial WhatsApp agent", () => {
     const assistantMessage = messages.find((message) => message.role === "assistant");
     expect(String(assistantMessage?.content)).toContain("Recebi o comprovante");
     expect(String(assistantMessage?.content).toLowerCase()).not.toContain("codigo");
+  });
+
+  it("adds a contextual question to an AI reply that needs customer input", () => {
+    const { service } = createChatAgent();
+
+    const reply = service.generateReply({
+      message: "quero saber",
+      classification: {
+        intent: "ask_price",
+        confidence: 0.8,
+        summary: "preco",
+        suggested_reply: "Temos planos mensais e planos maiores com melhor custo-benefício."
+      }
+    });
+
+    expect(reply).toContain("Temos planos mensais");
+    expect(reply).toContain("Você quer começar pelo mensal ou prefere o melhor custo-benefício?");
+    expect(reply.trim().endsWith("?")).toBe(true);
+  });
+
+  it("does not add a question to final post-purchase messages", () => {
+    const { service } = createChatAgent();
+
+    const reply = service.generateReply({
+      message: "codigo",
+      classification: {
+        intent: "unknown",
+        confidence: 0.8,
+        summary: "codigo enviado",
+        suggested_reply: "✅ Agradecemos pela sua compra!\n\nSeu código de acesso: UNITV-001"
+      }
+    });
+
+    expect(reply).toContain("código removido");
+    expect(reply).not.toContain("Você quer ajuda");
   });
 
   it("does not treat plain paid text as a manual receipt", async () => {
@@ -1089,6 +1147,66 @@ describe("commercial WhatsApp agent", () => {
     });
     expect(evolutionService.sendButtonMessage).not.toHaveBeenCalled();
     expect(evolutionService.sendListMessage).not.toHaveBeenCalled();
+  });
+
+  it("schedules welcome activation follow-up after the initial greeting", async () => {
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      conversationsRepository as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      { classify: vi.fn(async () => ({ intent: "greeting", confidence: 1, summary: "olq", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({ reply: "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\nVocê quer ver os valores, fazer o teste grátis ou precisa de ajuda para instalar?" })) } as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "olq-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Olq",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("Você quer ver os valores") })
+    );
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_key: "welcome_activation",
+        awaiting_customer_action: "answer_welcome_intent",
+        followup_count: 0
+      })
+    );
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ followup_due_at: expect.any(String) })
+    );
   });
 
   it("detects human handoff requests directly and notifies the owner WhatsApp", async () => {

@@ -156,7 +156,7 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     };
   }
 
-  if (/^(oi|ola|olá|opa|bom dia|boa tarde|boa noite|e ai|e aí|oie|oii+|oiii+)[!?.,\s]*$/.test(text)) {
+  if (/^(oi|ola|olq|olá|opa|bom dia|boa tarde|boa noite|e ai|e aí|oie|oii+|oiii+|quero saber|mais informacoes|mais informações)[!?.,\s]*$/.test(text)) {
     return fixedClassification("greeting", "Saudação simples.");
   }
 
