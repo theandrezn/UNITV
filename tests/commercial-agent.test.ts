@@ -939,8 +939,10 @@ describe("commercial WhatsApp agent", () => {
     expect(activationCodesService.markCodeAsSent).toHaveBeenCalledWith("code-id");
     expect(result.reply).toContain("Agradecemos pela sua compra");
     expect(result.reply).toContain("UNITV-RECARGA-001");
-    expect(result.followUpMessages?.[0]).toContain("Comunidade Oficial da UNITV");
-    expect(result.followUpMessages?.[0]).toContain("https://chat.whatsapp.com/GuMhy92y5cJ6PVC0KLtZh3");
+    expect(result.followUpMessages?.[0]).toContain("Indique e ganhe");
+    expect(result.followUpMessages?.[0]).toContain("R$ 10 de desconto");
+    expect(result.followUpMessages?.[1]).toContain("Comunidade Oficial da UNITV");
+    expect(result.followUpMessages?.[1]).toContain("https://chat.whatsapp.com/GuMhy92y5cJ6PVC0KLtZh3");
   });
 
   it("creates a dynamic Pix charge without asking the customer for email", async () => {

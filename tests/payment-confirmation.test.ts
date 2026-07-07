@@ -154,9 +154,17 @@ describe("PaymentConfirmationService", () => {
     });
     expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(2, {
       phone: "5511999998888",
-      text: expect.stringContaining("Entre na Comunidade Oficial da UNITV!")
+      text: expect.stringContaining("Indique e ganhe")
     });
     expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(2, {
+      phone: "5511999998888",
+      text: expect.stringContaining("R$ 10 de desconto")
+    });
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(3, {
+      phone: "5511999998888",
+      text: expect.stringContaining("Entre na Comunidade Oficial da UNITV!")
+    });
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(3, {
       phone: "5511999998888",
       text: expect.stringContaining("https://chat.whatsapp.com/GuMhy92y5cJ6PVC0KLtZh3")
     });

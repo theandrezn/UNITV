@@ -1,4 +1,25 @@
 export const UNITV_COMMUNITY_LINK = "https://chat.whatsapp.com/GuMhy92y5cJ6PVC0KLtZh3";
+export const UNITV_REFERRAL_MESSAGE = [
+  "🎉 Compra realizada com sucesso! 🎉",
+  "",
+  "Obrigado por escolher a UNiTV 🙌",
+  "Agora é só aproveitar filmes, séries e canais ao vivo com estabilidade total e zero travamentos. 📺✨",
+  "",
+  "💡 Indique e ganhe!",
+  "Gostou da experiência? Indique a UNiTV para amigos 👇",
+  "",
+  "🎁 Como funciona:",
+  "✔️ Você ganha R$ 10 de desconto na próxima recarga",
+  "✔️ Seu amigo ganha R$ 5 de desconto na ativação",
+  "",
+  "É simples:",
+  "👉 Seu amigo fala que veio por você no momento da compra.",
+  "",
+  "Quanto mais indicações, mais desconto você acumula 💰🔥",
+  "",
+  "📲 Qualquer dúvida, nosso suporte está à disposição.",
+  "Boa diversão e boas indicações! 🚀"
+].join("\n");
 
 export function buildPostPurchaseMessages(accessCode: string | string[]) {
   const accessCodes = Array.isArray(accessCode) ? accessCode : [accessCode];
@@ -15,20 +36,9 @@ export function buildPostPurchaseMessages(accessCode: string | string[]) {
       "",
       accessCodeText,
       "",
-      "Agora voce pode aproveitar filmes, series e canais ao vivo em um so lugar, com suporte sempre que precisar.",
-      "",
-      "Promocao especial para clientes UNITV",
-      "",
-      "Indique 3 pessoas para assinarem a UNITV e ganhe 1 mes gratis na sua assinatura.",
-      "",
-      "Como funciona:",
-      "",
-      "1. Convide 3 amigos ou familiares",
-      "2. Eles realizam a assinatura",
-      "3. Apos a confirmacao das 3 compras, voce recebe 1 mes de UNITV gratis",
-      "",
-      "Compartilhe a UNITV com quem tambem quer aproveitar uma experiencia completa de entretenimento."
+      "Agora voce pode aproveitar filmes, series e canais ao vivo em um so lugar, com suporte sempre que precisar."
     ].join("\n"),
+    UNITV_REFERRAL_MESSAGE,
     [
       "Entre na Comunidade Oficial da UNITV!",
       "",

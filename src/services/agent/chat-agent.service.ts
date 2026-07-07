@@ -766,7 +766,7 @@ export class ChatAgentService {
     return {
       order: sentOrder,
       reply: postPurchaseMessages[0],
-      followUpMessages: [postPurchaseMessages[1]]
+      followUpMessages: postPurchaseMessages.slice(1)
     };
   }
 
