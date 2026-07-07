@@ -207,6 +207,22 @@ export class ChatAgentService {
     }
 
     if (intent === "free_trial" || isFreeTrialMessage(message)) {
+      if (isActiveInstallationSupportContext(leadProfile, input.recentMessages)) {
+        return {
+          reply:
+            "Tem sim, o teste gratis e de 3 dias.\n\n" +
+            "Como voce ja esta pelo Downloader, abre o app e chega na tela de login. " +
+            "Quando aparecer essa tela, eu libero o teste por aqui.",
+          responseSource: "local_rule",
+          responseRule: "free_trial_after_install_support",
+          leadProfilePatch: {
+            wants_test: true,
+            stage: "install_support",
+            next_expected_reply: "install_confirmation"
+          }
+        };
+      }
+
       return {
         reply:
           "Claro. O teste grátis é de 3 dias.\n\n" +
@@ -974,6 +990,28 @@ function formatPlan(plan: { name: string; price_cents: number; currency?: string
 
 function isFreeTrialMessage(message: string) {
   return /\b(teste|gratis|gratuito|free trial)\b/i.test(message);
+}
+
+function isActiveInstallationSupportContext(
+  leadProfile: Record<string, unknown>,
+  recentMessages: Array<{ role?: string; content?: string | null }> | undefined
+) {
+  const recentText = (recentMessages || [])
+    .slice(-10)
+    .map((item) => `${item.role || ""}: ${item.content || ""}`)
+    .join("\n");
+  const normalized = normalizeContextMessage(recentText);
+  const stage = normalizeContextMessage(String(leadProfile.stage || leadProfile.commercial_stage || ""));
+  const installStatus = normalizeContextMessage(String(leadProfile.install_status || leadProfile.download_status || ""));
+
+  return (
+    stage.includes("download") ||
+    stage.includes("install") ||
+    installStatus === "link_sent" ||
+    installStatus === "downloaded" ||
+    Boolean(leadProfile.last_download_url_sent) ||
+    /\b(downloader|download|baixar|instalar|codigo certo|tela de login|abrir o app|apk)\b/.test(normalized)
+  );
 }
 
 function isRenewalLeadMessage(message: string) {

@@ -520,6 +520,33 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
+  it("does not ask device again when free trial is requested during active Downloader support", async () => {
+    const { service, ordersService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Sim mas nao tem teste nao",
+      classification: { intent: "free_trial", confidence: 0.99, summary: "teste durante instalacao", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444" },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id",
+      recentMessages: [
+        { role: "customer", content: "Pelo Downloader" },
+        { role: "human_agent", content: "Vou lhe mandar o codigo certo" },
+        { role: "human_agent", content: "862585" },
+        { role: "human_agent", content: "se esse da certo" },
+        { role: "assistant", content: "Conseguiu abrir o app e chegar na tela de login?" }
+      ]
+    });
+
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.reply).toContain("teste gratis e de 3 dias");
+    expect(result.reply).toContain("Downloader");
+    expect(result.reply).toContain("tela de login");
+    expect(result.reply).not.toContain("em qual aparelho");
+    expect(result.reply).not.toContain("TV Box Android, Android TV, Fire Stick ou celular Android");
+    expect(result.responseRule).toBe("free_trial_after_install_support");
+  });
+
   it("returns an existing card link only when card is selected", async () => {
     const { service, ordersService, appSettingsService, mercadoPagoService } = createChatAgent();
     ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce({
