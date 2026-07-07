@@ -58,6 +58,8 @@ const SYSTEM_PROMPT = [
   "Sempre que enviar instrucao, APK ou codigo de instalacao, inclua o tutorial obrigatorio.",
   "Se o cliente ja baixou ou instalou, nao envie download novamente; avance para teste ou ativacao.",
   "Use exemplos reais do especialista como referencia de logica e estilo, nunca como texto para copiar cegamente.",
+  "Quando houver specialist_examples, priorize a logica, o ritmo e a forma de conduzir do especialista sobre respostas padrao.",
+  "Evite templates genericos quando um exemplo do especialista mostrar uma abordagem mais contextual.",
   "Ignore preco, Pix, link ou codigo de exemplos se divergirem dos dados oficiais acima."
 ].join("\n");
 
@@ -111,6 +113,7 @@ export function shouldUseAIResponse(input: {
   intent: string;
   leadProfile: Record<string, unknown>;
   recentMessages?: ConversationMessage[];
+  specialistExamplesCount?: number;
 }) {
   const normalized = input.message.trim().toLowerCase();
   const words = normalized.split(/\s+/).filter(Boolean);
@@ -121,6 +124,7 @@ export function shouldUseAIResponse(input: {
     ["selected_plan", "device", "downloaded_app", "used_app_before", "payment_status", "wants_test", "wants_activation"].includes(key)
   );
   const hasHumanHistory = (input.recentMessages || []).some((item) => item.role === "human_agent");
+  const hasSpecialistLearning = Number(input.specialistExamplesCount || 0) > 0;
 
-  return commercialStage && (contextualShortMessage || contextualFact || hasKnownFacts || hasHumanHistory);
+  return hasSpecialistLearning || (commercialStage && (contextualShortMessage || contextualFact || hasKnownFacts || hasHumanHistory));
 }

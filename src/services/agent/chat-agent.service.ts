@@ -131,7 +131,8 @@ export class ChatAgentService {
       message,
       intent,
       leadProfile,
-      recentMessages: input.recentMessages
+      recentMessages: input.recentMessages,
+      specialistExamplesCount: input.specialistExamples?.length || 0
     })) {
       const aiReply = await this.salesResponseAIService.generateResponse({
         message,

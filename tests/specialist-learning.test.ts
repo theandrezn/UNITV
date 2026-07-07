@@ -12,7 +12,7 @@ vi.mock("@/lib/openai/client", () => ({
 
 import { buildMaskedConversationExcerpt, maskSpecialistTrainingText } from "@/lib/whatsapp/specialist-training-privacy";
 import { SpecialistTrainingExamplesRepository } from "@/repositories/specialist-training-examples.repository";
-import { SalesResponseAIService } from "@/services/agent/sales-response-ai.service";
+import { SalesResponseAIService, shouldUseAIResponse } from "@/services/agent/sales-response-ai.service";
 import { inferSpecialistInterventionLocally } from "@/services/agent/specialist-intervention-analysis.service";
 import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
 
@@ -229,6 +229,16 @@ describe("specialist operational learning", () => {
     const request = openAIResponsesCreate.mock.calls[0][0] as { input: Array<{ role: string; content: Array<{ text: string }> }> };
     const context = JSON.parse(request.input[1].content[0].text);
     expect(context.specialist_examples).toHaveLength(3);
+  });
+
+  it("activates AI response generation when a relevant specialist example exists", () => {
+    expect(shouldUseAIResponse({
+      message: "beleza",
+      intent: "renewal",
+      leadProfile: {},
+      recentMessages: [],
+      specialistExamplesCount: 1
+    })).toBe(true);
   });
 
   it("keeps the migration private and indexed for relevance lookup", () => {
