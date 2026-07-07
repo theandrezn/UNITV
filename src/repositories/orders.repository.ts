@@ -15,7 +15,7 @@ export class OrdersRepository {
   async findOrderById(id: string) {
     const { data, error } = await this.supabase
       .from("orders")
-      .select("*, customers(id, phone), plans(id, name, slug)")
+      .select("*, customers(id, phone), plans(id, name, slug, duration_days)")
       .eq("id", id)
       .maybeSingle();
     return assertSupabaseSuccess(data, error);
@@ -24,7 +24,7 @@ export class OrdersRepository {
   async findOrderByOrderNumber(orderNumber: string) {
     const { data, error } = await this.supabase
       .from("orders")
-      .select("*, customers(id, phone), plans(id, name, slug)")
+      .select("*, customers(id, phone), plans(id, name, slug, duration_days)")
       .eq("order_number", orderNumber)
       .maybeSingle();
     return assertSupabaseSuccess(data, error);
@@ -56,7 +56,7 @@ export class OrdersRepository {
       })
       .eq("id", orderId)
       .in("status", ["pending_payment", "receipt_under_review", "manual_review"])
-      .select("*, customers(id, phone), plans(id, name, slug)")
+      .select("*, customers(id, phone), plans(id, name, slug, duration_days)")
       .maybeSingle();
 
     return assertSupabaseSuccess(data, error);
@@ -73,7 +73,7 @@ export class OrdersRepository {
       .update({ ...data, status: toStatus })
       .eq("id", orderId)
       .in("status", fromStatuses)
-      .select("*, customers(id, phone), plans(id, name, slug)")
+      .select("*, customers(id, phone), plans(id, name, slug, duration_days)")
       .maybeSingle();
 
     return assertSupabaseSuccess(order, error);
@@ -82,7 +82,7 @@ export class OrdersRepository {
   async findLatestOpenOrderByCustomerId(customerId: string) {
     const { data, error } = await this.supabase
       .from("orders")
-      .select("*, plans(id, name, slug)")
+      .select("*, plans(id, name, slug, duration_days)")
       .eq("customer_id", customerId)
       .in("status", ["draft", "pending_payment", "manual_review", "receipt_under_review"])
       .order("created_at", { ascending: false })
@@ -95,7 +95,7 @@ export class OrdersRepository {
   async findLatestOrderByCustomerId(customerId: string) {
     const { data, error } = await this.supabase
       .from("orders")
-      .select("*, plans(id, name, slug)")
+      .select("*, plans(id, name, slug, duration_days)")
       .eq("customer_id", customerId)
       .order("created_at", { ascending: false })
       .limit(1)

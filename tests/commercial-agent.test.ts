@@ -87,8 +87,10 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
   };
   const activationCodesService = {
     findAvailableCode: vi.fn(async () => null as Record<string, unknown> | null),
+    findAvailableCodes: vi.fn(async () => [] as Array<Record<string, unknown>>),
     reserveCode: vi.fn(async () => null as Record<string, unknown> | null),
-    markCodeAsSent: vi.fn(async () => null as Record<string, unknown> | null)
+    markCodeAsSent: vi.fn(async () => null as Record<string, unknown> | null),
+    releaseReservedCodesForOrder: vi.fn(async () => [] as Array<Record<string, unknown>>)
   };
   const salesResponseAIService = (overrides.salesResponseAIService as { generateResponse: ReturnType<typeof vi.fn> } | undefined) || {
     generateResponse: vi.fn(async () => null as string | null)
@@ -909,10 +911,10 @@ describe("commercial WhatsApp agent", () => {
       currency: "BRL",
       approvedAt: "2026-07-04T22:30:00.000Z"
     });
-    activationCodesService.findAvailableCode.mockResolvedValueOnce({
+    activationCodesService.findAvailableCodes.mockResolvedValueOnce([{
       id: "code-id",
       code: "UNITV-RECARGA-001"
-    });
+    }]);
     activationCodesService.reserveCode.mockResolvedValueOnce({
       id: "code-id",
       code: "UNITV-RECARGA-001"

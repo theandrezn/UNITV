@@ -22,6 +22,7 @@ import {
 } from "@/lib/whatsapp/menus";
 import { SalesResponseAIService, shouldUseAIResponse } from "@/services/agent/sales-response-ai.service";
 import { getUnitvInstallationGuidance, isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
+import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
 
 export const INITIAL_UNITV_REPLY =
   "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\n" +
@@ -681,9 +682,8 @@ export class ChatAgentService {
       };
     }
 
-    const planId = typeof order.plan_id === "string" ? order.plan_id : null;
-    const availableCode = await this.activationCodesService.findAvailableCode(productId, planId);
-    if (!availableCode) {
+    const allocation = getPlanCodeAllocation(order);
+    if (!allocation.supported) {
       await this.ordersService.transitionStatus(String(order.id), ["paid", "code_reserved"], "waiting_stock");
       return {
         order,
@@ -698,8 +698,40 @@ export class ChatAgentService {
       };
     }
 
-    const reservedCode = await this.activationCodesService.reserveCode(String(availableCode.id), String(order.id), input.customer.id);
-    if (!reservedCode) {
+    const planId = typeof order.plan_id === "string" ? order.plan_id : null;
+    const availableCodes = await this.activationCodesService.findAvailableCodes(productId, planId, allocation.codeCount);
+    if (availableCodes.length < allocation.codeCount) {
+      await this.ordersService.transitionStatus(String(order.id), ["paid", "code_reserved"], "waiting_stock");
+      return {
+        order,
+        requiresHuman: true,
+        notifyOwner: true,
+        ownerNotificationText:
+          "âš ï¸ Pagamento confirmado sem cÃ³digo disponÃ­vel.\n\n" +
+          `Pedido: ${orderNumber}\n` +
+          `Cliente: ${input.customer.id}\n\n` +
+          `Esse plano precisa de ${allocation.codeCount} codigo(s) mensal(is), mas nao ha estoque suficiente.`,
+        reply: buildNoAccessCodeAvailableMessage(orderNumber)
+      };
+    }
+
+    const reservedCodes: Array<Record<string, unknown>> = [];
+    for (const availableCode of availableCodes) {
+      const reservedCode = await this.activationCodesService.reserveCode(String(availableCode.id), String(order.id), input.customer.id);
+      if (!reservedCode) {
+        await this.activationCodesService.releaseReservedCodesForOrder(String(order.id), reservedCodes.map((code) => String(code.id)));
+        return {
+          order,
+          reply:
+            `Pagamento confirmado para o pedido ${orderNumber}.\n\n` +
+            "O estoque acabou de ser atualizado por outro atendimento. Vou tentar liberar novamente em instantes."
+        };
+      }
+      reservedCodes.push(reservedCode);
+    }
+
+    const codeIds = reservedCodes.map((code) => String(code.id));
+    if (!codeIds.length) {
       return {
         order,
         reply:
@@ -708,19 +740,29 @@ export class ChatAgentService {
       };
     }
 
-    await this.ordersService.updateOrder(String(order.id), { code_id: String(reservedCode.id), status: "code_reserved" });
-    await this.activationCodesService.markCodeAsSent(String(reservedCode.id));
-    const sentOrder = await this.ordersService.updateOrder(String(order.id), { code_id: String(reservedCode.id), status: "code_sent" });
+    await this.ordersService.updateOrder(String(order.id), { code_id: codeIds[0], status: "code_reserved" });
+    for (const reservedCode of reservedCodes) {
+      await this.activationCodesService.markCodeAsSent(String(reservedCode.id));
+    }
+    const sentOrder = await this.ordersService.updateOrder(String(order.id), {
+      code_id: codeIds[0],
+      status: "code_sent",
+      metadata: {
+        ...(isRecord(order.metadata) ? order.metadata : {}),
+        activation_code_ids: codeIds,
+        activation_code_count: codeIds.length
+      }
+    });
 
     await this.auditService.createAuditLog({
       actor_type: "ai_agent",
       action: "activation_code_sent_after_payment_confirmation",
       entity_type: "orders",
       entity_id: String(order.id),
-      metadata: { webhookEventId: input.webhookEventId, code_id: reservedCode.id }
+      metadata: { webhookEventId: input.webhookEventId, code_id: codeIds[0], code_ids: codeIds, code_count: codeIds.length }
     });
 
-    const postPurchaseMessages = buildPostPurchaseMessages(String(reservedCode.code));
+    const postPurchaseMessages = buildPostPurchaseMessages(reservedCodes.map((code) => String(code.code)));
     return {
       order: sentOrder,
       reply: postPurchaseMessages[0],
@@ -1145,6 +1187,10 @@ function getCommercialPlanLabel(plan: { name?: unknown; slug?: unknown; duration
 
 function shouldBlockConversationalTemplateFallback(intent: string) {
   return Boolean(process.env.OPENAI_API_KEY) && !isSensitiveExecutionIntent(intent);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function formatMoney(priceCents: number, currency = "BRL") {

@@ -63,8 +63,10 @@ function createHarness() {
   const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
   const activationCodesService = {
     findAvailableCode: vi.fn(async () => null as Record<string, unknown> | null),
+    findAvailableCodes: vi.fn(async () => [] as Array<Record<string, unknown>>),
     reserveCode: vi.fn(async () => null as Record<string, unknown> | null),
-    markCodeAsSent: vi.fn(async () => null as Record<string, unknown> | null)
+    markCodeAsSent: vi.fn(async () => null as Record<string, unknown> | null),
+    releaseReservedCodesForOrder: vi.fn(async () => [] as Array<Record<string, unknown>>)
   };
   const service = new PaymentConfirmationService(
     mercadoPagoService as never,
@@ -113,7 +115,7 @@ describe("PaymentConfirmationService", () => {
     );
     expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(1, {
       phone: "5511999998888",
-      text: expect.stringContaining("Ainda não encontrei código de acesso disponível")
+      text: expect.stringContaining("Ainda nao encontrei codigo de acesso disponivel")
     });
     expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(2, {
       phone: "558699802602",
@@ -125,10 +127,10 @@ describe("PaymentConfirmationService", () => {
 
   it("sends an available activation code after an approved webhook payment", async () => {
     const harness = createHarness();
-    harness.activationCodesService.findAvailableCode.mockResolvedValueOnce({
+    harness.activationCodesService.findAvailableCodes.mockResolvedValueOnce([{
       id: "code-id",
       code: "UNITV-CODE-001"
-    });
+    }]);
     harness.activationCodesService.reserveCode.mockResolvedValueOnce({
       id: "code-id",
       code: "UNITV-CODE-001"
@@ -144,7 +146,7 @@ describe("PaymentConfirmationService", () => {
     );
     expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(1, {
       phone: "5511999998888",
-      text: expect.stringContaining("✅ Agradecemos pela sua compra!")
+      text: expect.stringContaining("Agradecemos pela sua compra!")
     });
     expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(1, {
       phone: "5511999998888",
@@ -152,11 +154,69 @@ describe("PaymentConfirmationService", () => {
     });
     expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(2, {
       phone: "5511999998888",
-      text: expect.stringContaining("🎬 Entre na Comunidade Oficial da UNITV!")
+      text: expect.stringContaining("Entre na Comunidade Oficial da UNITV!")
     });
     expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(2, {
       phone: "5511999998888",
       text: expect.stringContaining("https://chat.whatsapp.com/GuMhy92y5cJ6PVC0KLtZh3")
+    });
+  });
+
+  it("sends three monthly activation codes for a trimestral payment", async () => {
+    const harness = createHarness();
+    const trimestralOrder = {
+      ...baseOrder,
+      amount_cents: 7000,
+      plans: { slug: "trimestral", name: "3 meses", duration_days: 90 }
+    };
+    harness.ordersService.findOrderByOrderNumber.mockResolvedValueOnce(trimestralOrder);
+    harness.ordersService.transitionToPaid.mockResolvedValueOnce({ ...trimestralOrder, status: "paid" });
+    harness.mercadoPagoService.getPayment.mockResolvedValueOnce({ ...basePayment, amountCents: 7000 });
+    harness.activationCodesService.findAvailableCodes.mockResolvedValueOnce([
+      { id: "code-id-1", code: "UNITV-CODE-001" },
+      { id: "code-id-2", code: "UNITV-CODE-002" },
+      { id: "code-id-3", code: "UNITV-CODE-003" }
+    ]);
+    harness.activationCodesService.reserveCode
+      .mockResolvedValueOnce({ id: "code-id-1", code: "UNITV-CODE-001" })
+      .mockResolvedValueOnce({ id: "code-id-2", code: "UNITV-CODE-002" })
+      .mockResolvedValueOnce({ id: "code-id-3", code: "UNITV-CODE-003" });
+    harness.activationCodesService.markCodeAsSent.mockResolvedValue({ status: "sent" });
+
+    await harness.service.process({ webhookEventId: "webhook-id", paymentId: "987654" });
+
+    expect(harness.activationCodesService.findAvailableCodes).toHaveBeenCalledWith(baseOrder.product_id, baseOrder.plan_id, 3);
+    expect(harness.activationCodesService.reserveCode).toHaveBeenCalledTimes(3);
+    expect(harness.activationCodesService.markCodeAsSent).toHaveBeenCalledTimes(3);
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(1, {
+      phone: "5511999998888",
+      text: expect.stringContaining("Seus codigos de acesso:")
+    });
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(1, {
+      phone: "5511999998888",
+      text: expect.stringContaining("1. UNITV-CODE-001\n2. UNITV-CODE-002\n3. UNITV-CODE-003")
+    });
+  });
+
+  it("does not consume monthly stock for an annual payment", async () => {
+    const harness = createHarness();
+    const annualOrder = {
+      ...baseOrder,
+      amount_cents: 20000,
+      plans: { slug: "anual", name: "Anual", duration_days: 365 }
+    };
+    harness.ordersService.findOrderByOrderNumber.mockResolvedValueOnce(annualOrder);
+    harness.ordersService.transitionToPaid.mockResolvedValueOnce({ ...annualOrder, status: "paid" });
+    harness.mercadoPagoService.getPayment.mockResolvedValueOnce({ ...basePayment, amountCents: 20000 });
+
+    await harness.service.process({ webhookEventId: "webhook-id", paymentId: "987654" });
+
+    expect(harness.activationCodesService.findAvailableCodes).not.toHaveBeenCalled();
+    expect(harness.activationCodesService.reserveCode).not.toHaveBeenCalled();
+    expect(harness.ordersService.transitionStatus).toHaveBeenCalledWith(baseOrder.id, ["paid", "code_reserved"], "waiting_stock");
+    expect(harness.evolutionService.sendTextMessage).toHaveBeenNthCalledWith(1, {
+      phone: "5511999998888",
+      text: expect.stringContaining("Ja avisei o especialista")
     });
   });
 

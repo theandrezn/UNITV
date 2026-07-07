@@ -49,6 +49,7 @@ class FakeQuery {
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null
   ) {
     return Promise.resolve({
+      data: this.response.data ?? [],
       count: this.response.count ?? null,
       error: this.response.error ?? null
     }).then(onfulfilled, onrejected);
@@ -70,8 +71,8 @@ class FakeSupabase {
 describe("ActivationCodesRepository", () => {
   it("falls back to a universal product code when no plan-specific code is available", async () => {
     const supabase = new FakeSupabase([
-      { data: null },
-      { data: { id: "universal-code", plan_id: null, code: "1279320638952037" } }
+      { data: [] },
+      { data: [{ id: "universal-code", plan_id: null, code: "1279320638952037" }] }
     ]);
     const repository = new ActivationCodesRepository(supabase as never);
 
@@ -85,7 +86,7 @@ describe("ActivationCodesRepository", () => {
 
   it("uses the plan-specific code before falling back to universal stock", async () => {
     const supabase = new FakeSupabase([
-      { data: { id: "specific-code", plan_id: "monthly-plan-id", code: "2420180485666071" } }
+      { data: [{ id: "specific-code", plan_id: "monthly-plan-id", code: "2420180485666071" }] }
     ]);
     const repository = new ActivationCodesRepository(supabase as never);
 

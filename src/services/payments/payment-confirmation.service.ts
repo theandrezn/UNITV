@@ -8,6 +8,7 @@ import { WebhooksService } from "@/services/webhooks.service";
 import { buildNoAccessCodeAvailableMessage, buildPostPurchaseMessages } from "@/lib/unitv/post-purchase-messages";
 import { MercadoPagoService } from "./mercadopago.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
+import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
 
 const ADMIN_WHATSAPP_PHONE = "558699802602";
 
@@ -149,9 +150,9 @@ export class PaymentConfirmationService {
     }
 
     try {
-      const code = await this.releaseActivationCode(order);
-      if (code) {
-        for (const text of buildPostPurchaseMessages(code)) {
+      const codes = await this.releaseActivationCode(order);
+      if (codes.length) {
+        for (const text of buildPostPurchaseMessages(codes)) {
           await this.evolutionService.sendTextMessage({ phone, text });
         }
         return;
@@ -184,34 +185,56 @@ export class PaymentConfirmationService {
   private async releaseActivationCode(order: Record<string, unknown>) {
     const productId = typeof order.product_id === "string" ? order.product_id : null;
     if (!productId) {
-      return null;
+      return [];
+    }
+
+    const allocation = getPlanCodeAllocation(order);
+    if (!allocation.supported) {
+      await this.ordersService.transitionStatus(String(order.id), ["paid", "code_reserved"], "waiting_stock");
+      return [];
     }
 
     const planId = typeof order.plan_id === "string" ? order.plan_id : null;
-    const availableCode = await this.activationCodesService.findAvailableCode(productId, planId);
-    if (!availableCode) {
+    const availableCodes = await this.activationCodesService.findAvailableCodes(productId, planId, allocation.codeCount);
+    if (availableCodes.length < allocation.codeCount) {
       await this.ordersService.transitionStatus(String(order.id), ["paid", "code_reserved"], "waiting_stock");
-      return null;
+      return [];
     }
 
-    const reservedCode = await this.activationCodesService.reserveCode(
-      String(availableCode.id),
-      String(order.id),
-      String(order.customer_id)
-    );
-    if (!reservedCode) {
-      return null;
+    const reservedCodes: Array<Record<string, unknown>> = [];
+    for (const availableCode of availableCodes) {
+      const reservedCode = await this.activationCodesService.reserveCode(
+        String(availableCode.id),
+        String(order.id),
+        String(order.customer_id)
+      );
+      if (!reservedCode) {
+        await this.activationCodesService.releaseReservedCodesForOrder(String(order.id), reservedCodes.map((code) => String(code.id)));
+        return [];
+      }
+      reservedCodes.push(reservedCode);
     }
 
-    await this.ordersService.updateOrder(String(order.id), { code_id: String(reservedCode.id), status: "code_reserved" });
-    await this.activationCodesService.markCodeAsSent(String(reservedCode.id));
-    await this.ordersService.updateOrder(String(order.id), { code_id: String(reservedCode.id), status: "code_sent" });
+    const codeIds = reservedCodes.map((code) => String(code.id));
+    await this.ordersService.updateOrder(String(order.id), { code_id: codeIds[0], status: "code_reserved" });
+    for (const reservedCode of reservedCodes) {
+      await this.activationCodesService.markCodeAsSent(String(reservedCode.id));
+    }
+    await this.ordersService.updateOrder(String(order.id), {
+      code_id: codeIds[0],
+      status: "code_sent",
+      metadata: {
+        ...(isRecord(order.metadata) ? order.metadata : {}),
+        activation_code_ids: codeIds,
+        activation_code_count: codeIds.length
+      }
+    });
     await this.auditService.createAuditLog({
       actor_type: "webhook",
       action: "activation_code_sent_after_mercado_pago_webhook",
       entity_type: "orders",
       entity_id: String(order.id),
-      metadata: { code_id: reservedCode.id }
+      metadata: { code_id: codeIds[0], code_ids: codeIds, code_count: codeIds.length }
     });
     await this.safeCreateAgentEvent({
       customer_phone: readOrderCustomerPhone(order),
@@ -221,11 +244,13 @@ export class PaymentConfirmationService {
       metadata: {
         order_id: String(order.id),
         order_number: String(order.order_number || ""),
-        code_id: reservedCode.id
+        code_id: codeIds[0],
+        code_ids: codeIds,
+        code_count: codeIds.length
       }
     });
 
-    return String(reservedCode.code);
+    return reservedCodes.map((code) => String(code.code));
   }
 
   private audit(orderId: string, action: string, order: Record<string, unknown>, payment: PaymentData) {
@@ -252,6 +277,10 @@ export class PaymentConfirmationService {
       return null;
     }
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
 
 function mapPaymentStatus(status: string) {
