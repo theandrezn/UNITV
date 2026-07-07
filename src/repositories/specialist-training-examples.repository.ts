@@ -33,6 +33,7 @@ export type RelevantSpecialistExamplesInput = {
   objection?: string | null;
   device?: string | null;
   customerMessage?: string | null;
+  recentContext?: string | null;
   limit?: number;
 };
 
@@ -64,7 +65,7 @@ export class SpecialistTrainingExamplesRepository {
       .limit(50);
 
     const candidates = assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
-    const keywords = tokenize(input.customerMessage || "");
+    const keywords = tokenize(`${input.customerMessage || ""} ${input.recentContext || ""}`);
     const ranked = candidates
       .map((example) => ({ example, score: scoreExample(example, input, keywords) }))
       .filter((item) => item.score > 0 || candidates.length <= 3)
@@ -135,7 +136,16 @@ function scoreExample(example: Record<string, unknown>, input: RelevantSpecialis
   if (input.objection && example.inferred_objection === input.objection) score += 12;
   const metadata = example.metadata && typeof example.metadata === "object" ? example.metadata as Record<string, unknown> : {};
   if (input.device && (metadata.device === input.device || metadata.aparelho === input.device)) score += 10;
-  const exampleKeywords = tokenize(`${example.customer_last_message || ""} ${example.conversation_excerpt || ""}`);
+  const exampleKeywords = tokenize([
+    example.customer_last_message || "",
+    example.bot_previous_message || "",
+    example.specialist_message || "",
+    example.conversation_excerpt || "",
+    example.inferred_customer_state || "",
+    example.inferred_specialist_action || "",
+    example.why_specialist_intervened || "",
+    example.style_notes || ""
+  ].join(" "));
   score += [...keywords].filter((keyword) => exampleKeywords.has(keyword)).length * 3;
   score += Math.min(Number(example.used_count || 0), 10) * 0.2;
   return score;

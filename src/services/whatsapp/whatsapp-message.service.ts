@@ -469,7 +469,7 @@ export class WhatsappMessageService {
         followup_due_at: contextSnapshot.followup_due_at
       }
     });
-    const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata, message.text);
+    const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata, message.text, recentMessages);
     const commercialReply = await this.chatAgent.generateCommercialReply({
       message: effectiveMessage,
       classification,
@@ -493,7 +493,8 @@ export class WhatsappMessageService {
       metadata: {
         webhookEventId,
         rule: commercialReply.responseRule || "deterministic_reply",
-        confidence: classification.confidence
+        confidence: classification.confidence,
+        specialist_examples_count: specialistExamples.length
       }
     });
     if (commercialReply.leadProfilePatch) {
@@ -899,7 +900,11 @@ export class WhatsappMessageService {
     }
   }
 
-  private async listRelevantSpecialistExamples(metadata: Record<string, unknown> | null | undefined, customerMessage: string) {
+  private async listRelevantSpecialistExamples(
+    metadata: Record<string, unknown> | null | undefined,
+    customerMessage: string,
+    recentMessages: Array<{ role?: string; content?: string | null }> = []
+  ) {
     const leadProfile = readLeadProfile(metadata);
     try {
       const repository = this.specialistTrainingExamplesRepository || new SpecialistTrainingExamplesRepository();
@@ -909,6 +914,7 @@ export class WhatsappMessageService {
         objection: typeof leadProfile.main_objection === "string" ? leadProfile.main_objection : null,
         device: typeof leadProfile.device === "string" ? leadProfile.device : null,
         customerMessage,
+        recentContext: buildSpecialistExampleLookupContext(recentMessages),
         limit: 3
       });
     } catch {
@@ -1654,6 +1660,14 @@ function inferConversationStage(intent: string, key: string) {
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
   const profile = metadata?.lead_profile;
   return profile && typeof profile === "object" && !Array.isArray(profile) ? (profile as Record<string, unknown>) : {};
+}
+
+function buildSpecialistExampleLookupContext(recentMessages: Array<{ role?: string; content?: string | null }>) {
+  return recentMessages
+    .slice(-12)
+    .map((item) => `${item.role || "unknown"}: ${item.content || ""}`)
+    .join("\n")
+    .slice(-4000);
 }
 
 function buildLeadProfilePatch(text: string, intent: string, metadata: Record<string, unknown> | null | undefined) {

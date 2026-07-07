@@ -164,6 +164,52 @@ describe("specialist operational learning", () => {
     expect(updates).toContainEqual(expect.objectContaining({ used_count: 3, last_used_at: expect.any(String) }));
   });
 
+  it("uses recent conversation context to retrieve specialist examples for short replies", async () => {
+    const candidates = [
+      {
+        id: "generic",
+        inferred_intent: "saudacao",
+        success_signal: "neutral",
+        customer_last_message: "oi",
+        conversation_excerpt: "Cliente: oi\nEspecialista: ola",
+        used_count: 0,
+        created_at: "2026-07-06T10:00:00Z"
+      },
+      {
+        id: "password-support",
+        inferred_intent: "instalacao",
+        inferred_stage: "active_trial",
+        success_signal: "positive",
+        customer_last_message: "Qual e o formato da senha?",
+        bot_previous_message: "Voce conseguiu?",
+        specialist_message: "Coloca so numero e crie sua senha",
+        conversation_excerpt: "Cliente: Ta pedindo senha\nCliente: Vou comecar a testar agora\nEspecialista: Coloca so numero",
+        inferred_specialist_action: "orientou_senha",
+        style_notes: "Responde a duvida especifica e evita pergunta generica.",
+        used_count: 1,
+        created_at: "2026-07-06T09:00:00Z"
+      }
+    ];
+    const query: Record<string, unknown> = {};
+    for (const method of ["select", "eq", "order", "limit"]) query[method] = vi.fn(() => query);
+    query.update = vi.fn(() => query);
+    query.then = (resolve: (value: unknown) => void) => resolve({ data: candidates, error: null });
+    const repository = new SpecialistTrainingExamplesRepository({ from: vi.fn(() => query) } as never);
+
+    const result = await repository.getRelevantSpecialistExamples({
+      customerMessage: "ok",
+      recentContext: [
+        "customer: Ta pedindo senha",
+        "customer: Qual e o formato da senha",
+        "human_agent: Coloca so numero",
+        "customer: Vou comecar a testar agora"
+      ].join("\n"),
+      limit: 1
+    });
+
+    expect(result[0].id).toBe("password-support");
+  });
+
   it("passes no more than three specialist examples to the OpenAI response context", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     openAIResponsesCreate.mockClear();
