@@ -23,14 +23,24 @@ const plan = {
   price_cents: 2500,
   currency: "BRL"
 };
+const trimestralPlan = { ...plan, id: "trimestral-id", name: "Plano Trimestral", slug: "trimestral", duration_days: 90, price_cents: 7000 };
+const semestralPlan = { ...plan, id: "semestral-id", name: "Plano Semestral", slug: "semestral", duration_days: 180, price_cents: 12000 };
+const anualPlan = { ...plan, id: "anual-id", name: "Plano Anual", slug: "anual", duration_days: 365, price_cents: 20000 };
+const activePlans = [plan, trimestralPlan, semestralPlan, anualPlan];
 
 function createChatAgent(overrides: Record<string, unknown> = {}) {
   const plansService = {
-    listActivePlans: vi.fn(async () => [plan]),
-    findPlanMentionedInText: vi.fn(async (text: string) => ({
-      plan: text.toLowerCase().includes("mensal") ? plan : null,
-      plans: [plan]
-    }))
+    listActivePlans: vi.fn(async () => activePlans),
+    findPlanMentionedInText: vi.fn(async (text: string) => {
+      const normalized = text.toLowerCase();
+      const matchedPlan =
+        /\b(mensal|25)\b/.test(normalized) ? plan :
+        /\b(trimestral|3 meses|70)\b/.test(normalized) ? trimestralPlan :
+        /\b(semestral|6 meses|120)\b/.test(normalized) ? semestralPlan :
+        /\b(anual|200)\b/.test(normalized) ? anualPlan :
+        null;
+      return { plan: matchedPlan, plans: activePlans };
+    })
   };
   const knowledgeService = {
     searchKnowledge: vi.fn(async (): Promise<Array<{ category: string; content: string }>> => [])
@@ -179,7 +189,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("O mensal é bom para começar");
   });
 
-  it("keeps sensitive order creation out of free AI writing", async () => {
+  it("keeps order creation out of free AI writing until payment method is selected", async () => {
     const salesResponseAIService = {
       generateResponse: vi.fn(async () => "texto da IA que nao deve ser usado")
     };
@@ -194,17 +204,19 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
-    expect(ordersService.createOrder).toHaveBeenCalled();
-    expect(result.reply).toContain("Pedido criado");
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.reply).toContain("mensal");
+    expect(result.reply).toContain("R$");
+    expect(result.reply).toContain("Pix");
   });
 
   it.each([
-    ["Ativar", {}, "mensal de R$ 25", "comprovante"],
+    ["Ativar", {}, "ja usa o UNITV", "R$ 25"],
     ["Nao paguei ainda", {}, "3 dias", "comprovante"],
-    ["Mensal", { wants_activation: true }, "Pix ou cart\u00e3o", "Qual plano"],
+    ["Mensal", { wants_activation: true }, "Pix", "Qual plano"],
     ["Ja baixei", { device: "tvbox" }, "3 dias", "ja baixou"],
     ["Sim", { last_bot_question: "Voce ja baixou o app?" }, "ativa\u00e7\u00e3o", "ja baixou"],
-    ["Ja usei", {}, "renovar o acesso", "qual aparelho"],
+    ["Ja usei", {}, "preferencia por qual plano", "R$ 25"],
     ["É unitv mesmo?", { valores_enviados: true }, "Sim, é UNITV mesmo", "Seja bem-vindo"],
     ["Quero logo um teste", {}, "teste grátis de 3 dias", "Seja bem-vindo"],
     ["Pode ser", { last_bot_question: "Pra eu liberar seu teste gratis, em qual aparelho voce vai usar?" }, "Só me confirma qual aparelho", "Seja bem-vindo"]
@@ -359,7 +371,7 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
-  it("answers prices in human text without sending a menu", async () => {
+  it("asks plan preference before showing prices for a broad price question", async () => {
     const { service, plansService } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -371,12 +383,101 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(plansService.listActivePlans).toHaveBeenCalled();
-    expect(result.reply).toContain("O mensal fica R$ 25");
-    expect(result.reply).toContain("custo-benefício");
+    expect(result.reply).toContain("preferencia por qual plano");
+    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("R$ 70");
     expect(result.menu).toBeUndefined();
     expect(result.reply).not.toContain("Ver planos");
-    expect(result.reply).not.toContain("Fazer teste grátis");
-    expect(result.reply).not.toContain("Comprar agora");
+  });
+
+  it("shows all values only when the customer explicitly asks for all prices", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "quais valores dos planos?",
+      classification: { intent: "ask_price", confidence: 0.9, summary: "preco", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("R$ 25");
+    expect(result.reply).toContain("R$ 70");
+    expect(result.reply).toContain("R$ 120");
+    expect(result.reply).toContain("R$ 200");
+  });
+
+  it("does not reveal prices on traffic-source recharge opener", async () => {
+    const { service, ordersService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Olá! Quero fazer Recarga Codigo UNITV",
+      classification: { intent: "renew_plan", confidence: 0.95, summary: "recarga", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.reply).toContain("ja usa o UNITV");
+    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("R$ 70");
+    expect(result.reply).not.toContain("R$ 120");
+    expect(result.reply).not.toContain("R$ 200");
+  });
+
+  it("asks plan preference without prices when customer says they already use UNITV", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "ja uso",
+      classification: { intent: "unknown", confidence: 0.95, summary: "ja usa", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: {} } },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("preferencia por qual plano");
+    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("R$ 70");
+  });
+
+  it("answers only the selected monthly plan price", async () => {
+    const { service, ordersService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "mensal",
+      classification: { intent: "buy_plan", confidence: 0.99, summary: "mensal", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.reply).toContain("mensal");
+    expect(result.reply).toContain("R$");
+    expect(result.reply).not.toContain("R$ 70");
+    expect(result.reply).not.toContain("R$ 120");
+    expect(result.reply).not.toContain("R$ 200");
+  });
+
+  it("infers the trimestral plan when the customer mentions value 70", async () => {
+    const { service, ordersService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "vou querer o de 70",
+      classification: { intent: "buy_plan", confidence: 0.99, summary: "valor", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.reply).toContain("trimestral");
+    expect(result.reply).toContain("R$");
+    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("R$ 120");
+    expect(result.reply).not.toContain("R$ 200");
   });
 
   it("answers greeting with the human welcome and no main menu", async () => {
@@ -434,8 +535,9 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("Meu nome é André");
-    expect(result.reply).toContain("renovar um acesso que já tem ou ativar um novo plano");
+    expect(result.reply).toContain("ja usa o UNITV");
+    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("R$ 70");
     expect(result.menu).toBeUndefined();
     expect(result.reply).not.toContain("Ver planos");
     expect(result.reply).not.toContain("Fazer teste grátis");
@@ -458,7 +560,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.sendTextBeforeMenu).toBe(false);
   });
 
-  it("creates an order when the requested plan is clear", async () => {
+  it("stores plan preference when the requested plan is clear", async () => {
     const { service, ordersService, appSettingsService, mercadoPagoService } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -469,26 +571,21 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(ordersService.createOrder).toHaveBeenCalledWith(
-      expect.objectContaining({
-        plan_id: plan.id,
-        amount_cents: plan.price_cents,
-        status: "pending_payment"
-      })
-    );
-    expect(result.reply).toContain("UTV-20260704-000001");
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.reply).toContain("mensal");
+    expect(result.reply).toContain("R$");
     expect(mercadoPagoService.createOrderPreference).not.toHaveBeenCalled();
     expect(ordersService.updateOrder).not.toHaveBeenCalled();
     expect(appSettingsService.getPixInstructions).not.toHaveBeenCalled();
     expect(result.reply).not.toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(result.reply).not.toContain("Cartao:");
     expect(result.reply).not.toContain("Para gerar o Pix Copia e Cola");
-    expect(result.reply).toContain("Pix ou cartão");
+    expect(result.reply).toContain("Pix");
     expect(result.menu).toBeUndefined();
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
   });
 
-  it("does not create a card preference while only creating the order", async () => {
+  it("does not create payment artifacts while only storing plan preference", async () => {
     const { service, ordersService, mercadoPagoService, agentActionsService } = createChatAgent();
     mercadoPagoService.createOrderPreference.mockRejectedValueOnce(new Error("Mercado Pago unavailable"));
 
@@ -500,7 +597,7 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(ordersService.createOrder).toHaveBeenCalled();
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(ordersService.updateOrder).not.toHaveBeenCalled();
     expect(mercadoPagoService.createOrderPreference).not.toHaveBeenCalled();
     expect(result.requiresHuman).not.toBe(true);
@@ -529,14 +626,14 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toContain("valor ainda precisa ser confirmado");
   });
 
-  it("creates the six-month order with the official amount", async () => {
+  it("responds with only the six-month official amount after plan selection", async () => {
     const { service, ordersService, plansService } = createChatAgent();
     plansService.findPlanMentionedInText.mockResolvedValueOnce({
       plan: { ...plan, id: "semestral-id", name: "6 meses", slug: "semestral", duration_days: 180, price_cents: 12000 },
       plans: []
     });
 
-    await service.generateCommercialReply({
+    const result = await service.generateCommercialReply({
       message: "quero o de 6 meses",
       classification: { intent: "buy_plan", confidence: 0.99, summary: "semestral", suggested_reply: "" },
       customer: { id: "44444444-4444-4444-8444-444444444444" },
@@ -544,9 +641,12 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(ordersService.createOrder).toHaveBeenCalledWith(
-      expect.objectContaining({ plan_id: "semestral-id", amount_cents: 12000, status: "pending_payment" })
-    );
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.reply).toContain("semestral");
+    expect(result.reply).toContain("R$");
+    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("R$ 70");
+    expect(result.reply).not.toContain("R$ 200");
   });
 
   it("sends installation instructions for a free trial without creating a paid order", async () => {
@@ -1114,8 +1214,9 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("Qual você quer ativar?");
-    expect(result.reply).toContain("Mensal — R$ 25");
+    expect(result.reply).toContain("preferencia por qual plano");
+    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("R$ 70");
     expect(result.menu).toBeUndefined();
     expect(result.reply).not.toContain("Ver planos");
   });
@@ -1132,9 +1233,9 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("Perfeito, eu te ajudo.");
-    expect(result.reply).toContain("Mensal — R$ 25");
-    expect(result.reply).toContain("Qual você quer ativar?");
+    expect(result.reply).toContain("preferencia por qual plano");
+    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("R$ 70");
     expect(result.menu).toBeUndefined();
     expect(result.reply).not.toContain("Falar com especialista");
   });

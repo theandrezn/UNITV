@@ -17,17 +17,23 @@ export class PlansService {
         const name = normalize(String(plan.name || ""));
         const slug = normalize(String(plan.slug || ""));
         const duration = plan.duration_days ? String(plan.duration_days) : "";
+        const price = Number(plan.price_cents || 0);
+        const priceNumber = price > 0 ? String(Math.round(price / 100)) : "";
+        const aliasMatches = getPlanAliases(plan).some((alias) => normalizedText.includes(alias));
         const matchedName = Boolean(name && normalizedText.includes(name));
         const matchedSlug = Boolean(slug && normalizedText.includes(slug));
         const matchedDuration = Boolean(duration && normalizedText.includes(duration));
+        const matchedPrice = Boolean(priceNumber && new RegExp(`\\b${priceNumber}\\b`).test(normalizedText));
 
         return {
           plan,
-          matched: matchedName || matchedSlug || matchedDuration,
+          matched: matchedName || matchedSlug || matchedDuration || matchedPrice || aliasMatches,
           score:
             (matchedName ? name.length * 10 + 100 : 0) +
             (matchedSlug ? slug.length + 50 : 0) +
-            (matchedDuration ? 10 : 0)
+            (matchedDuration ? 10 : 0) +
+            (matchedPrice ? 80 : 0) +
+            (aliasMatches ? 70 : 0)
         };
       })
       .filter((candidate) => candidate.matched)
@@ -35,6 +41,27 @@ export class PlansService {
 
     return { plan: candidates[0]?.plan || null, plans };
   }
+}
+
+function getPlanAliases(plan: Record<string, unknown>) {
+  const name = normalize(String(plan.name || ""));
+  const slug = normalize(String(plan.slug || ""));
+  const durationDays = Number(plan.duration_days || 0);
+  const base = `${name} ${slug}`;
+
+  if (durationDays === 30 || /\bmensal\b/.test(base)) {
+    return ["mensal", "mes", "1 mes", "30 dias", "de 25"];
+  }
+  if (durationDays === 90 || /\b(3 meses|trimestral)\b/.test(base)) {
+    return ["3 meses", "trimestral", "90 dias", "de 70"];
+  }
+  if (durationDays === 180 || /\b(6 meses|semestral)\b/.test(base)) {
+    return ["6 meses", "semestral", "180 dias", "de 120"];
+  }
+  if (durationDays === 365 || /\b(anual|1 ano)\b/.test(base)) {
+    return ["anual", "1 ano", "12 meses", "365 dias", "de 200"];
+  }
+  return [];
 }
 
 function normalize(value: string) {

@@ -32,6 +32,8 @@ const LOW_CONFIDENCE_REPLY =
 
 const PLANS_TEXT = ["Mensal — R$ 25", "3 meses — R$ 70", "6 meses — R$ 120", "Anual — R$ 200"].join("\n");
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
+const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
+const RENEWAL_CONTEXT_QUESTION = "Perfeito. Voce ja usa o UNITV e quer so renovar o codigo, ou seria sua primeira vez usando?";
 
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const SPECIAL_PROMO_MONTHLY_PRICE_CENTS = 1999;
@@ -233,6 +235,31 @@ export class ChatAgentService {
       const plans = await this.plansService.listActivePlans();
       const menu = allowMenu && plans.length ? buildPlansMenu(plans) : null;
       const objectionReply = salesObjectionReply?.reply;
+      const { plan } = await this.plansService.findPlanMentionedInText(message);
+      if (plan && !isAllPricesRequested(message)) {
+        return {
+          reply: formatSpecificPlanPriceReply(plan, intent),
+          leadProfilePatch: {
+            selected_plan: normalizePlanKey(String(plan.slug || plan.name || "")),
+            plano_interesse: normalizePlanKey(String(plan.slug || plan.name || "")),
+            commercial_stage: "plan_selected",
+            stage: "plan_selected",
+            last_customer_intent: "specific_plan_selected",
+            next_expected_reply: "payment_method"
+          }
+        };
+      }
+      if (!isAllPricesRequested(message)) {
+        return {
+          reply: PLAN_PREFERENCE_QUESTION,
+          leadProfilePatch: {
+            commercial_stage: "qualified",
+            stage: "qualified",
+            last_customer_intent: "ask_price",
+            next_expected_reply: "plan_choice"
+          }
+        };
+      }
       return {
         reply: objectionReply ||
           "O mensal fica R$ 25.\n\n" +
@@ -289,24 +316,32 @@ export class ChatAgentService {
       });
 
       if (!plan) {
-        const menu = allowMenu && plans.length ? buildPlansMenu(plans) : null;
+        const preferenceMenu = allowMenu && plans.length ? buildPlansMenu(plans) : null;
         if (intent === "renew_plan" && isRenewalLeadMessage(message)) {
           return {
-            reply:
-              "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\n" +
-              "Claro, eu te ajudo com a recarga. Você quer renovar um acesso que já tem ou ativar um novo plano?",
-            menu: menu || undefined,
-            sendTextBeforeMenu: Boolean(menu)
+            reply: RENEWAL_CONTEXT_QUESTION,
+            menu: preferenceMenu || undefined,
+            sendTextBeforeMenu: Boolean(preferenceMenu),
+            leadProfilePatch: {
+              commercial_stage: "qualified",
+              stage: "qualified",
+              wants_recharge: true,
+              last_customer_intent: "renew",
+              next_expected_reply: "activation_or_renewal"
+            }
           };
         }
 
         return {
-          reply:
-            "Perfeito, eu te ajudo.\n\nHoje temos:\n" +
-            PLANS_TEXT +
-            "\n\nO mensal é bom para começar, e o anual é o melhor custo-benefício.\n\nQual você quer ativar?",
-          menu: menu || undefined,
-          sendTextBeforeMenu: Boolean(menu)
+          reply: PLAN_PREFERENCE_QUESTION,
+          menu: preferenceMenu || undefined,
+          sendTextBeforeMenu: Boolean(preferenceMenu),
+          leadProfilePatch: {
+            commercial_stage: "qualified",
+            stage: "qualified",
+            last_customer_intent: "plan_preference_question",
+            next_expected_reply: "plan_choice"
+          }
         };
       }
 
@@ -323,52 +358,20 @@ export class ChatAgentService {
 
         return {
           requiresHuman: true,
-          reply:
-            "Encontrei esse plano, mas o valor ainda precisa ser confirmado no cadastro. Vou encaminhar para atendimento humano finalizar seu pedido com segurança."
+          reply: "Encontrei esse plano, mas o valor ainda precisa ser confirmado no cadastro. Vou encaminhar para atendimento humano finalizar seu pedido com seguranca."
         };
       }
 
-      const order = await this.ordersService.createOrder({
-        customer_id: input.customer.id,
-        product_id: String(plan.product_id),
-        plan_id: String(plan.id),
-        status: "pending_payment",
-        amount_cents: Number(plan.price_cents),
-        currency: String(plan.currency || "BRL"),
-        metadata: {
-          source: "whatsapp_agent",
-          webhookEventId: input.webhookEventId,
-          intent
-        }
-      });
-
-      await this.agentActionsService.createAgentAction({
-        conversation_id: input.conversation.id,
-        customer_id: input.customer.id,
-        order_id: order.id,
-        action_name: "create_order",
-        status: "executed",
-        input_payload: { plan_id: plan.id, intent },
-        output_payload: { order_number: order.order_number },
-        requires_human_approval: true
-      });
-
-      await this.auditService.createAuditLog({
-        actor_type: "ai_agent",
-        action: "order_created_from_whatsapp",
-        entity_type: "orders",
-        entity_id: order.id,
-        metadata: {
-          webhookEventId: input.webhookEventId,
-          order_number: order.order_number,
-          plan_id: plan.id
-        }
-      });
-
       return {
-        order,
-        reply: `Pedido criado: ${order.order_number}\nPlano: ${plan.name} - ${formatMoney(plan.price_cents, plan.currency)}\n\n${PAYMENT_TEXT}`,
-        menu: allowMenu ? PAYMENT_MENU : undefined
+        reply: formatSpecificPlanPriceReply(plan, intent),
+        leadProfilePatch: {
+          selected_plan: normalizePlanKey(String(plan.slug || plan.name || "")),
+          plano_interesse: normalizePlanKey(String(plan.slug || plan.name || "")),
+          commercial_stage: "plan_selected",
+          stage: "plan_selected",
+          last_customer_intent: "specific_plan_selected",
+          next_expected_reply: "payment_method"
+        }
       };
     }
 
@@ -1040,17 +1043,17 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
     };
   }
 
-  if (/\b(ja usei|ja tenho|ja conheco|uso o app|uso unitv)\b/.test(normalized)) {
+  if (/\b(ja uso|ja usei|ja tenho|ja conheco|uso o app|uso unitv)\b/.test(normalized)) {
     return {
       reply: selectedPlan === "mensal"
         ? "\u00d3timo, ent\u00e3o voc\u00ea j\u00e1 conhece o app. Quer seguir com o mensal de R$ 25 agora?"
-        : "\u00d3timo, ent\u00e3o voc\u00ea j\u00e1 conhece o app. Voc\u00ea quer renovar o acesso ou ativar um novo plano?"
+        : PLAN_PREFERENCE_QUESTION
     };
   }
 
   if (/^(ativar|ativacao|ativa|liberar)$/i.test(normalized)) {
     return {
-      reply: "Claro. Voc\u00ea quer ativar o mensal de R$ 25 ou fazer o teste gr\u00e1tis de 3 dias primeiro?"
+      reply: RENEWAL_CONTEXT_QUESTION
     };
   }
 
@@ -1105,6 +1108,39 @@ function isSensitiveExecutionIntent(intent: string) {
     "activation_help",
     "human_help"
   ].includes(intent);
+}
+
+function isAllPricesRequested(message: string) {
+  const normalized = normalizeContextMessage(message);
+  return (
+    /\b(quais|todos|todas|cada|lista|tabela)\b.*\b(valor|valores|preco|precos|planos)\b/.test(normalized) ||
+    /\b(valor|valores|preco|precos|planos)\b.*\b(quais|todos|todas|cada|lista|tabela)\b/.test(normalized) ||
+    /\b(me manda|manda|envia|mostra|ver)\b.*\b(valores|precos|planos)\b/.test(normalized) ||
+    /\b(tem quais planos|quais planos tem|quero ver os planos|quero ver todos|quanto custa cada plano)\b/.test(normalized)
+  );
+}
+
+function formatSpecificPlanPriceReply(
+  plan: { name?: unknown; slug?: unknown; price_cents?: unknown; currency?: unknown; duration_days?: unknown },
+  intent: string
+) {
+  const label = getCommercialPlanLabel(plan);
+  const price = formatMoney(Number(plan.price_cents || 0), String(plan.currency || "BRL")).replace(/\s+/g, " ");
+  const paymentQuestion = intent === "renew_plan" ? "Posso te passar o Pix pra renovar?" : "Quer que eu gere o Pix pra voce?";
+  if (label === "anual") {
+    return `O anual fica ${price}. Ele e o melhor custo-beneficio. ${paymentQuestion}`;
+  }
+  return `O ${label} fica ${price}. ${paymentQuestion}`;
+}
+
+function getCommercialPlanLabel(plan: { name?: unknown; slug?: unknown; duration_days?: unknown }) {
+  const key = normalizePlanKey(`${String(plan.slug || "")} ${String(plan.name || "")}`);
+  const durationDays = Number(plan.duration_days || 0);
+  if (key.includes("mensal") || durationDays === 30) return "mensal";
+  if (key.includes("trimestral") || key.includes("3_meses") || durationDays === 90) return "trimestral";
+  if (key.includes("semestral") || key.includes("6_meses") || durationDays === 180) return "semestral";
+  if (key.includes("anual") || durationDays === 365) return "anual";
+  return String(plan.name || "plano").trim().toLowerCase() || "plano";
 }
 
 function shouldBlockConversationalTemplateFallback(intent: string) {

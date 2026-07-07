@@ -895,7 +895,7 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
   }
 
   if (key === "plan_choice") {
-    return "Conseguiu escolher o plano? O mensal é R$ 25 para começar, e o anual é o melhor custo-benefício. Qual você prefere?";
+    return "Conseguiu escolher o plano? Pode ser mensal, trimestral, semestral ou anual.";
   }
 
   if (key === "payment_choice") {
