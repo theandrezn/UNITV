@@ -539,12 +539,16 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("teste gratis e de 3 dias");
-    expect(result.reply).toContain("Downloader");
-    expect(result.reply).toContain("tela de login");
+    expect(result.reply).toContain("3 dias");
+    expect(result.reply).toMatch(/Downloader|codigo|login|app/i);
     expect(result.reply).not.toContain("em qual aparelho");
     expect(result.reply).not.toContain("TV Box Android, Android TV, Fire Stick ou celular Android");
-    expect(result.responseRule).toBe("free_trial_after_install_support");
+    expect(result.reply).not.toBe(
+      "Tem sim, o teste gratis e de 3 dias.\n\n" +
+      "Como voce ja esta pelo Downloader, abre o app e chega na tela de login. " +
+      "Quando aparecer essa tela, eu libero o teste por aqui."
+    );
+    expect(result.responseRule).toMatch(/install_trial_context|sales_response_ai_install_trial_context/);
   });
 
   it("returns an existing card link only when card is selected", async () => {

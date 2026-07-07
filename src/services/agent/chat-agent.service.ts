@@ -208,19 +208,7 @@ export class ChatAgentService {
 
     if (intent === "free_trial" || isFreeTrialMessage(message)) {
       if (isActiveInstallationSupportContext(leadProfile, input.recentMessages)) {
-        return {
-          reply:
-            "Tem sim, o teste gratis e de 3 dias.\n\n" +
-            "Como voce ja esta pelo Downloader, abre o app e chega na tela de login. " +
-            "Quando aparecer essa tela, eu libero o teste por aqui.",
-          responseSource: "local_rule",
-          responseRule: "free_trial_after_install_support",
-          leadProfilePatch: {
-            wants_test: true,
-            stage: "install_support",
-            next_expected_reply: "install_confirmation"
-          }
-        };
+        return this.generateContextualInstallTrialReply(input, message, intent, leadProfile);
       }
 
       return {
@@ -867,6 +855,46 @@ export class ChatAgentService {
       reply
     };
   }
+
+  private async generateContextualInstallTrialReply(
+    input: CommercialReplyInput,
+    message: string,
+    intent: string,
+    leadProfile: Record<string, unknown>
+  ): Promise<CommercialReplyResult> {
+    const aiReply = await this.salesResponseAIService.generateResponse({
+      message: [
+        message,
+        "",
+        "Contexto operacional: o cliente ja esta em suporte de instalacao/download.",
+        "Ele nao precisa responder aparelho de novo.",
+        "Responda confirmando que existe teste gratis de 3 dias e conduza para o proximo passo da instalacao atual.",
+        "Se o historico mencionar Downloader, codigo ou tela de login, use esse contexto naturalmente.",
+        "Nao use mensagem pronta e nao pergunte o aparelho novamente."
+      ].join("\n"),
+      intent,
+      leadProfile: {
+        ...leadProfile,
+        wants_test: true,
+        stage: "install_support",
+        next_expected_reply: "install_confirmation"
+      },
+      recentMessages: input.recentMessages,
+      specialistExamples: input.specialistExamples,
+      useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
+    });
+
+    return {
+      reply: aiReply || buildInstallTrialSafetyFallback(input.recentMessages),
+      responseSource: aiReply ? "ai" : "local_rule",
+      responseRule: aiReply ? "sales_response_ai_install_trial_context" : "install_trial_context_safety_fallback",
+      leadProfilePatch: {
+        wants_test: true,
+        stage: "install_support",
+        next_expected_reply: "install_confirmation"
+      }
+    };
+  }
 }
 
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
@@ -1012,6 +1040,23 @@ function isActiveInstallationSupportContext(
     Boolean(leadProfile.last_download_url_sent) ||
     /\b(downloader|download|baixar|instalar|codigo certo|tela de login|abrir o app|apk)\b/.test(normalized)
   );
+}
+
+function buildInstallTrialSafetyFallback(recentMessages: Array<{ role?: string; content?: string | null }> | undefined) {
+  const normalized = normalizeContextMessage((recentMessages || []).slice(-10).map((item) => item.content || "").join("\n"));
+  const mentionsDownloader = /\b(downloader|codigo|codigo certo)\b/.test(normalized);
+  const mentionsLogin = /\b(tela de login|login|abrir o app)\b/.test(normalized);
+
+  const opener = mentionsDownloader
+    ? "Tem teste sim, sao 3 dias gratis."
+    : "Tem sim, consigo liberar 3 dias gratis pra voce testar.";
+  const nextStep = mentionsLogin
+    ? "Quando chegar na tela de login, me avisa por aqui que eu sigo com a liberacao."
+    : mentionsDownloader
+      ? "Segue por esse codigo no Downloader e me avisa quando o app abrir."
+      : "Continua a instalacao e me avisa quando o app abrir.";
+
+  return `${opener}\n\n${nextStep}`;
 }
 
 function isRenewalLeadMessage(message: string) {
