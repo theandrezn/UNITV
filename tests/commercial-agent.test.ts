@@ -637,6 +637,66 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
+  it("creates the selected monthly order from conversation context before generating Pix", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce(null);
+    ordersService.createOrder.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000011",
+      customer_id: "44444444-4444-4444-8444-444444444444",
+      product_id: plan.product_id,
+      plan_id: plan.id,
+      amount_cents: 2500,
+      currency: "BRL",
+      status: "pending_payment",
+      metadata: { source: "whatsapp_agent", created_from_context: true },
+      plans: { name: plan.name, slug: plan.slug }
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "Pix",
+      classification: { intent: "pix_payment", confidence: 0.99, summary: "pix", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444", email: null },
+      conversation: {
+        id: "55555555-5555-4555-8555-555555555555",
+        metadata: {
+          lead_profile: {
+            wants_activation: true,
+            selected_plan: "mensal",
+            plano_interesse: "mensal",
+            last_bot_question: "Perfeito, o plano mensal fica R$ 25 e a ativação é rápida. Você prefere pagar por Pix ou cartão?"
+          }
+        }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customer_id: "44444444-4444-4444-8444-444444444444",
+        product_id: plan.product_id,
+        plan_id: plan.id,
+        status: "pending_payment",
+        amount_cents: 2500,
+        metadata: expect.objectContaining({
+          created_from_context: true,
+          selected_plan_from_lead_profile: "mensal"
+        })
+      })
+    );
+    expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith({
+      order: expect.objectContaining({
+        order_number: "UTV-20260704-000011",
+        plan_id: plan.id,
+        amount_cents: 2500
+      }),
+      plan: { name: plan.name, slug: plan.slug },
+      payer: { email: "pix-utv-20260704-000011@unitv.com.br" }
+    });
+    expect(result.reply).toContain("PIX do pedido UTV-20260704-000011");
+    expect(result.copyText).toBe("000201-pix-copy-paste");
+  });
+
   it("creates a dynamic Pix charge and returns copy-paste plus QR media", async () => {
     const { service, ordersService, mercadoPagoService } = createChatAgent();
     const order = {
@@ -1435,6 +1495,108 @@ describe("commercial WhatsApp agent", () => {
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({ followup_due_at: expect.any(String) })
+    );
+  });
+
+  it("schedules follow-ups after manual outbound download and welcome messages", async () => {
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      listMessagesByConversationId: vi.fn(async () => []),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+    };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      { classify: vi.fn() } as never,
+      { generateCommercialReply: vi.fn() } as never,
+      { sendTextMessage: vi.fn() } as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { createExample: vi.fn(async () => ({})) } as never,
+      { analyzeSpecialistIntervention: vi.fn(async () => ({
+        inferred_intent: "technical_support",
+        inferred_stage: "instalacao",
+        inferred_objection: null,
+        inferred_customer_state: "aguardando_download",
+        inferred_specialist_action: "enviou_link_download",
+        why_specialist_intervened: "Mensagem manual de instalacao.",
+        style_notes: "Curto e direto.",
+        summary: "Especialista enviou download.",
+        learned_pattern: "Cobrar se conseguiu baixar.",
+        next_best_action: "perguntar se conseguiu baixar"
+      })) } as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "manual-download-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "No celular Android funciona sim.\n\nBaixe por aqui:\nhttps://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file\n\nSeu celular é Android?",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: true,
+        isGroup: false
+      }
+    });
+
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_key: "download",
+        awaiting_customer_action: "confirm_download",
+        last_bot_message_at: expect.any(String),
+        requires_human: true,
+        lead_profile: expect.objectContaining({
+          last_bot_question: "Seu celular é Android?"
+        })
+      })
+    );
+
+    conversationsRepository.updateConversationMetadata.mockClear();
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id-2",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "manual-welcome-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais. Meu nome é André.\n\nClaro, eu te ajudo com a recarga. Você quer renovar um acesso que já tem ou ativar um novo plano?",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 2,
+        fromMe: true,
+        isGroup: false
+      }
+    });
+
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_key: "welcome_activation",
+        awaiting_customer_action: "answer_welcome_intent",
+        followup_count: 0,
+        followup_due_at: expect.any(String)
+      })
     );
   });
 

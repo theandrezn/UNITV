@@ -5,10 +5,12 @@ import { MessagesRepository } from "@/repositories/messages.repository";
 import { EvolutionService } from "@/services/evolution/evolution.service";
 import { AuditService } from "@/services/audit.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
+import { SalesResponseAIService } from "@/services/agent/sales-response-ai.service";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
 const MAX_LEAD_RECOVERY_FOLLOWUPS = 4;
 const HUMAN_SILENCE_WINDOW_MS = 5 * 60 * 1000;
+const UNANSWERED_CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const LEAD_RECOVERY_DELAYS_AFTER_SEND_MS = [
   45 * 60 * 1000,
@@ -36,7 +38,8 @@ export class WhatsappFollowupService {
     private readonly messagesRepository = new MessagesRepository(),
     private readonly evolutionService = new EvolutionService(),
     private readonly auditService = new AuditService(),
-    private readonly agentEventLogService?: AgentEventLogService
+    private readonly agentEventLogService?: AgentEventLogService,
+    private readonly salesResponseAIService = new SalesResponseAIService()
   ) {}
 
   async processDueFollowups(now = new Date()): Promise<FollowupResult> {
@@ -46,11 +49,15 @@ export class WhatsappFollowupService {
 
     for (const conversation of conversations) {
       const metadata = conversation.metadata || {};
-      if (!isDue(metadata.followup_due_at, now)) {
+      const unansweredCustomerFollowup = getUnansweredCustomerFollowup(metadata, now);
+      if (!isDue(metadata.followup_due_at, now) && !unansweredCustomerFollowup) {
         continue;
       }
 
-      const skipReason = getSkipReason(metadata, now);
+      const skipReason = getSkipReason(metadata, now, {
+        allowCustomerReplied: Boolean(unansweredCustomerFollowup),
+        ignoreStageLimit: Boolean(unansweredCustomerFollowup)
+      });
       if (skipReason) {
         skipped++;
         await this.auditService.createAuditLog({
@@ -70,11 +77,15 @@ export class WhatsappFollowupService {
       }
 
       const leadRecovery = getLeadRecoveryFollowup(metadata);
-      const stageId = leadRecovery
+      const stageId = unansweredCustomerFollowup
+        ? unansweredCustomerFollowup.stageId
+        : leadRecovery
         ? leadRecovery.stageId
         : String(metadata.last_followup_stage_id || randomUUID());
       const promoRecovery = !leadRecovery && shouldSendPromoRecoveryFollowup(metadata);
-      const followupText = leadRecovery
+      const followupText = unansweredCustomerFollowup
+        ? await this.buildUnansweredCustomerFollowupText(conversation, metadata)
+        : leadRecovery
         ? buildLeadRecoveryFollowupText(leadRecovery.step, metadata, conversation)
         : promoRecovery
           ? buildPromoRecoveryFollowupText(metadata, conversation)
@@ -93,6 +104,13 @@ export class WhatsappFollowupService {
           ? `${leadRecovery.baseStageId}:recovery:${leadRecovery.step + 1}`
           : stageId,
         last_bot_message_at: now.toISOString(),
+        ...(unansweredCustomerFollowup
+          ? {
+              unanswered_customer_followup_sent_at: now.toISOString(),
+              unanswered_customer_followup_stage_id: stageId,
+              unanswered_customer_followup_for_message_at: unansweredCustomerFollowup.customerMessageAt
+            }
+          : {}),
         ...(leadRecovery
           ? {
               lead_recovery_followup_step: leadRecovery.step,
@@ -129,6 +147,7 @@ export class WhatsappFollowupService {
           followup_key: metadata.followup_key,
           stageId,
           promo_recovery: promoRecovery,
+          unanswered_customer_followup: Boolean(unansweredCustomerFollowup),
           lead_recovery_step: leadRecovery?.step || null
         }
       });
@@ -161,6 +180,7 @@ export class WhatsappFollowupService {
           followup_count: nextMetadata.followup_count,
           stageId,
           promo_recovery: promoRecovery,
+          unanswered_customer_followup: Boolean(unansweredCustomerFollowup),
           lead_recovery_step: leadRecovery?.step || null
         }
       });
@@ -169,6 +189,44 @@ export class WhatsappFollowupService {
     }
 
     return { checked: conversations.length, sent, skipped };
+  }
+
+  private async buildUnansweredCustomerFollowupText(conversation: ConversationRow, metadata: Record<string, unknown>) {
+    const recentMessages = await this.listRecentMessages(conversation.id);
+    const latestCustomerMessage = [...recentMessages].reverse().find((item) => item.role === "customer");
+    const fallbackReply = buildUnansweredCustomerFallbackText(metadata, latestCustomerMessage?.content || "");
+    const leadProfile = readLeadProfile(metadata);
+    const aiReply = await this.salesResponseAIService.generateResponse({
+      message: latestCustomerMessage?.content || String(leadProfile.last_customer_answer || ""),
+      intent: String(leadProfile.ultima_intencao || metadata.conversation_stage || "unknown"),
+      leadProfile: {
+        ...leadProfile,
+        followup_reason: "ultima_mensagem_do_cliente_sem_resposta"
+      },
+      recentMessages,
+      fallbackReply
+    });
+
+    return aiReply || fallbackReply;
+  }
+
+  private async listRecentMessages(conversationId: string) {
+    const listMessages = (this.messagesRepository as unknown as {
+      listMessagesByConversationId?: (conversationId: string, limit?: number) => Promise<Array<Record<string, unknown>>>;
+    }).listMessagesByConversationId;
+    if (!listMessages) {
+      return [];
+    }
+
+    try {
+      const messages = await listMessages.call(this.messagesRepository, conversationId, 12);
+      return messages.map((item) => ({
+        role: typeof item.role === "string" ? item.role : undefined,
+        content: typeof item.content === "string" ? item.content : null
+      }));
+    } catch {
+      return [];
+    }
   }
 
   private safeCreateAgentEvent(input: Parameters<AgentEventLogService["safeCreateEvent"]>[0]) {
@@ -371,6 +429,37 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
   return "Você ainda precisa de ajuda com valores, download ou ativação?";
 }
 
+export function buildUnansweredCustomerFallbackText(metadata: Record<string, unknown>, latestCustomerMessage = "") {
+  const key = String(metadata.followup_key || "");
+  const stage = String(metadata.conversation_stage || readLeadProfile(metadata).stage || "");
+  const normalized = latestCustomerMessage
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  if (key === "download" || key === "install" || stage === "instalacao") {
+    if (/^(ok|sim|certo|ta|t[aá]|beleza|blz)$/.test(normalized)) {
+      return "Você conseguiu?";
+    }
+    return "Conseguiu avançar na instalação? Se travou em alguma etapa, me fala que eu te oriento.";
+  }
+
+  if (key === "pix" || stage === "aguardando_pix" || stage === "pagamento_pix") {
+    return "Conseguiu fazer o Pix? Se precisar, eu te mando a chave novamente.";
+  }
+
+  if (key === "payment_choice" || stage === "pagamento") {
+    return "Você quer seguir pelo Pix ou prefere cartão?";
+  }
+
+  if (key === "welcome_activation" || key === "plan_choice") {
+    return "Quer que eu siga com a ativação pra você?";
+  }
+
+  return "Você conseguiu? Se precisar, eu te ajudo no próximo passo.";
+}
+
 function isDue(value: unknown, now: Date) {
   if (typeof value !== "string" || !value) {
     return false;
@@ -379,25 +468,57 @@ function isDue(value: unknown, now: Date) {
   return !Number.isNaN(dueAt.getTime()) && dueAt.getTime() <= now.getTime();
 }
 
-function getSkipReason(metadata: Record<string, unknown>, now: Date) {
+function getSkipReason(
+  metadata: Record<string, unknown>,
+  now: Date,
+  options: { allowCustomerReplied?: boolean; ignoreStageLimit?: boolean } = {}
+) {
   if (metadata.requires_human && isRecentDate(metadata.last_specialist_message_at, now, HUMAN_SILENCE_WINDOW_MS)) {
     return "human_takeover_recent";
   }
 
-  if (isAfter(metadata.last_customer_message_at, metadata.last_bot_message_at)) {
+  if (!options.allowCustomerReplied && isAfter(metadata.last_customer_message_at, metadata.last_bot_message_at)) {
     return "customer_replied";
   }
 
-  if (metadata.followup_sent_at && metadata.followup_sent_stage_id === metadata.last_followup_stage_id) {
+  if (!options.ignoreStageLimit && metadata.followup_sent_at && metadata.followup_sent_stage_id === metadata.last_followup_stage_id) {
     return "already_sent_for_stage";
   }
 
   const maxFollowups = shouldUseLeadRecoverySequence(metadata) ? MAX_LEAD_RECOVERY_FOLLOWUPS : MAX_FOLLOWUP_COUNT_PER_STAGE;
-  if (Number(metadata.followup_count || 0) >= maxFollowups) {
+  if (!options.ignoreStageLimit && Number(metadata.followup_count || 0) >= maxFollowups) {
     return "followup_limit_reached";
   }
 
   return null;
+}
+
+function getUnansweredCustomerFollowup(metadata: Record<string, unknown>, now: Date) {
+  if (!isAfter(metadata.last_customer_message_at, metadata.last_bot_message_at)) {
+    return null;
+  }
+
+  if (typeof metadata.last_customer_message_at !== "string") {
+    return null;
+  }
+
+  const customerMessageAt = new Date(metadata.last_customer_message_at);
+  if (Number.isNaN(customerMessageAt.getTime())) {
+    return null;
+  }
+
+  if (now.getTime() - customerMessageAt.getTime() < UNANSWERED_CUSTOMER_FOLLOWUP_DELAY_MS) {
+    return null;
+  }
+
+  if (metadata.unanswered_customer_followup_for_message_at === metadata.last_customer_message_at) {
+    return null;
+  }
+
+  return {
+    customerMessageAt: metadata.last_customer_message_at,
+    stageId: `customer_unanswered:${metadata.last_customer_message_at}`
+  };
 }
 
 function readCustomerPhone(conversation: ConversationRow) {

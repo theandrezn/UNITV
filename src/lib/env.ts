@@ -58,7 +58,7 @@ export type MercadoPagoEnv = ServerEnv & {
   MERCADO_PAGO_WEBHOOK_URL: string;
 };
 
-export const DEFAULT_OPENAI_MODEL = "gpt-4o-mini";
+export const DEFAULT_OPENAI_MODEL = "gpt-5.5-mini";
 
 let cachedEnv: ServerEnv | null = null;
 
@@ -151,17 +151,17 @@ export function getOpenAIModel() {
 
 export function getOpenAIIntentModel() {
   const env = getServerEnv();
-  return env.OPENAI_MODEL_INTENT || env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || "gpt-5.4-mini";
+  return env.OPENAI_MODEL_INTENT || env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || "gpt-5.5-mini";
 }
 
 export function getOpenAISalesAgentModel() {
   const env = getServerEnv();
-  return env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || "gpt-5.4-mini";
+  return env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || "gpt-5.5-mini";
 }
 
 export function getOpenAIStrongSalesAgentModel() {
   const env = getServerEnv();
-  return env.OPENAI_MODEL_SALES_AGENT_STRONG || "gpt-5.4";
+  return env.OPENAI_MODEL_SALES_AGENT_STRONG || env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || "gpt-5.5-mini";
 }
 
 export function isWhatsAppMainMenuEnabled() {
@@ -179,7 +179,7 @@ export function getDailyAuditConfig() {
     minute: parseIntegerEnv(env.UNITV_DAILY_AUDIT_MINUTE, 55),
     middayEnabled: env.UNITV_MIDDAY_AUDIT_ENABLED === "true" || env.UNITV_MIDDAY_AUDIT_ENABLED === "1",
     useAiSummary: env.UNITV_AUDIT_USE_AI_SUMMARY === "true" || env.UNITV_AUDIT_USE_AI_SUMMARY === "1",
-    aiSummaryModel: env.OPENAI_MODEL_AUDIT_SUMMARY || "gpt-5.4-mini"
+    aiSummaryModel: env.OPENAI_MODEL_AUDIT_SUMMARY || "gpt-5.5-mini"
   };
 }
 

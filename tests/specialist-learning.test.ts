@@ -6,8 +6,8 @@ vi.mock("server-only", () => ({}));
 const openAIResponsesCreate = vi.fn(async (_request: unknown) => ({ output_text: JSON.stringify({ reply: "Perfeito. Vamos seguir com a ativação?" }) }));
 vi.mock("@/lib/openai/client", () => ({
   createOpenAIClient: () => ({ responses: { create: openAIResponsesCreate } }),
-  getSalesAgentOpenAIModel: () => "gpt-5.4-mini",
-  getStrongSalesAgentOpenAIModel: () => "gpt-5.4"
+  getSalesAgentOpenAIModel: () => "gpt-5.5-mini",
+  getStrongSalesAgentOpenAIModel: () => "gpt-5.5-mini"
 }));
 
 import { buildMaskedConversationExcerpt, maskSpecialistTrainingText } from "@/lib/whatsapp/specialist-training-privacy";

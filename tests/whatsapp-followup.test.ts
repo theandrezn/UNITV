@@ -6,20 +6,28 @@ import {
   buildFollowupText,
   buildLeadRecoveryFollowupText,
   buildPromoRecoveryFollowupText,
+  buildUnansweredCustomerFallbackText,
   getLeadRecoveryFollowup,
   shouldSendPromoRecoveryFollowup,
   shouldUseLeadRecoverySequence,
   WhatsappFollowupService
 } from "@/services/followups/whatsapp-followup.service";
 
-function createService(conversations: Array<Record<string, unknown>>) {
+function createService(
+  conversations: Array<Record<string, unknown>>,
+  options: {
+    recentMessages?: Array<Record<string, unknown>>;
+    aiReply?: string | null;
+  } = {}
+) {
   const conversationsRepository = {
     listOpenConversations: vi.fn(async () => conversations),
     updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: _id, metadata })),
     touchConversation: vi.fn(async () => ({}))
   };
   const messagesRepository = {
-    createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+    createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+    listMessagesByConversationId: vi.fn(async () => options.recentMessages || [])
   };
   const evolutionService = {
     sendTextMessage: vi.fn(async () => ({ sent: true }))
@@ -27,18 +35,24 @@ function createService(conversations: Array<Record<string, unknown>>) {
   const auditService = {
     createAuditLog: vi.fn(async () => ({}))
   };
+  const salesResponseAIService = {
+    generateResponse: vi.fn(async () => options.aiReply ?? null)
+  };
 
   return {
     service: new WhatsappFollowupService(
       conversationsRepository as never,
       messagesRepository as never,
       evolutionService as never,
-      auditService as never
+      auditService as never,
+      undefined,
+      salesResponseAIService as never
     ),
     conversationsRepository,
     messagesRepository,
     evolutionService,
-    auditService
+    auditService,
+    salesResponseAIService
   };
 }
 
@@ -61,6 +75,7 @@ describe("WhatsappFollowupService", () => {
     expect(buildFollowupText({ followup_key: "download", device: "android_phone" })).toContain("celular Android");
     expect(buildFollowupText({ followup_key: "download", device: "firestick" })).toContain("8322904");
     expect(buildFollowupText({ followup_key: "install", device: "unknown" })).toContain("Android ou Play Store?");
+    expect(buildUnansweredCustomerFallbackText({ followup_key: "download", conversation_stage: "instalacao" }, "Ok")).toBe("Você conseguiu?");
   });
 
   it("uses renewal wording after values when the customer wants recarga", () => {
@@ -306,24 +321,103 @@ describe("WhatsappFollowupService", () => {
     expect(pixFollowup).toContain("comprovante");
   });
 
-  it("does not send when the customer already replied after the bot", async () => {
+  it("does not send an unanswered-customer follow-up before the silence delay", async () => {
     const { service, evolutionService } = createService([
       {
         id: "conversation-id",
         customers: { phone: "5511999998888" },
         metadata: {
           followup_key: "pix",
-          followup_due_at: "2026-07-06T11:59:00.000Z",
+          followup_due_at: "2026-07-06T11:54:30.000Z",
           last_bot_message_at: "2026-07-06T11:54:00.000Z",
           last_customer_message_at: "2026-07-06T11:55:00.000Z"
         }
       }
     ]);
 
-    const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"));
+    const result = await service.processDueFollowups(new Date("2026-07-06T11:56:00.000Z"));
 
     expect(result.sent).toBe(0);
     expect(result.skipped).toBe(1);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("sends an intelligent follow-up when the last message is from the customer", async () => {
+    const now = new Date("2026-07-06T12:01:00.000Z");
+    const { service, evolutionService, messagesRepository, conversationsRepository, salesResponseAIService } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            requires_human: true,
+            followup_key: "download",
+            followup_due_at: null,
+            conversation_stage: "instalacao",
+            last_specialist_message_at: "2026-07-06T11:45:00.000Z",
+            last_bot_message_at: "2026-07-06T11:50:00.000Z",
+            last_customer_message_at: "2026-07-06T11:55:00.000Z",
+            lead_profile: { device: "tvbox_android", last_bot_question: "Se preferir, eu também te passo o passo a passo." }
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { role: "assistant", content: "Se preferir, eu também te passo o passo a passo pelo celular para instalar mais rápido." },
+          { role: "customer", content: "Ok" }
+        ],
+        aiReply: "Você conseguiu?"
+      }
+    );
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
+    expect(salesResponseAIService.generateResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message: "Ok",
+        recentMessages: expect.arrayContaining([expect.objectContaining({ role: "customer", content: "Ok" })]),
+        fallbackReply: "Você conseguiu?"
+      })
+    );
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "Você conseguiu?"
+    });
+    expect(messagesRepository.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        external_message_id: "followup:conversation-id:customer_unanswered:2026-07-06T11:55:00.000Z",
+        metadata: expect.objectContaining({ unanswered_customer_followup: true })
+      })
+    );
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        unanswered_customer_followup_for_message_at: "2026-07-06T11:55:00.000Z",
+        unanswered_customer_followup_stage_id: "customer_unanswered:2026-07-06T11:55:00.000Z",
+        last_bot_message_at: now.toISOString()
+      })
+    );
+  });
+
+  it("does not duplicate unanswered-customer follow-up for the same customer message", async () => {
+    const { service, evolutionService } = createService([
+      {
+        id: "conversation-id",
+        customers: { phone: "5511999998888" },
+        metadata: {
+          followup_key: "download",
+          last_bot_message_at: "2026-07-06T11:50:00.000Z",
+          last_customer_message_at: "2026-07-06T11:55:00.000Z",
+          unanswered_customer_followup_for_message_at: "2026-07-06T11:55:00.000Z"
+        }
+      }
+    ]);
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T12:01:00.000Z"));
+
+    expect(result.sent).toBe(0);
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
 

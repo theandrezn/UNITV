@@ -657,23 +657,30 @@ export class ChatAgentService {
     const leadProfile = readLeadProfile(input.conversation.metadata);
     const promoAccepted = isSpecialPromoAccepted(leadProfile);
     let order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
-    if (!order && promoAccepted) {
+    if (!order) {
       const plans = await this.plansService.listActivePlans();
-      const monthlyPlan = findMonthlyPlan(plans);
-      if (monthlyPlan) {
+      const selectedPlan = promoAccepted ? findMonthlyPlan(plans) : findPlanFromLeadProfile(plans, leadProfile);
+      if (selectedPlan) {
+        const amountCents = promoAccepted ? SPECIAL_PROMO_MONTHLY_PRICE_CENTS : Number(selectedPlan.price_cents);
         order = await this.ordersService.createOrder({
           customer_id: input.customer.id,
-          product_id: String(monthlyPlan.product_id),
-          plan_id: String(monthlyPlan.id),
+          product_id: String(selectedPlan.product_id),
+          plan_id: String(selectedPlan.id),
           status: "pending_payment",
-          amount_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
-          currency: String(monthlyPlan.currency || "BRL"),
+          amount_cents: amountCents,
+          currency: String(selectedPlan.currency || "BRL"),
           metadata: {
             source: "whatsapp_agent",
             webhookEventId: input.webhookEventId,
-            special_promo_offer: SPECIAL_PROMO_OFFER_ID,
-            special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
-            original_price_cents: Number(monthlyPlan.price_cents)
+            created_from_context: true,
+            selected_plan_from_lead_profile: leadProfile.selected_plan || leadProfile.plano_interesse || null,
+            ...(promoAccepted
+              ? {
+                  special_promo_offer: SPECIAL_PROMO_OFFER_ID,
+                  special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+                  original_price_cents: Number(selectedPlan.price_cents)
+                }
+              : {})
           }
         } as never);
       }
@@ -1290,4 +1297,41 @@ function findMonthlyPlan(plans: Array<Record<string, unknown>>) {
     const name = String(plan.name || "").toLowerCase();
     return slug.includes("mensal") || name.includes("mensal") || Number(plan.duration_days) === 30;
   }) || null;
+}
+
+function findPlanFromLeadProfile(plans: Array<Record<string, unknown>>, leadProfile: Record<string, unknown>) {
+  const selectedPlan = normalizePlanKey(String(leadProfile.selected_plan || leadProfile.plano_interesse || ""));
+  if (!selectedPlan) {
+    return null;
+  }
+
+  return plans.find((plan) => {
+    const slug = normalizePlanKey(String(plan.slug || ""));
+    const name = normalizePlanKey(String(plan.name || ""));
+    const durationDays = Number(plan.duration_days || 0);
+
+    if (selectedPlan === "mensal") {
+      return slug.includes("mensal") || name.includes("mensal") || durationDays === 30;
+    }
+    if (selectedPlan === "3_meses") {
+      return slug.includes("3") || name.includes("3_meses") || name.includes("trimestral") || durationDays === 90;
+    }
+    if (selectedPlan === "6_meses") {
+      return slug.includes("6") || name.includes("6_meses") || name.includes("semestral") || durationDays === 180;
+    }
+    if (selectedPlan === "anual") {
+      return slug.includes("anual") || name.includes("anual") || durationDays === 365;
+    }
+
+    return slug === selectedPlan || name === selectedPlan;
+  }) || null;
+}
+
+function normalizePlanKey(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, "_");
 }

@@ -136,15 +136,20 @@ export class WhatsappMessageService {
       });
 
       const existingLeadProfile = readLeadProfile(conversation.metadata);
+      const manualFollowupState = buildManualOutboundFollowupState(message.text, conversation.metadata, new Date(messageAt));
+      const manualLastQuestion = extractLastQuestion(message.text);
       const pausedMetadata = {
         ...(conversation.metadata || {}),
+        ...manualFollowupState,
         requires_human: true,
         human_intervention_detected: true,
         handoff_reason: conversation.metadata?.handoff_reason || "human_agent_reply",
         handoff_requested_at: conversation.metadata?.handoff_requested_at || messageAt,
         last_specialist_message_at: messageAt,
+        last_bot_message_at: messageAt,
         lead_profile: {
           ...existingLeadProfile,
+          last_bot_question: manualLastQuestion || existingLeadProfile.last_bot_question,
           last_specialist_message_at: messageAt,
           specialist_intervention_count: Number(existingLeadProfile.specialist_intervention_count || 0) + 1,
           learned_from_specialist: true
@@ -1240,6 +1245,56 @@ function buildFollowupState(
       ? (metadata.lead_profile as Record<string, unknown>).device || (metadata.lead_profile as Record<string, unknown>).aparelho || metadata.device || null
       : metadata?.device || null
   };
+}
+
+function buildManualOutboundFollowupState(
+  text: string,
+  metadata: Record<string, unknown> | null | undefined,
+  now: Date
+) {
+  const intent = inferManualOutboundIntent(text);
+  if (!intent) {
+    return {};
+  }
+
+  const state = buildFollowupState({
+    reply: text,
+    classification: { intent }
+  }, metadata, now);
+
+  return state.followup_key ? state : {};
+}
+
+function inferManualOutboundIntent(text: string) {
+  const normalized = normalizeFreeText(text);
+
+  if (
+    /\b(mediafire\.com|apk|download|baixar|baixe|downloader|8322904|tutorial|instalar|instalacao)\b/.test(normalized)
+  ) {
+    return "technical_support";
+  }
+
+  if (/\b(seja bem vindo|seja bem-vindo|meu nome e andre|meu nome é andre)\b/.test(normalized)) {
+    return "greeting";
+  }
+
+  if (/\b(renovar|recarga|recarregar|codigo unitv|código unitv)\b/.test(normalized)) {
+    return "renew_plan";
+  }
+
+  if (/\b(teste gratis|teste gratuito|3 dias)\b/.test(normalized)) {
+    return "free_trial";
+  }
+
+  if (/\b(mensal|3 meses|6 meses|anual|valores|quanto custa|r\$ ?25|r\$ ?70|r\$ ?120|r\$ ?200)\b/.test(normalized)) {
+    return "ask_price";
+  }
+
+  if (/\b(pix|cartao|cartão|pagamento|comprovante)\b/.test(normalized)) {
+    return "pix_payment";
+  }
+
+  return null;
 }
 
 function inferFollowupKey(
