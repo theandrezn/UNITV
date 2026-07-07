@@ -115,6 +115,9 @@ export class ChatAgentService {
     if (contextualAiReply) {
       return contextualAiReply;
     }
+    if (shouldBlockConversationalTemplateFallback(intent)) {
+      return this.silentHandoffToHuman(input, "contextual_ai_reply_unavailable", knowledge);
+    }
 
     if (leadProfile.downloaded_app === true && intent === "technical_support" && isInstallationMessage(message)) {
       return {
@@ -913,15 +916,37 @@ export class ChatAgentService {
       useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
     });
 
+    if (!aiReply) {
+      return this.silentHandoffToHuman(input, "install_trial_contextual_ai_unavailable");
+    }
+
     return {
-      reply: aiReply || buildInstallTrialSafetyFallback(input.recentMessages),
-      responseSource: aiReply ? "ai" : "local_rule",
-      responseRule: aiReply ? "sales_response_ai_install_trial_context" : "install_trial_context_safety_fallback",
+      reply: aiReply,
+      responseSource: "ai",
+      responseRule: "sales_response_ai_install_trial_context",
       leadProfilePatch: {
         wants_test: true,
         stage: "install_support",
         next_expected_reply: "install_confirmation"
       }
+    };
+  }
+
+  private async silentHandoffToHuman(
+    input: CommercialReplyInput,
+    reason: string,
+    knowledge: Array<{ category?: string; content?: string }> = []
+  ): Promise<CommercialReplyResult> {
+    const result = await this.handoffToHuman(input, reason, knowledge, "");
+    return {
+      ...result,
+      responseSource: "local_rule",
+      responseRule: reason,
+      notifyOwner: true,
+      ownerNotificationText:
+        "Atendimento automatico pausado: a IA contextual nao retornou uma resposta segura e o sistema bloqueou fallback/template.\n\n" +
+        `Cliente: ${input.customer.id}\n` +
+        `Mensagem: ${input.message}`
     };
   }
 }
@@ -1044,6 +1069,10 @@ function isSensitiveExecutionIntent(intent: string) {
   ].includes(intent);
 }
 
+function shouldBlockConversationalTemplateFallback(intent: string) {
+  return Boolean(process.env.OPENAI_API_KEY) && !isSensitiveExecutionIntent(intent);
+}
+
 function formatMoney(priceCents: number, currency = "BRL") {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",
@@ -1081,23 +1110,6 @@ function isActiveInstallationSupportContext(
     Boolean(leadProfile.last_download_url_sent) ||
     /\b(downloader|download|baixar|instalar|codigo certo|tela de login|abrir o app|apk)\b/.test(normalized)
   );
-}
-
-function buildInstallTrialSafetyFallback(recentMessages: Array<{ role?: string; content?: string | null }> | undefined) {
-  const normalized = normalizeContextMessage((recentMessages || []).slice(-10).map((item) => item.content || "").join("\n"));
-  const mentionsDownloader = /\b(downloader|codigo|codigo certo)\b/.test(normalized);
-  const mentionsLogin = /\b(tela de login|login|abrir o app)\b/.test(normalized);
-
-  const opener = mentionsDownloader
-    ? "Tem teste sim, sao 3 dias gratis."
-    : "Tem sim, consigo liberar 3 dias gratis pra voce testar.";
-  const nextStep = mentionsLogin
-    ? "Quando chegar na tela de login, me avisa por aqui que eu sigo com a liberacao."
-    : mentionsDownloader
-      ? "Segue por esse codigo no Downloader e me avisa quando o app abrir."
-      : "Continua a instalacao e me avisa quando o app abrir.";
-
-  return `${opener}\n\n${nextStep}`;
 }
 
 function isRenewalLeadMessage(message: string) {

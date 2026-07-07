@@ -12,7 +12,6 @@ import { ReceiptsService } from "@/services/receipts.service";
 import type { IncomingEvolutionMessage } from "@/lib/evolution/client";
 import { resolveMenuSelection, type WhatsAppMenu } from "@/lib/whatsapp/menus";
 import {
-  CUSTOMER_SAFE_FALLBACK,
   classifyCustomerFacingResponseIntent,
   createCustomerMessageHash,
   sanitizeCustomerMessage,
@@ -524,6 +523,35 @@ export class WhatsappMessageService {
     const reply = commercialReply.reply;
 
     if (!reply) {
+      if (commercialReply.requiresHuman) {
+        const handoffMetadata = {
+          ...(conversation.metadata || {}),
+          requires_human: true,
+          handoff_reason: commercialReply.responseRule || classification.intent,
+          handoff_requested_at: new Date().toISOString()
+        };
+        await this.conversationsRepository.updateConversationMetadata(conversation.id, handoffMetadata);
+        await this.safeCreateAgentEvent({
+          conversation_id: conversation.id,
+          customer_phone: message.phone,
+          event_type: "handoff_started",
+          event_source: "chat_agent",
+          intent: classification.intent,
+          message_id: message.externalMessageId,
+          metadata: {
+            webhookEventId,
+            reason: commercialReply.responseRule || classification.intent,
+            silent_customer_message: true
+          }
+        });
+        await this.notifyHumanOwner({
+          webhookEventId,
+          customer,
+          conversationId: conversation.id,
+          message,
+          notificationText: commercialReply.ownerNotificationText
+        });
+      }
       await this.auditService.createAuditLog({
         actor_type: "ai_agent",
         action: "evolution_empty_reply_skipped",
@@ -790,7 +818,7 @@ export class WhatsappMessageService {
       .map((item) => item.content as string);
     const profileValidation = validateResponseAgainstLeadProfile(safeText, leadProfile, recentBotMessages);
     if (!profileValidation.valid) {
-      safeText = isHardDuplicateSafetyReason(profileValidation.reason) ? "" : CUSTOMER_SAFE_FALLBACK;
+      safeText = "";
       blockedReason = profileValidation.reason;
     }
 

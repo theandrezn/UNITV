@@ -44,7 +44,7 @@ function createService(
     createAuditLog: vi.fn(async () => ({}))
   };
   const salesResponseAIService = {
-    generateResponse: vi.fn(async () => options.aiReply ?? null)
+    generateResponse: vi.fn(async () => options.aiReply === undefined ? "Mensagem contextual gerada pela IA." : options.aiReply)
   };
   const ordersService = {
     findLatestOpenOrderByCustomerId: vi.fn(async () => options.openOrder ?? null),
@@ -127,7 +127,7 @@ describe("WhatsappFollowupService", () => {
 
     expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ phone: "5511999998888", text: "Te ajudo a escolher o melhor plano. Voce quer mensal, trimestral ou anual?" })
+      expect.objectContaining({ phone: "5511999998888", text: "Mensagem contextual gerada pela IA." })
     );
     expect(messagesRepository.createMessage).toHaveBeenCalledWith(
       expect.objectContaining({ role: "assistant", external_message_id: "followup:conversation-id:ask_price:values:1" })
@@ -165,7 +165,7 @@ describe("WhatsappFollowupService", () => {
 
     expect(result.sent).toBe(1);
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("Voce ja usou o UNITV?") })
+      expect.objectContaining({ text: "Mensagem contextual gerada pela IA." })
     );
     expect(messagesRepository.createMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -212,7 +212,7 @@ describe("WhatsappFollowupService", () => {
     expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("Voce ja usou o UNITV?")
+        text: "Mensagem contextual gerada pela IA."
       })
     );
     expect(messagesRepository.createMessage).toHaveBeenCalledWith(
@@ -256,7 +256,7 @@ describe("WhatsappFollowupService", () => {
 
     expect(result.sent).toBe(1);
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("se ainda quiser testar") })
+      expect.objectContaining({ text: "Mensagem contextual gerada pela IA." })
     );
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
@@ -332,12 +332,7 @@ describe("WhatsappFollowupService", () => {
     expect(result.sent).toBe(1);
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("Conseguiu finalizar o Pix?")
-      })
-    );
-    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining("envio de novo")
+        text: "Mensagem contextual gerada pela IA."
       })
     );
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
@@ -720,7 +715,48 @@ describe("WhatsappFollowupService", () => {
 
     expect(result.sent).toBe(1);
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("Conseguiu finalizar o Pix?") })
+      expect.objectContaining({ text: "Mensagem contextual gerada pela IA." })
+    );
+  });
+
+  it("does not send a template when contextual AI cannot produce follow-up text", async () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const { service, evolutionService, messagesRepository, conversationsRepository, auditService } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "values",
+            followup_due_at: "2026-07-06T11:59:00.000Z",
+            last_bot_message_at: "2026-07-06T11:54:00.000Z",
+            last_customer_message_at: "2026-07-06T11:53:00.000Z",
+            last_followup_stage_id: "ask_price:values:no-ai",
+            followup_count: 0
+          }
+        }
+      ],
+      { aiReply: null }
+    );
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(messagesRepository.createMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_due_at: "2026-07-06T12:30:00.000Z",
+        followup_cancel_reason: "contextual_ai_reply_unavailable"
+      })
+    );
+    expect(auditService.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "whatsapp_followup_skipped",
+        metadata: expect.objectContaining({ reason: "contextual_ai_reply_unavailable" })
+      })
     );
   });
 

@@ -9,7 +9,6 @@ import { PlansService } from "@/services/plans.service";
 import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
 import { MAIN_MENU } from "@/lib/whatsapp/menus";
 import {
-  CUSTOMER_SAFE_FALLBACK,
   classifyCustomerFacingResponseIntent,
   sanitizeCustomerMessage,
   validateResponseAgainstLeadProfile
@@ -120,7 +119,7 @@ describe("commercial WhatsApp agent", () => {
     ]) {
       const result = sanitizeCustomerMessage(message);
       expect(result.blocked).toBe(true);
-      expect(result.text).toBe(CUSTOMER_SAFE_FALLBACK);
+      expect(result.text).toBe("");
     }
   });
 
@@ -354,10 +353,7 @@ describe("commercial WhatsApp agent", () => {
       }
     });
 
-    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
-      phone: "5511999998888",
-      text: CUSTOMER_SAFE_FALLBACK
-    });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
     expect(auditService.createAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({ action: "customer_message_safety_blocked" })
     );
@@ -576,7 +572,12 @@ describe("commercial WhatsApp agent", () => {
   });
 
   it("does not ask device again when free trial is requested during active Downloader support", async () => {
-    const { service, ordersService } = createChatAgent();
+    const contextualAiReply = "Tem sim, o teste gratis dura 3 dias. Como voce ja esta pelo Downloader, abre o app e me avisa quando chegar na tela de login.";
+    const { service, ordersService } = createChatAgent({
+      salesResponseAIService: {
+        generateResponse: vi.fn(async () => contextualAiReply)
+      }
+    });
 
     const result = await service.generateCommercialReply({
       message: "Sim mas nao tem teste nao",
@@ -594,7 +595,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("3 dias");
+    expect(result.reply).toBe(contextualAiReply);
     expect(result.reply).toMatch(/Downloader|codigo|login|app/i);
     expect(result.reply).not.toContain("em qual aparelho");
     expect(result.reply).not.toContain("TV Box Android, Android TV, Fire Stick ou celular Android");
@@ -603,7 +604,7 @@ describe("commercial WhatsApp agent", () => {
       "Como voce ja esta pelo Downloader, abre o app e chega na tela de login. " +
       "Quando aparecer essa tela, eu libero o teste por aqui."
     );
-    expect(result.responseRule).toMatch(/install_trial_context|sales_response_ai_install_trial_context/);
+    expect(result.responseRule).toMatch(/sales_response_ai_contextual_first|sales_response_ai_install_trial_context/);
   });
 
   it("returns an existing card link only when card is selected", async () => {

@@ -203,6 +203,27 @@ export class WhatsappFollowupService {
             ? "recuperacao_promocional"
             : "followup_contextual"
       });
+      if (!followupText) {
+        skipped++;
+        await this.conversationsRepository.updateConversationMetadata(
+          conversation.id,
+          buildContextualAiUnavailableMetadata(metadata, context, decision, now)
+        );
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "whatsapp_followup_skipped",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: {
+            reason: "contextual_ai_reply_unavailable",
+            followup_key: metadata.followup_key,
+            stageId,
+            decision_reason: decision.reason,
+            retry_due_at: new Date(now.getTime() + 30 * 60 * 1000).toISOString()
+          }
+        });
+        continue;
+      }
       const followupTextHash = hashText(followupText);
       const sendResult = await this.evolutionService.sendTextMessage({ phone, text: followupText });
       const leadProfile = readLeadProfile(metadata);
@@ -355,7 +376,7 @@ export class WhatsappFollowupService {
       fallbackReply
     });
 
-    return aiReply || fallbackReply;
+    return aiReply;
   }
 
   private async buildContextualFollowupText(input: {
@@ -363,7 +384,7 @@ export class WhatsappFollowupService {
     decision: FollowupDecision;
     fallbackText: string;
     reason: string;
-  }) {
+  }): Promise<string | null> {
     const leadProfile = input.context.lead_profile || {};
     const latestCustomerMessage = input.context.latest_customer_message?.content || String(leadProfile.last_customer_answer || "");
     const aiReply = await this.salesResponseAIService.generateResponse({
@@ -393,7 +414,7 @@ export class WhatsappFollowupService {
       useStrongModel: shouldUseStrongFollowupTextModel(input.context, input.decision)
     });
 
-    return aiReply || input.fallbackText;
+    return aiReply;
   }
 
   private async listRecentMessages(conversationId: string) {
@@ -578,6 +599,31 @@ function buildCancelledFollowupMetadata(
       ...(reason.includes("resolved") || reason.includes("self_monitoring") || newStage === "active" ? { download_status: "resolved", install_status: "resolved" } : {}),
       ...(newStage === "active_trial" ? { trial_status: "testing", self_monitoring: true } : {}),
       last_followup_decision_reason: reason,
+      updated_at: now.toISOString()
+    }
+  };
+}
+
+function buildContextualAiUnavailableMetadata(
+  metadata: Record<string, unknown>,
+  context: FollowupContext,
+  decision: FollowupDecision,
+  now: Date
+) {
+  const retryDueAt = new Date(now.getTime() + 30 * 60 * 1000).toISOString();
+  const leadProfile = readLeadProfile(metadata);
+  return {
+    ...metadata,
+    followup_due_at: retryDueAt,
+    followup_cancelled_at: now.toISOString(),
+    followup_cancel_reason: "contextual_ai_reply_unavailable",
+    followup_context_hash: context.last_followup_context_hash,
+    last_followup_decision_reason: decision.reason,
+    lead_profile: {
+      ...leadProfile,
+      ...(decision.new_stage ? { stage: decision.new_stage, commercial_stage: decision.new_stage } : {}),
+      last_followup_decision_reason: decision.reason,
+      last_followup_block_reason: "contextual_ai_reply_unavailable",
       updated_at: now.toISOString()
     }
   };

@@ -44,11 +44,11 @@ export function sanitizeCustomerMessage(message: string): CustomerMessageSafetyR
 
   const unsafePattern = [...INTERNAL_PATTERNS, ...BAD_CUSTOMER_PATTERNS].find((pattern) => pattern.test(text));
   if (unsafePattern) {
-    return { text: CUSTOMER_SAFE_FALLBACK, blocked: true, reason: String(unsafePattern) };
+    return { text: "", blocked: true, reason: String(unsafePattern) };
   }
 
   if (looksLikeTechnicalPayload(text)) {
-    return { text: CUSTOMER_SAFE_FALLBACK, blocked: true, reason: "technical_payload" };
+    return { text: "", blocked: true, reason: "technical_payload" };
   }
 
   return { text, blocked: false };
