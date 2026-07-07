@@ -385,11 +385,49 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(plansService.listActivePlans).toHaveBeenCalled();
-    expect(result.reply).toContain("preferencia por qual plano");
+    expect(result.reply).toContain("Voce teria interesse no mensal mesmo?");
     expect(result.reply).not.toContain("R$ 25");
     expect(result.reply).not.toContain("R$ 70");
     expect(result.menu).toBeUndefined();
     expect(result.reply).not.toContain("Ver planos");
+  });
+
+  it("answers a short quanto message by confirming monthly interest before showing price", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Quanto",
+      classification: { intent: "ask_price", confidence: 0.95, summary: "preco", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: { valores_enviados: true } } },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toBe("Voce teria interesse no mensal mesmo?");
+    expect(result.reply).not.toContain("R$ 25");
+  });
+
+  it("shows the monthly value after the customer confirms monthly interest", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "sim",
+      classification: { intent: "unknown", confidence: 0.95, summary: "confirmacao", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: { lead_profile: { last_bot_question: "Voce teria interesse no mensal mesmo?" } }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("mensal");
+    expect(result.reply).toContain("R$ 25");
+    expect(result.reply).toContain("Pix");
+    expect(result.leadProfilePatch).toMatchObject({
+      selected_plan: "mensal",
+      next_expected_reply: "payment_method"
+    });
   });
 
   it("shows all values only when the customer explicitly asks for all prices", async () => {

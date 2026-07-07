@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+﻿import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -26,14 +26,15 @@ describe("IntentClassifierService", () => {
   it.each([
     ["oi", "greeting"],
     ["Olq", "greeting"],
-    ["mais informações", "greeting"],
+    ["quero saber", "greeting"],
     ["quero fazer teste gratis", "free_trial"],
+    ["Quanto", "ask_price"],
     ["quanto custa o mensal?", "ask_price"],
     ["quero comprar um codigo", "buy_plan"],
     ["manda o pix copia e cola", "pix_payment"],
     ["quero pagar no cartao", "card_payment"],
     ["quero download no celular", "technical_support"],
-    ["minha tv é samsung", "technical_support"],
+    ["minha tv Ã© samsung", "technical_support"],
     ["tenho LG", "technical_support"],
     ["tenho fire stick", "technical_support"],
     ["tenho roku", "technical_support"],

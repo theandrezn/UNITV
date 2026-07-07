@@ -1,4 +1,4 @@
-import "server-only";
+﻿import "server-only";
 import { z } from "zod";
 import { createOpenAIClient, getDefaultOpenAIModel, getIntentOpenAIModel } from "@/lib/openai/client";
 import { UNITV_INTENT_JSON_SCHEMA, UNITV_INTENT_SYSTEM_PROMPT } from "./unitv-sales-ai-prompt";
@@ -33,8 +33,8 @@ export type IntentClassification = z.infer<typeof intentClassificationSchema>;
 const fallbackClassification: IntentClassification = {
   intent: "unknown",
   confidence: 0.2,
-  summary: "Não foi possível classificar a mensagem com segurança.",
-  suggested_reply: "Claro, eu te ajudo. Você quer comprar um plano, renovar um acesso ou precisa de ajuda com instalação?"
+  summary: "NÃ£o foi possÃ­vel classificar a mensagem com seguranÃ§a.",
+  suggested_reply: "Claro, eu te ajudo. VocÃª quer comprar um plano, renovar um acesso ou precisa de ajuda com instalaÃ§Ã£o?"
 };
 
 export class IntentClassifierService {
@@ -157,33 +157,33 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     };
   }
 
-  if (/^(oi|ola|olq|olá|opa|bom dia|boa tarde|boa noite|e ai|e aí|oie|oii+|oiii+|quero saber|mais informacoes|mais informações)[!?.,\s]*$/.test(text)) {
-    return fixedClassification("greeting", "Saudação simples.");
+  if (/^(oi|ola|olq|olÃ¡|opa|bom dia|boa tarde|boa noite|e ai|e aÃ­|oie|oii+|oiii+|quero saber|mais informacoes|mais informaÃ§Ãµes)[!?.,\s]*$/.test(text)) {
+    return fixedClassification("greeting", "SaudaÃ§Ã£o simples.");
   }
 
-  if (/\b(humano|atendente|especialista|vendedor|consultor|pessoa|responsavel|responsável)\b/.test(text)) {
+  if (/\b(humano|atendente|especialista|vendedor|consultor|pessoa|responsavel|responsÃ¡vel)\b/.test(text)) {
     return fixedClassification("human_help", "Cliente pediu atendimento humano.");
   }
 
   if (/\b(teste|gratis|gratuito|free trial)\b/.test(text)) {
-    return fixedClassification("free_trial", "Cliente pediu teste grátis.");
+    return fixedClassification("free_trial", "Cliente pediu teste grÃ¡tis.");
   }
 
   if (/\b(quantas telas|2 telas|duas telas|telas?)\b/.test(text)) {
     return fixedClassification("unknown", "Cliente perguntou sobre telas.");
   }
 
-  if (/\b(preco|preço|valor|valores|quanto custa|planos?|mensal|trimestral|semestral|anual|desconto|promo[cç]ao|promoção|caro|barato)\b/.test(text) &&
-      !/\b(comprar|quero|renovar|renovacao|renovação)\b/.test(text)) {
+  if (/\b(preco|preÃ§o|valor|valores|quanto|quanto custa|planos?|mensal|trimestral|semestral|anual|desconto|promo[cÃ§]ao|promoÃ§Ã£o|caro|barato)\b/.test(text) &&
+      !/\b(comprar|quero|renovar|renovacao|renovaÃ§Ã£o)\b/.test(text)) {
     return fixedClassification("ask_price", "Cliente pediu valores ou planos.");
   }
 
-  if (/\b(renovar|renovacao|renovação|recarga|recarregar)\b/.test(text)) {
-    return fixedClassification("renew_plan", "Cliente pediu renovação.");
+  if (/\b(renovar|renovacao|renovaÃ§Ã£o|recarga|recarregar)\b/.test(text)) {
+    return fixedClassification("renew_plan", "Cliente pediu renovaÃ§Ã£o.");
   }
 
   if (/\b(comprar|compra|assinar|quero um codigo|quero codigo|liberar acesso|ativar plano|novo plano|novo acesso)\b/.test(text)) {
-    return fixedClassification("buy_plan", "Cliente demonstrou intenção de compra.");
+    return fixedClassification("buy_plan", "Cliente demonstrou intenÃ§Ã£o de compra.");
   }
 
   if (/^(ativar|ativacao|ativa|liberar)$/i.test(text)) {
@@ -194,8 +194,8 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     return fixedClassification("pix_payment", "Cliente pediu pagamento por Pix.");
   }
 
-  if (/\b(cartao|cartão|credito|crédito|debito|débito|link de pagamento)\b/.test(text)) {
-    return fixedClassification("card_payment", "Cliente pediu pagamento por cartão.");
+  if (/\b(cartao|cartÃ£o|credito|crÃ©dito|debito|dÃ©bito|link de pagamento)\b/.test(text)) {
+    return fixedClassification("card_payment", "Cliente pediu pagamento por cartÃ£o.");
   }
 
   if (/\b(como pagar|pagamento|formas de pagamento|pagar)\b/.test(text)) {
@@ -206,16 +206,16 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     return fixedClassification("unknown", "Cliente informou pagamento para checagem do provedor.");
   }
 
-  if (/\b(comprovante|recibo|print do pagamento|transferencia|transferência)\b/.test(text)) {
+  if (/\b(comprovante|recibo|print do pagamento|transferencia|transferÃªncia)\b/.test(text)) {
     return fixedClassification("receipt_sent", "Cliente mencionou comprovante.");
   }
 
-  if (isUnitvInstallationRequest(text) || /\b(codigo downloader|link nao funciona|link não funciona)\b/.test(text)) {
-    return fixedClassification("technical_support", "Cliente pediu instalação ou download.");
+  if (isUnitvInstallationRequest(text) || /\b(codigo downloader|link nao funciona|link nÃ£o funciona)\b/.test(text)) {
+    return fixedClassification("technical_support", "Cliente pediu instalaÃ§Ã£o ou download.");
   }
 
-  if (/\b(travando|trava|erro|nao abre|não abre|suporte|ajuda|problema|funciona|iphone|ios)\b/.test(text)) {
-    return fixedClassification("technical_support", "Cliente pediu suporte técnico.");
+  if (/\b(travando|trava|erro|nao abre|nÃ£o abre|suporte|ajuda|problema|funciona|iphone|ios)\b/.test(text)) {
+    return fixedClassification("technical_support", "Cliente pediu suporte tÃ©cnico.");
   }
 
   return null;

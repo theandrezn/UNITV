@@ -34,6 +34,7 @@ const LOW_CONFIDENCE_REPLY =
 const PLANS_TEXT = ["Mensal — R$ 25", "3 meses — R$ 70", "6 meses — R$ 120", "Anual — R$ 200"].join("\n");
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
+const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
 const RENEWAL_CONTEXT_QUESTION = "Perfeito. Voce ja usa o UNITV e quer so renovar o codigo, ou seria sua primeira vez usando?";
 
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
@@ -118,7 +119,7 @@ export class ChatAgentService {
     if (contextualAiReply) {
       return contextualAiReply;
     }
-    if (shouldBlockConversationalTemplateFallback(intent)) {
+    if (shouldBlockConversationalTemplateFallback(intent) && intent !== "ask_price") {
       return this.silentHandoffToHuman(input, "contextual_ai_reply_unavailable", knowledge);
     }
 
@@ -252,12 +253,13 @@ export class ChatAgentService {
       }
       if (!isAllPricesRequested(message)) {
         return {
-          reply: PLAN_PREFERENCE_QUESTION,
+          reply: MONTHLY_INTEREST_QUESTION,
           leadProfilePatch: {
             commercial_stage: "qualified",
             stage: "qualified",
             last_customer_intent: "ask_price",
-            next_expected_reply: "plan_choice"
+            next_expected_reply: "monthly_confirmation",
+            last_bot_question: MONTHLY_INTEREST_QUESTION
           }
         };
       }
@@ -1035,6 +1037,20 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
       reply: selectedPlan === "mensal"
         ? "\u00d3timo, ent\u00e3o voc\u00ea j\u00e1 conhece o app. Quer seguir com o mensal de R$ 25 agora?"
         : PLAN_PREFERENCE_QUESTION
+    };
+  }
+
+  if (/^(sim|s|isso|ok|pode|quero|pode ser)$/.test(normalized) && /\b(interesse no mensal|mensal mesmo)\b/.test(lastBotQuestion)) {
+    return {
+      reply: "Perfeito, o mensal fica R$ 25. Voce prefere pagar por Pix ou cartao?",
+      leadProfilePatch: {
+        selected_plan: "mensal",
+        plano_interesse: "mensal",
+        commercial_stage: "plan_selected",
+        stage: "plan_selected",
+        last_customer_intent: "choose_plan",
+        next_expected_reply: "payment_method"
+      }
     };
   }
 
