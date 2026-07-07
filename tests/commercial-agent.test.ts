@@ -888,7 +888,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("PIX do pedido");
   });
 
-  it("checks Mercado Pago and sends an available recharge code after approval", async () => {
+  it("does not release codes from plain paid text before webhook confirmation", async () => {
     const { service, ordersService, mercadoPagoService, activationCodesService } = createChatAgent();
     const pendingOrder = {
       id: "33333333-3333-4333-8333-333333333333",
@@ -901,25 +901,7 @@ describe("commercial WhatsApp agent", () => {
       status: "pending_payment",
       metadata: { mercado_pago_pix_payment_id: "123456789" }
     };
-    const paidOrder = { ...pendingOrder, status: "paid", paid_at: "2026-07-04T22:30:00.000Z", payment_reference: "123456789" };
     ordersService.findLatestOrderByCustomerId.mockResolvedValueOnce(pendingOrder);
-    ordersService.transitionToPaid.mockResolvedValueOnce(paidOrder);
-    mercadoPagoService.getPayment.mockResolvedValueOnce({
-      id: "123456789",
-      status: "approved",
-      amountCents: 2500,
-      currency: "BRL",
-      approvedAt: "2026-07-04T22:30:00.000Z"
-    });
-    activationCodesService.findAvailableCodes.mockResolvedValueOnce([{
-      id: "code-id",
-      code: "UNITV-RECARGA-001"
-    }]);
-    activationCodesService.reserveCode.mockResolvedValueOnce({
-      id: "code-id",
-      code: "UNITV-RECARGA-001"
-    });
-    activationCodesService.markCodeAsSent.mockResolvedValueOnce({ id: "code-id", status: "sent" });
 
     const result = await service.generateCommercialReply({
       message: "ja paguei",
@@ -929,20 +911,16 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(mercadoPagoService.getPayment).toHaveBeenCalledWith("123456789");
-    expect(ordersService.transitionToPaid).toHaveBeenCalledWith(
-      pendingOrder.id,
-      "2026-07-04T22:30:00.000Z",
-      "123456789"
-    );
-    expect(activationCodesService.reserveCode).toHaveBeenCalledWith("code-id", pendingOrder.id, "customer-id");
-    expect(activationCodesService.markCodeAsSent).toHaveBeenCalledWith("code-id");
-    expect(result.reply).toContain("Agradecemos pela sua compra");
-    expect(result.reply).toContain("UNITV-RECARGA-001");
-    expect(result.followUpMessages?.[0]).toContain("Indique e ganhe");
-    expect(result.followUpMessages?.[0]).toContain("R$ 10 de desconto");
-    expect(result.followUpMessages?.[1]).toContain("Comunidade Oficial da UNITV");
-    expect(result.followUpMessages?.[1]).toContain("https://chat.whatsapp.com/GuMhy92y5cJ6PVC0KLtZh3");
+    expect(mercadoPagoService.getPayment).not.toHaveBeenCalled();
+    expect(ordersService.transitionToPaid).not.toHaveBeenCalled();
+    expect(activationCodesService.findAvailableCodes).not.toHaveBeenCalled();
+    expect(activationCodesService.reserveCode).not.toHaveBeenCalled();
+    expect(activationCodesService.markCodeAsSent).not.toHaveBeenCalled();
+    expect(result.reply).toContain("Ainda não consta pagamento aprovado");
+    expect(result.reply).toContain("confirmação automática do Mercado Pago");
+    expect(result.reply).not.toContain("Agradecemos pela sua compra");
+    expect(result.reply).not.toContain("UNITV-RECARGA-001");
+    expect(result.followUpMessages).toBeUndefined();
   });
 
   it("creates a dynamic Pix charge without asking the customer for email", async () => {

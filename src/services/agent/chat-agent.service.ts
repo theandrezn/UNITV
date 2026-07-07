@@ -560,7 +560,6 @@ export class ChatAgentService {
       };
     }
 
-    order = await this.refreshOrderPaymentFromMercadoPago(order, input.webhookEventId);
     const orderNumber = String(order.order_number || "seu pedido");
     const status = String(order.status || "");
 
@@ -600,60 +599,6 @@ export class ChatAgentService {
         `FEITO. Ainda não consta pagamento aprovado para o pedido ${orderNumber}.\n\n` +
         "O pedido está aguardando a confirmação automática do Mercado Pago. Assim que o webhook confirmar, eu sigo para a liberação do acesso."
     };
-  }
-
-  private async refreshOrderPaymentFromMercadoPago(order: Record<string, unknown>, webhookEventId: string) {
-    if (String(order.status || "") !== "pending_payment") {
-      return order;
-    }
-
-    const metadata = readOrderMetadata(order);
-    const paymentId = readMetadataString(metadata, "mercado_pago_pix_payment_id") || readPixPaymentReference(order);
-    if (!paymentId) {
-      return order;
-    }
-
-    try {
-      const payment = await this.mercadoPagoService.getPayment(paymentId);
-      await this.auditService.createAuditLog({
-        actor_type: "ai_agent",
-        action: "mercado_pago_payment_checked_from_whatsapp",
-        entity_type: "orders",
-        entity_id: String(order.id),
-        metadata: { webhookEventId, payment_id: payment.id, provider_status: payment.status }
-      });
-
-      if (payment.status !== "approved") {
-        return order;
-      }
-
-      const valuesMatch = Number(order.amount_cents) === payment.amountCents && String(order.currency || "BRL") === payment.currency;
-      if (!valuesMatch) {
-        const reviewed = await this.ordersService.transitionStatus(
-          String(order.id),
-          ["pending_payment", "receipt_under_review", "manual_review"],
-          "manual_review",
-          { payment_provider: "mercado_pago", payment_reference: payment.id }
-        );
-        return reviewed || order;
-      }
-
-      const paid = await this.ordersService.transitionToPaid(
-        String(order.id),
-        payment.approvedAt || new Date().toISOString(),
-        payment.id
-      );
-      return paid || { ...order, status: "paid", payment_reference: payment.id };
-    } catch (error) {
-      await this.auditService.createAuditLog({
-        actor_type: "ai_agent",
-        action: "mercado_pago_payment_check_failed_from_whatsapp",
-        entity_type: "orders",
-        entity_id: String(order.id),
-        metadata: { webhookEventId, error: error instanceof Error ? error.message : "unknown_error" }
-      });
-      return order;
-    }
   }
 
   private async releaseActivationCodeForPaidOrder(
