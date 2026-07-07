@@ -675,6 +675,68 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toBe("PAGUE COM CARTÃO AQUI ABAIXO\nhttps://www.mercadopago.com.br/checkout/dynamic-order-link");
   });
 
+  it("creates the selected monthly order from conversation context before generating card link", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce(null);
+    ordersService.createOrder.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000012",
+      customer_id: "44444444-4444-4444-8444-444444444444",
+      product_id: plan.product_id,
+      plan_id: plan.id,
+      amount_cents: 2500,
+      currency: "BRL",
+      status: "pending_payment",
+      metadata: { source: "whatsapp_agent", created_from_context: true }
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "cartao",
+      classification: { intent: "card_payment", confidence: 0.99, summary: "cartao", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444" },
+      conversation: {
+        id: "55555555-5555-4555-8555-555555555555",
+        metadata: {
+          lead_profile: {
+            selected_plan: "mensal",
+            plano_interesse: "mensal",
+            last_bot_question: "Perfeito, o plano mensal fica R$ 25. Voce prefere pagar por Pix ou cartao?"
+          }
+        }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        customer_id: "44444444-4444-4444-8444-444444444444",
+        product_id: plan.product_id,
+        plan_id: plan.id,
+        status: "pending_payment",
+        amount_cents: 2500,
+        metadata: expect.objectContaining({
+          created_from_context: true,
+          selected_plan_from_lead_profile: "mensal",
+          payment_method_requested: "card"
+        })
+      })
+    );
+    expect(mercadoPagoService.createOrderPreference).toHaveBeenCalledWith({
+      order: expect.objectContaining({
+        order_number: "UTV-20260704-000012",
+        plan_id: plan.id,
+        amount_cents: 2500
+      }),
+      plan: { name: plan.name, slug: plan.slug }
+    });
+    expect(result.reply).toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
+    expect(result.leadProfilePatch).toMatchObject({
+      stage: "awaiting_payment",
+      payment_method: "card",
+      payment_status: "pending"
+    });
+  });
+
   it("checks payment status when the customer says payment is done before following card intent", async () => {
     const { service, ordersService, mercadoPagoService } = createChatAgent();
     ordersService.findLatestOrderByCustomerId.mockResolvedValueOnce({

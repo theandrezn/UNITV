@@ -437,7 +437,32 @@ export class ChatAgentService {
     input: CommercialReplyInput,
     knowledge: Array<{ category?: string; content?: string }>
   ): Promise<CommercialReplyResult> {
-    const order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+    const leadProfile = readLeadProfile(input.conversation.metadata);
+    let order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+    let planForPayment: { name: string; slug: string } | null = null;
+    if (!order) {
+      const plans = await this.plansService.listActivePlans();
+      const selectedPlan = findPlanFromLeadProfile(plans, leadProfile);
+      if (selectedPlan) {
+        order = await this.ordersService.createOrder({
+          customer_id: input.customer.id,
+          product_id: String(selectedPlan.product_id),
+          plan_id: String(selectedPlan.id),
+          status: "pending_payment",
+          amount_cents: Number(selectedPlan.price_cents),
+          currency: String(selectedPlan.currency || "BRL"),
+          metadata: {
+            source: "whatsapp_agent",
+            webhookEventId: input.webhookEventId,
+            created_from_context: true,
+            selected_plan_from_lead_profile: leadProfile.selected_plan || leadProfile.plano_interesse || null,
+            payment_method_requested: "card"
+          }
+        } as never);
+        planForPayment = { name: String(selectedPlan.name), slug: String(selectedPlan.slug) };
+      }
+    }
+
     if (!order) {
       const plans = await this.plansService.listActivePlans();
       const menu = shouldUseMenu(input.message) && plans.length ? buildPlansMenu(plans) : null;
@@ -472,7 +497,7 @@ export class ChatAgentService {
           amount_cents: Number(order.amount_cents),
           currency: String(order.currency || "BRL")
         },
-        plan: readOrderPlan(order)
+        plan: planForPayment || readOrderPlan(order)
       });
 
       await this.ordersService.updateOrder(String(order.id), {
@@ -485,7 +510,20 @@ export class ChatAgentService {
         }
       });
 
-      return { order, reply: formatCardReply(preference.checkoutUrl) };
+      return {
+        order,
+        reply: formatCardReply(preference.checkoutUrl),
+        leadProfilePatch: {
+          commercial_stage: "awaiting_payment",
+          stage: "awaiting_payment",
+          payment_method: "card",
+          payment_status: "pending",
+          last_customer_intent: "request_card_payment",
+          next_expected_reply: "payment_proof",
+          selected_plan: leadProfile.selected_plan || leadProfile.plano_interesse || null,
+          plano_interesse: leadProfile.plano_interesse || leadProfile.selected_plan || null
+        }
+      };
     } catch (error) {
       await this.auditService.createAuditLog({
         actor_type: "ai_agent",
