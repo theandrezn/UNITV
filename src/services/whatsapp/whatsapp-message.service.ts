@@ -13,6 +13,7 @@ import type { IncomingEvolutionMessage } from "@/lib/evolution/client";
 import { resolveMenuSelection, type WhatsAppMenu } from "@/lib/whatsapp/menus";
 import {
   CUSTOMER_SAFE_FALLBACK,
+  classifyCustomerFacingResponseIntent,
   createCustomerMessageHash,
   sanitizeCustomerMessage,
   validateResponseAgainstLeadProfile
@@ -31,6 +32,7 @@ import {
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
 const CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
+const RESPONSE_INTENT_LOCK_MS = 30 * 60 * 1000;
 
 type ProcessIncomingMessageInput = {
   webhookEventId: string;
@@ -556,6 +558,16 @@ export class WhatsappMessageService {
       webhookEventId,
       leadProfile: readLeadProfile(conversation.metadata)
     });
+    if (!safeReply) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "evolution_reply_blocked_empty_after_safety",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId }
+      });
+      return { status: "ignored" as const };
+    }
     const safeFollowUpMessages = [];
     for (const followUpMessage of followUpMessages || []) {
       safeFollowUpMessages.push(
@@ -643,12 +655,15 @@ export class WhatsappMessageService {
     const followupState = buildFollowupState({ reply: safeReply, classification, menu, copyText, followUpMessages: safeFollowUpMessages, media }, conversation.metadata, now);
     const currentLeadProfile = readLeadProfile(conversation.metadata);
     const lastBotQuestion = extractLastQuestion(safeReply);
+    const responseIntent = classifyCustomerFacingResponseIntent(safeReply);
+    const operationalMarkers = buildOperationalMarkerPatch(responseIntent, currentLeadProfile, now);
     const nextMetadata = {
       ...(conversation.metadata || {}),
       last_bot_message_at: now.toISOString(),
       lead_profile: {
         ...currentLeadProfile,
         last_bot_question: lastBotQuestion || currentLeadProfile.last_bot_question,
+        ...operationalMarkers,
         updated_at: now.toISOString()
       },
       ...followupState
@@ -709,8 +724,15 @@ export class WhatsappMessageService {
       .map((item) => item.content as string);
     const profileValidation = validateResponseAgainstLeadProfile(safeText, leadProfile, recentBotMessages);
     if (!profileValidation.valid) {
-      safeText = CUSTOMER_SAFE_FALLBACK;
+      safeText = isHardDuplicateSafetyReason(profileValidation.reason) ? "" : CUSTOMER_SAFE_FALLBACK;
       blockedReason = profileValidation.reason;
+    }
+
+    const responseIntent = classifyCustomerFacingResponseIntent(safeText);
+    const lockValidation = validateResponseIntentLock(responseIntent, leadProfile, new Date());
+    if (!lockValidation.valid) {
+      safeText = "";
+      blockedReason = lockValidation.reason;
     }
 
     if (sanitized.blocked || blockedReason) {
@@ -1101,6 +1123,72 @@ function extractLastQuestion(text: string) {
     .filter((line) => line.endsWith("?"));
 
   return questions.at(-1) || null;
+}
+
+function buildOperationalMarkerPatch(intentKey: string, currentLeadProfile: Record<string, unknown>, now: Date) {
+  const locks = readResponseIntentLocks(currentLeadProfile);
+  const nextLocks = {
+    ...locks,
+    [intentKey]: now.toISOString()
+  };
+  const patch: Record<string, unknown> = {
+    response_intent_locks: nextLocks,
+    ultima_intencao_bot: intentKey
+  };
+
+  if (intentKey === "saudacao_inicial") patch.saudacao_enviada = true;
+  if (intentKey === "valores_enviados") patch.valores_enviados = true;
+  if (intentKey === "pergunta_aparelho_teste" || intentKey === "confirmacao_aparelho_teste") {
+    patch.pergunta_aparelho_enviada = true;
+  }
+  if (intentKey === "pix_enviado") patch.pix_enviado = true;
+  if (intentKey === "convite_teste" || intentKey === "pergunta_aparelho_teste" || intentKey === "confirmacao_aparelho_teste") {
+    patch.teste_solicitado = true;
+  }
+
+  return patch;
+}
+
+function validateResponseIntentLock(intentKey: string, leadProfile: Record<string, unknown>, now: Date) {
+  if (intentKey === "resposta_geral") {
+    return { valid: true };
+  }
+
+  const locks = readResponseIntentLocks(leadProfile);
+  const lockedAt = locks[intentKey];
+  if (!lockedAt) {
+    return { valid: true };
+  }
+
+  const lockedDate = new Date(lockedAt);
+  if (Number.isNaN(lockedDate.getTime())) {
+    return { valid: true };
+  }
+
+  if (now.getTime() - lockedDate.getTime() < RESPONSE_INTENT_LOCK_MS) {
+    return { valid: false, reason: `response_intent_lock:${intentKey}` };
+  }
+
+  return { valid: true };
+}
+
+function readResponseIntentLocks(leadProfile: Record<string, unknown>) {
+  const locks = leadProfile.response_intent_locks;
+  return locks && typeof locks === "object" && !Array.isArray(locks)
+    ? (locks as Record<string, string>)
+    : {};
+}
+
+function isHardDuplicateSafetyReason(reason: string | undefined) {
+  return [
+    "repeats_welcome",
+    "repeats_device_question",
+    "repeats_values",
+    "similar_to_recent_bot_message",
+    "asks_device_again",
+    "asks_download_again",
+    "asks_plan_again"
+  ].includes(String(reason || ""));
 }
 
 function isHumanHandoffRequest(text: string) {

@@ -831,9 +831,33 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
     /\b(ja baixei|baixei|download feito|fiz o download|ja instalei|instalei)\b/.test(normalized) ||
     (/^(sim|s|ja|ok|feito|consegui)$/.test(normalized) && /\b(baixou|download|instalou)\b/.test(lastBotQuestion));
 
+  if (leadProfile.saudacao_enviada === true && /^(oi|ola|olá|bom dia|boa tarde|boa noite|tudo bem)\b/.test(normalized)) {
+    return {
+      reply: "Oi, estou aqui 👍 Você quer seguir com recarga, ativação ou teste grátis?"
+    };
+  }
+
   if (/\b(nao paguei|ainda nao paguei|nao fiz o pagamento|nem paguei|n paguei)\b/.test(normalized)) {
     return {
       reply: "Sem problema. Voc\u00ea quer seguir com o mensal de R$ 25 ou prefere fazer o teste gr\u00e1tis de 3 dias primeiro?"
+    };
+  }
+
+  if (/\b(e unitv mesmo|eh unitv mesmo|e unitv|eh unitv|esse e o unitv|esse eh o unitv|e o aplicativo mesmo|eh o aplicativo mesmo)\b/.test(normalized)) {
+    return {
+      reply: "Sim, é UNITV mesmo 👍 Consigo te ajudar com recarga, ativação ou teste grátis."
+    };
+  }
+
+  if (isFreeTrialContextMessage(normalized, lastBotQuestion)) {
+    if (/\b(aparelho|celular android|tv box|android tv|google tv|fire stick|firestick)\b/.test(lastBotQuestion)) {
+      return {
+        reply: "Perfeito 👍 Só me confirma qual aparelho você vai usar pra eu liberar certinho: celular Android, TV Box, Android TV, Google TV ou Fire Stick?"
+      };
+    }
+
+    return {
+      reply: "Claro 👍 Pra eu liberar seu teste grátis de 3 dias, me diz só em qual aparelho você vai usar: celular Android, TV Box, Android TV, Google TV ou Fire Stick?"
     };
   }
 
@@ -866,6 +890,17 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
   }
 
   return null;
+}
+
+function isFreeTrialContextMessage(normalized: string, lastBotQuestion: string) {
+  const shortContextAnswer = /^(pode ser|pode|quero|sim|ok|isso)$/.test(normalized) &&
+    /\b(teste|gratis|gratuito|3 dias|aparelho|celular android|tv box|android tv|google tv|fire stick|firestick)\b/.test(lastBotQuestion);
+
+  return (
+    /\b(quero|queria|libera|liberar|fazer|pegar|testar|teste)\b.*\b(teste|gratis|gratuito|3 dias)\b/.test(normalized) ||
+    /\b(quero testar|quero logo um teste|libera o teste|teste gratis|teste gratuito)\b/.test(normalized) ||
+    shortContextAnswer
+  );
 }
 
 function normalizeContextMessage(message: string) {

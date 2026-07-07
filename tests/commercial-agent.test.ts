@@ -7,7 +7,12 @@ import { ChatAgentService } from "@/services/agent/chat-agent.service";
 import { PlansService } from "@/services/plans.service";
 import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
 import { MAIN_MENU } from "@/lib/whatsapp/menus";
-import { CUSTOMER_SAFE_FALLBACK, sanitizeCustomerMessage, validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
+import {
+  CUSTOMER_SAFE_FALLBACK,
+  classifyCustomerFacingResponseIntent,
+  sanitizeCustomerMessage,
+  validateResponseAgainstLeadProfile
+} from "@/lib/whatsapp/customer-message-safety";
 
 const plan = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -118,6 +123,24 @@ describe("commercial WhatsApp agent", () => {
     expect(validateResponseAgainstLeadProfile("Qual aparelho voce vai usar?", { device: "tvbox" }).valid).toBe(false);
     expect(validateResponseAgainstLeadProfile("Qual plano voce quer?", { selected_plan: "mensal" }).valid).toBe(false);
     expect(validateResponseAgainstLeadProfile("Se ja pagou, envie o comprovante.", { has_paid: false }).valid).toBe(false);
+    expect(validateResponseAgainstLeadProfile(
+      "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.",
+      { saudacao_enviada: true }
+    ).valid).toBe(false);
+    expect(validateResponseAgainstLeadProfile(
+      "Claro 👍 Pra eu liberar seu teste grátis de 3 dias, me diz só em qual aparelho você vai usar: celular Android, TV Box, Android TV, Google TV ou Fire Stick?",
+      { pergunta_aparelho_enviada: true }
+    ).valid).toBe(false);
+    expect(validateResponseAgainstLeadProfile(
+      "Perfeito 👍 Só me confirma qual aparelho você vai usar pra eu liberar certinho: celular Android, TV Box, Android TV, Google TV ou Fire Stick?",
+      { pergunta_aparelho_enviada: true }
+    ).valid).toBe(true);
+  });
+
+  it("classifies customer-facing response intents for operational dedupe", () => {
+    expect(classifyCustomerFacingResponseIntent("Olá! Seja bem-vindo. Meu nome é André.")).toBe("saudacao_inicial");
+    expect(classifyCustomerFacingResponseIntent("Mensal — R$ 25\n3 meses — R$ 70\n6 meses — R$ 120\nAnual — R$ 200")).toBe("valores_enviados");
+    expect(classifyCustomerFacingResponseIntent("Vou te passar a chave PIX agora.")).toBe("pix_enviado");
   });
 
   it.each([
@@ -126,7 +149,10 @@ describe("commercial WhatsApp agent", () => {
     ["Mensal", { wants_activation: true }, "Pix ou cart\u00e3o", "Qual plano"],
     ["Ja baixei", { device: "tvbox" }, "3 dias", "ja baixou"],
     ["Sim", { last_bot_question: "Voce ja baixou o app?" }, "ativa\u00e7\u00e3o", "ja baixou"],
-    ["Ja usei", {}, "renovar o acesso", "qual aparelho"]
+    ["Ja usei", {}, "renovar o acesso", "qual aparelho"],
+    ["É unitv mesmo?", { valores_enviados: true }, "Sim, é UNITV mesmo", "Seja bem-vindo"],
+    ["Quero logo um teste", {}, "teste grátis de 3 dias", "Seja bem-vindo"],
+    ["Pode ser", { last_bot_question: "Pra eu liberar seu teste gratis, em qual aparelho voce vai usar?" }, "Só me confirma qual aparelho", "Seja bem-vindo"]
   ])("advances contextual message %s without repeating the funnel", async (message, leadProfile, expected, forbidden) => {
     const { service } = createChatAgent();
     const result = await service.generateCommercialReply({
@@ -398,9 +424,9 @@ describe("commercial WhatsApp agent", () => {
     expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(result.requiresHuman).not.toBe(true);
     expect(result.reply).toContain("3 dias");
-    expect(result.reply).toContain("Primeiro você instala o app");
+    expect(result.reply).toContain("em qual aparelho você vai usar");
     expect(result.menu).toBeUndefined();
-    expect(result.sendTextBeforeMenu).toBe(false);
+    expect(result.sendTextBeforeMenu).toBeUndefined();
     expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
       expect.objectContaining({ action_name: "handoff_to_human" })
     );

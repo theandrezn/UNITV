@@ -61,6 +61,29 @@ export function validateResponseAgainstLeadProfile(
 ) {
   const normalized = normalize(response);
   const profile = leadProfile && typeof leadProfile === "object" && !Array.isArray(leadProfile) ? leadProfile : {};
+  const responseIntent = classifyCustomerFacingResponseIntent(response);
+
+  if (
+    responseIntent === "saudacao_inicial" &&
+    (profile.saudacao_enviada === true || recentBotMessages.some((previous) => classifyCustomerFacingResponseIntent(previous) === "saudacao_inicial"))
+  ) {
+    return { valid: false, reason: "repeats_welcome" };
+  }
+
+  if (
+    responseIntent === "pergunta_aparelho_teste" &&
+    profile.pergunta_aparelho_enviada === true &&
+    !/\b(so me confirma|só me confirma|qual deles)\b/.test(normalized)
+  ) {
+    return { valid: false, reason: "repeats_device_question" };
+  }
+
+  if (
+    responseIntent === "valores_enviados" &&
+    (profile.valores_enviados === true || recentBotMessages.some((previous) => classifyCustomerFacingResponseIntent(previous) === "valores_enviados"))
+  ) {
+    return { valid: false, reason: "repeats_values" };
+  }
 
   if (profile.downloaded_app === true && /\b(voce ja baixou|você já baixou|ja baixou|já baixou)\b/.test(normalized)) {
     return { valid: false, reason: "asks_download_again" };
@@ -97,6 +120,42 @@ export function validateResponseAgainstLeadProfile(
   }
 
   return { valid: true };
+}
+
+export function classifyCustomerFacingResponseIntent(response: string) {
+  const normalized = normalize(response);
+
+  if (/\b(seja bem vindo|seja bem-vindo|meu nome e andre|meu nome é andre)\b/.test(normalized)) {
+    return "saudacao_inicial";
+  }
+
+  if (
+    /\b(teste gratis|teste gratuito|3 dias)\b/.test(normalized) &&
+    /\b(qual aparelho|em qual aparelho|me diz so em qual aparelho|me diz só em qual aparelho|celular android|tv box|android tv|google tv|fire stick|firestick)\b/.test(normalized)
+  ) {
+    if (/\b(so me confirma|só me confirma|qual deles)\b/.test(normalized)) {
+      return "confirmacao_aparelho_teste";
+    }
+    return "pergunta_aparelho_teste";
+  }
+
+  if (/\b(mensal).*\br\$ ?25\b/.test(normalized) && /\b(3 meses|6 meses|anual|r\$ ?70|r\$ ?120|r\$ ?200)\b/.test(normalized)) {
+    return "valores_enviados";
+  }
+
+  if (/\b(pix copia e cola|qr code pix|chave pix|vou te passar a chave pix)\b/.test(normalized)) {
+    return "pix_enviado";
+  }
+
+  if (/\b(conseguiu fazer o pagamento|enviar o comprovante|envia o comprovante|mande o comprovante)\b/.test(normalized)) {
+    return "followup_pagamento";
+  }
+
+  if (/\b(teste gratis|teste gratuito|3 dias)\b/.test(normalized)) {
+    return "convite_teste";
+  }
+
+  return "resposta_geral";
 }
 
 export function createCustomerMessageHash(text: string) {
