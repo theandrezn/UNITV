@@ -68,6 +68,9 @@ function createHarness() {
     markCodeAsSent: vi.fn(async () => null as Record<string, unknown> | null),
     releaseReservedCodesForOrder: vi.fn(async () => [] as Array<Record<string, unknown>>)
   };
+  const metaConversionsService = {
+    trackPurchase: vi.fn(async () => ({ status: "skipped", reason: "disabled" }))
+  };
   const service = new PaymentConfirmationService(
     mercadoPagoService as never,
     ordersService as never,
@@ -75,7 +78,9 @@ function createHarness() {
     webhooksService as never,
     auditService as never,
     evolutionService as never,
-    activationCodesService as never
+    activationCodesService as never,
+    undefined,
+    metaConversionsService as never
   );
 
   return {
@@ -86,7 +91,8 @@ function createHarness() {
     webhooksService,
     auditService,
     evolutionService,
-    activationCodesService
+    activationCodesService,
+    metaConversionsService
   };
 }
 
@@ -122,6 +128,16 @@ describe("PaymentConfirmationService", () => {
       text: expect.stringContaining("Pagamento confirmado sem código disponível")
     });
     expect(harness.webhooksService.markWebhookProcessed).toHaveBeenCalledWith("webhook-id");
+    expect(harness.metaConversionsService.trackPurchase).toHaveBeenCalledWith({
+      eventId: `unitv_purchase_${baseOrder.id}_987654`,
+      eventTime: 1783188000,
+      orderId: baseOrder.id,
+      orderNumber: baseOrder.order_number,
+      amountCents: 2500,
+      currency: "BRL",
+      customerPhone: "5511999998888",
+      planSlug: baseOrder.plan_id
+    });
     expect(result).toEqual({ status: "paid", orderId: baseOrder.id });
   });
 
@@ -236,6 +252,7 @@ describe("PaymentConfirmationService", () => {
 
     expect(harness.paymentsService.upsertProviderPayment).toHaveBeenCalledTimes(1);
     expect(harness.evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.metaConversionsService.trackPurchase).not.toHaveBeenCalled();
     expect(result).toEqual({ status: "duplicate", orderId: baseOrder.id });
   });
 
@@ -255,6 +272,7 @@ describe("PaymentConfirmationService", () => {
       expect.any(Object)
     );
     expect(harness.evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.metaConversionsService.trackPurchase).not.toHaveBeenCalled();
     expect(result).toEqual({ status: "manual_review", orderId: baseOrder.id });
   });
 

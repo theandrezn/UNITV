@@ -9,6 +9,7 @@ import { buildNoAccessCodeAvailableMessage, buildPostPurchaseMessages } from "@/
 import { MercadoPagoService } from "./mercadopago.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
+import { MetaConversionsService } from "@/services/marketing/meta-conversions.service";
 
 const ADMIN_WHATSAPP_PHONE = "558699802602";
 
@@ -28,7 +29,8 @@ export class PaymentConfirmationService {
     private readonly auditService = new AuditService(),
     private readonly evolutionService = new EvolutionService(),
     private readonly activationCodesService = new ActivationCodesService(),
-    private readonly agentEventLogService?: AgentEventLogService
+    private readonly agentEventLogService?: AgentEventLogService,
+    private readonly metaConversionsService = new MetaConversionsService()
   ) {}
 
   async process(input: ProcessPaymentInput) {
@@ -119,6 +121,7 @@ export class PaymentConfirmationService {
           amount_cents: payment.amountCents
         }
       });
+      await this.safeTrackPurchase(transitioned as Record<string, unknown>, payment);
       await this.sendConfirmation(transitioned as Record<string, unknown>);
       return { status: "paid" as const, orderId };
     }
@@ -277,6 +280,32 @@ export class PaymentConfirmationService {
       return null;
     }
   }
+
+  private async safeTrackPurchase(order: Record<string, unknown>, payment: PaymentData) {
+    const orderId = String(order.id);
+    const result = await this.metaConversionsService.trackPurchase({
+      eventId: `unitv_purchase_${orderId}_${payment.id}`,
+      eventTime: readEventTime(payment.approvedAt),
+      orderId,
+      orderNumber: String(order.order_number || ""),
+      amountCents: payment.amountCents,
+      currency: payment.currency,
+      customerPhone: readOrderCustomerPhone(order),
+      planSlug: readOrderPlanSlug(order)
+    });
+
+    await this.auditService.createAuditLog({
+      actor_type: "webhook",
+      action: "meta_purchase_event_recorded",
+      entity_type: "orders",
+      entity_id: orderId,
+      metadata: {
+        status: result.status,
+        reason: result.status === "skipped" ? result.reason : undefined,
+        event_id: result.status === "skipped" ? null : result.eventId
+      }
+    });
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -313,4 +342,9 @@ function readOrderPlanSlug(order: Record<string, unknown>) {
     return typeof slug === "string" ? slug : null;
   }
   return typeof order.plan_id === "string" ? order.plan_id : null;
+}
+
+function readEventTime(approvedAt: string | null) {
+  const timestamp = approvedAt ? Date.parse(approvedAt) : Date.now();
+  return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : Math.floor(Date.now() / 1000);
 }

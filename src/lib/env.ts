@@ -23,6 +23,13 @@ const serverEnvSchema = z.object({
   MERCADO_PAGO_WEBHOOK_SECRET: z.string().optional(),
   MERCADO_PAGO_PUBLIC_KEY: z.string().optional(),
   MERCADO_PAGO_WEBHOOK_URL: z.string().url("MERCADO_PAGO_WEBHOOK_URL must be a valid URL").optional().or(z.literal("")),
+  PIPEBOARD_API_TOKEN: z.string().optional(),
+  META_ACCESS_TOKEN: z.string().optional(),
+  META_PIXEL_ID: z.string().optional(),
+  DATASET_ID: z.string().optional(),
+  META_API_VERSION: z.string().optional(),
+  META_TRACKING_ENABLED: z.string().optional(),
+  META_TEST_EVENT_CODE: z.string().optional(),
   EVOLUTION_API_URL: z.string().url("EVOLUTION_API_URL must be a valid URL").optional().or(z.literal("")),
   EVOLUTION_API_KEY: z.string().optional(),
   EVOLUTION_INSTANCE_NAME: z.string().optional(),
@@ -56,6 +63,13 @@ export type MercadoPagoEnv = ServerEnv & {
   MERCADO_PAGO_WEBHOOK_SECRET: string;
   MERCADO_PAGO_PUBLIC_KEY: string;
   MERCADO_PAGO_WEBHOOK_URL: string;
+};
+export type MetaConversionsConfig = {
+  enabled: boolean;
+  accessToken: string | null;
+  datasetId: string | null;
+  apiVersion: string | null;
+  testEventCode: string | null;
 };
 
 export const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
@@ -148,6 +162,17 @@ export function getAppEnv() {
 
 export function getOpenAIModel() {
   return getServerEnv().OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+}
+
+export function getMetaConversionsConfig(): MetaConversionsConfig {
+  const env = getServerEnv();
+  return {
+    enabled: env.META_TRACKING_ENABLED === "true" || env.META_TRACKING_ENABLED === "1",
+    accessToken: env.META_ACCESS_TOKEN || null,
+    datasetId: env.META_PIXEL_ID || env.DATASET_ID || null,
+    apiVersion: env.META_API_VERSION || null,
+    testEventCode: env.META_TEST_EVENT_CODE || null
+  };
 }
 
 export function getOpenAIIntentModel() {
