@@ -18,11 +18,19 @@ function createService(
   options: {
     recentMessages?: Array<Record<string, unknown>>;
     aiReply?: string | null;
+    openOrder?: Record<string, unknown> | null;
+    latestOrder?: Record<string, unknown> | null;
   } = {}
 ) {
   const conversationsRepository = {
     listOpenConversations: vi.fn(async () => conversations),
-    updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: _id, metadata })),
+    updateConversationMetadata: vi.fn(async (_id, metadata) => {
+      const conversation = conversations.find((item) => item.id === _id);
+      if (conversation) {
+        conversation.metadata = metadata;
+      }
+      return { id: _id, metadata };
+    }),
     touchConversation: vi.fn(async () => ({}))
   };
   const messagesRepository = {
@@ -38,6 +46,10 @@ function createService(
   const salesResponseAIService = {
     generateResponse: vi.fn(async () => options.aiReply ?? null)
   };
+  const ordersService = {
+    findLatestOpenOrderByCustomerId: vi.fn(async () => options.openOrder ?? null),
+    findLatestOrderByCustomerId: vi.fn(async () => options.latestOrder ?? options.openOrder ?? null)
+  };
 
   return {
     service: new WhatsappFollowupService(
@@ -46,13 +58,15 @@ function createService(
       evolutionService as never,
       auditService as never,
       undefined,
-      salesResponseAIService as never
+      salesResponseAIService as never,
+      ordersService as never
     ),
     conversationsRepository,
     messagesRepository,
     evolutionService,
     auditService,
-    salesResponseAIService
+    salesResponseAIService,
+    ordersService
   };
 }
 
@@ -113,7 +127,7 @@ describe("WhatsappFollowupService", () => {
 
     expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ phone: "5511999998888", text: expect.stringContaining("valores") })
+      expect.objectContaining({ phone: "5511999998888", text: "Te ajudo a escolher o melhor plano. Voce quer mensal, trimestral ou anual?" })
     );
     expect(messagesRepository.createMessage).toHaveBeenCalledWith(
       expect.objectContaining({ role: "assistant", external_message_id: "followup:conversation-id:ask_price:values:1" })
@@ -151,9 +165,7 @@ describe("WhatsappFollowupService", () => {
 
     expect(result.sent).toBe(1);
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: "João, voce ja usou o UNITV?\n\nSe nao, posso te enviar 3 dias gratis para testar.\n\nQual aparelho voce quer testar: TV Box, Android TV, celular Android ou Fire Stick?"
-      })
+      expect.objectContaining({ text: expect.stringContaining("Voce ja usou o UNITV?") })
     );
     expect(messagesRepository.createMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -244,9 +256,7 @@ describe("WhatsappFollowupService", () => {
 
     expect(result.sent).toBe(1);
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining("O mensal é R$ 25, mas pra você começar agora consigo liberar por R$ 19,99.")
-      })
+      expect.objectContaining({ text: expect.stringContaining("Voce ja usou o UNITV?") })
     );
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
@@ -291,48 +301,50 @@ describe("WhatsappFollowupService", () => {
 
   it("sends a one-time promotional recovery follow-up for hot leads before payment", async () => {
     const now = new Date("2026-07-06T12:00:00.000Z");
-    const { service, evolutionService, conversationsRepository } = createService([
-      {
-        id: "conversation-id",
-        customer_id: "customer-id",
-        customers: { id: "customer-id", phone: "5511999998888", name: "Maria Cliente" },
-        metadata: {
-          followup_key: "payment_choice",
-          followup_due_at: "2026-07-06T11:59:00.000Z",
-          last_bot_message_at: "2026-07-06T11:54:00.000Z",
-          last_customer_message_at: "2026-07-06T11:53:00.000Z",
-          last_followup_stage_id: "buy_plan:payment_choice:1",
-          followup_count: 0,
-          lead_profile: {
-            selected_plan: "mensal",
-            nivel_interesse: "quente",
-            payment_status: "not_paid"
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888", name: "Maria Cliente" },
+          metadata: {
+            followup_key: "payment_choice",
+            followup_due_at: "2026-07-06T11:59:00.000Z",
+            last_bot_message_at: "2026-07-06T11:54:00.000Z",
+            last_customer_message_at: "2026-07-06T11:53:00.000Z",
+            last_followup_stage_id: "buy_plan:payment_choice:1",
+            followup_count: 0,
+            lead_profile: {
+              selected_plan: "mensal",
+              nivel_interesse: "quente",
+              payment_status: "not_paid",
+              payment_method: "pix"
+            }
           }
         }
-      }
-    ]);
+      ],
+      { openOrder: { id: "order-id", status: "pending_payment", payment_method: "pix" } }
+    );
 
     const result = await service.processDueFollowups(now);
 
     expect(result.sent).toBe(1);
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("Maria, consigo fazer uma condi")
+        text: expect.stringContaining("Conseguiu finalizar o Pix?")
       })
     );
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringContaining("R$ 19,99")
+        text: expect.stringContaining("envio de novo")
       })
     );
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        promo_followup_sent_at: now.toISOString(),
-        lead_profile: expect.objectContaining({
-          special_promo_followup_sent: true,
-          special_promo_offer: "mensal_19_99_first_2_months"
-        })
+        last_followup_key_sent: "pix",
+        followup_dedupe_key: expect.any(String),
+        lead_profile: expect.objectContaining({ stage: "awaiting_payment" })
       })
     );
   });
@@ -420,16 +432,10 @@ describe("WhatsappFollowupService", () => {
     const result = await service.processDueFollowups(now);
 
     expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
-    expect(salesResponseAIService.generateResponse).toHaveBeenCalledWith(
-      expect.objectContaining({
-        message: "Ok",
-        recentMessages: expect.arrayContaining([expect.objectContaining({ role: "customer", content: "Ok" })]),
-        fallbackReply: "Você conseguiu?"
-      })
-    );
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
-      text: "Você conseguiu?"
+      text: "Conseguiu abrir o app e chegar na tela de login?"
     });
     expect(messagesRepository.createMessage).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -508,6 +514,253 @@ describe("WhatsappFollowupService", () => {
 
     expect(result.sent).toBe(0);
     expect(result.skipped).toBe(1);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not duplicate the same contextual follow-up when the job runs twice", async () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const { service, evolutionService } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888" },
+        metadata: {
+          followup_key: "values",
+          followup_due_at: "2026-07-06T11:59:00.000Z",
+          last_bot_message_at: "2026-07-06T11:54:00.000Z",
+          last_customer_message_at: "2026-07-06T11:53:00.000Z",
+          last_followup_stage_id: "ask_price:values:dedupe",
+          followup_count: 0
+        }
+      }
+    ]);
+
+    const first = await service.processDueFollowups(now);
+    const second = await service.processDueFollowups(new Date("2026-07-06T12:01:00.000Z"));
+
+    expect(first.sent).toBe(1);
+    expect(second.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels download follow-up when the customer started testing and said they would report problems", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "download",
+            followup_due_at: "2026-07-06T11:59:00.000Z",
+            conversation_stage: "instalacao",
+            last_bot_message_at: "2026-07-06T11:54:00.000Z",
+            last_customer_message_at: "2026-07-06T11:53:00.000Z"
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { id: "m1", role: "customer", content: "Ta pedindo senha", created_at: "2026-07-06T11:50:00.000Z" },
+          { id: "m2", role: "human_agent", content: "Coloca so numero", created_at: "2026-07-06T11:51:00.000Z" },
+          { id: "m3", role: "human_agent", content: "Deu certo?", created_at: "2026-07-06T11:52:00.000Z" },
+          { id: "m4", role: "customer", content: "Vou comecar a testar agora", created_at: "2026-07-06T11:53:00.000Z" },
+          { id: "m5", role: "customer", content: "Qualquer problema que der eu te aviso beleza", created_at: "2026-07-06T11:54:00.000Z" }
+        ]
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"));
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_key: "trial_check",
+        conversation_stage: "active_trial",
+        lead_profile: expect.objectContaining({ trial_status: "testing", self_monitoring: true })
+      })
+    );
+  });
+
+  it("cancels install follow-up when the customer already downloaded or installed", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "install",
+            followup_due_at: "2026-07-06T11:59:00.000Z",
+            conversation_stage: "instalacao",
+            last_bot_message_at: "2026-07-06T11:54:00.000Z",
+            last_customer_message_at: "2026-07-06T11:53:00.000Z"
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { id: "m1", role: "customer", content: "ja baixei", created_at: "2026-07-06T11:53:00.000Z" },
+          { id: "m2", role: "customer", content: "consegui instalar", created_at: "2026-07-06T11:54:00.000Z" }
+        ]
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"));
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_key: null,
+        lead_profile: expect.objectContaining({ install_status: "resolved" })
+      })
+    );
+  });
+
+  it("does not send Pix follow-up without a pending order", async () => {
+    const { service, evolutionService, conversationsRepository } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888" },
+        metadata: {
+          followup_key: "pix",
+          followup_due_at: "2026-07-06T11:59:00.000Z",
+          last_bot_message_at: "2026-07-06T11:54:00.000Z",
+          last_customer_message_at: "2026-07-06T11:53:00.000Z"
+        }
+      }
+    ]);
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"));
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ followup_cancel_reason: "Nao existe pedido/Pix pendente para cobrar." })
+    );
+  });
+
+  it("sends Pix follow-up once when there is a pending Pix order", async () => {
+    const { service, evolutionService } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "pix",
+            followup_due_at: "2026-07-06T11:59:00.000Z",
+            last_bot_message_at: "2026-07-06T11:54:00.000Z",
+            last_customer_message_at: "2026-07-06T11:53:00.000Z",
+            lead_profile: { payment_method: "pix" }
+          }
+        }
+      ],
+      { openOrder: { id: "order-id", status: "pending_payment", payment_method: "pix" } }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"));
+
+    expect(result.sent).toBe(1);
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("Conseguiu finalizar o Pix?") })
+    );
+  });
+
+  it("cancels Pix follow-up after payment confirmation", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "pix",
+            followup_due_at: "2026-07-06T11:59:00.000Z",
+            last_bot_message_at: "2026-07-06T11:54:00.000Z",
+            last_customer_message_at: "2026-07-06T11:53:00.000Z"
+          }
+        }
+      ],
+      { latestOrder: { id: "order-id", status: "paid" } }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"));
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ conversation_stage: "paid" })
+    );
+  });
+
+  it("detects reseller flow and blocks final-customer follow-ups", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "553387040799" },
+          metadata: {
+            followup_key: "pix",
+            followup_due_at: "2026-07-06T12:43:00.000Z",
+            last_bot_message_at: "2026-07-06T12:40:00.000Z",
+            last_customer_message_at: "2026-07-06T12:39:00.000Z"
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { id: "m1", role: "customer", content: "Nao tem revenda?", created_at: "2026-07-06T15:43:00.000Z" },
+          { id: "m2", role: "customer", content: "Gostaria de ser revendedor", created_at: "2026-07-06T15:43:30.000Z" },
+          { id: "m3", role: "human_agent", content: "Entendo, gostaria de comecar com quantos rounds?", created_at: "2026-07-06T15:47:00.000Z" },
+          { id: "m4", role: "human_agent", content: "Qual valor voce fazia?", created_at: "2026-07-06T15:50:00.000Z" }
+        ],
+        openOrder: { id: "order-id", status: "pending_payment", payment_method: "pix" }
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T16:00:00.000Z"));
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        conversation_stage: "human_support_reseller",
+        lead_profile: expect.objectContaining({ reseller_intent: true })
+      })
+    );
+  });
+
+  it("blocks duplicate text recently sent even with a different key", async () => {
+    const textHash = "cfa3d71fa127a3fe8cc97f2581da5103e0eafbd5d9d4a1a722d85d1f0e94372f";
+    const { service, evolutionService } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888" },
+        metadata: {
+          followup_key: "values",
+          followup_due_at: "2026-07-06T11:59:00.000Z",
+          last_followup_text_hash: textHash,
+          last_followup_sent_at: "2026-07-06T11:58:00.000Z",
+          last_bot_message_at: "2026-07-06T11:54:00.000Z",
+          last_customer_message_at: "2026-07-06T11:53:00.000Z"
+        }
+      }
+    ]);
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"));
+
+    expect(result.sent).toBe(0);
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
 });

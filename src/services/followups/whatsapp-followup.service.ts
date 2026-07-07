@@ -6,12 +6,22 @@ import { EvolutionService } from "@/services/evolution/evolution.service";
 import { AuditService } from "@/services/audit.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 import { SalesResponseAIService } from "@/services/agent/sales-response-ai.service";
+import { OrdersService } from "@/services/orders.service";
+import {
+  buildFollowupContextHash,
+  ContextualFollowupDecisionService,
+  hashText,
+  type FollowupContext,
+  type FollowupContextMessage,
+  type FollowupDecision
+} from "@/services/followups/contextual-followup-decision.service";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
 const MAX_LEAD_RECOVERY_FOLLOWUPS = 4;
 const HUMAN_SILENCE_WINDOW_MS = 5 * 60 * 1000;
 const UNANSWERED_BOT_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const UNANSWERED_CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
+const RECENT_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const LEAD_RECOVERY_DELAYS_AFTER_SEND_MS = [
   45 * 60 * 1000,
@@ -33,6 +43,8 @@ type FollowupResult = {
   skipped: number;
 };
 
+const inProcessDedupeKeys = new Set<string>();
+
 export class WhatsappFollowupService {
   constructor(
     private readonly conversationsRepository = new ConversationsRepository(),
@@ -40,13 +52,16 @@ export class WhatsappFollowupService {
     private readonly evolutionService = new EvolutionService(),
     private readonly auditService = new AuditService(),
     private readonly agentEventLogService?: AgentEventLogService,
-    private readonly salesResponseAIService = new SalesResponseAIService()
+    private readonly salesResponseAIService = new SalesResponseAIService(),
+    private readonly ordersService = new OrdersService(),
+    private readonly contextualFollowupDecisionService = new ContextualFollowupDecisionService()
   ) {}
 
   async processDueFollowups(now = new Date()): Promise<FollowupResult> {
     const conversations = (await this.conversationsRepository.listOpenConversations(200)) as ConversationRow[];
     let sent = 0;
     let skipped = 0;
+    inProcessDedupeKeys.clear();
 
     for (const conversation of conversations) {
       const metadata = conversation.metadata || {};
@@ -78,6 +93,48 @@ export class WhatsappFollowupService {
         continue;
       }
 
+      const context = await this.buildFollowupContext(conversation, metadata, now, phone);
+      const decision = await this.contextualFollowupDecisionService.decide(context);
+      const policy = validateFollowupPolicy(context, decision, now);
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "followup_decision",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: {
+          should_send_followup: policy.shouldSend,
+          followup_type: decision.followup_type,
+          reason: policy.reason || decision.reason,
+          evidence: decision.evidence,
+          cancel_reason: policy.shouldSend ? null : policy.reason || decision.reason,
+          dedupe_key: policy.dedupeKey,
+          duplicate_blocked: policy.duplicateBlocked,
+          previous_followup_key: metadata.followup_key,
+          new_followup_key: decision.new_followup_key,
+          last_customer_message_id: context.latest_customer_message?.id || context.latest_customer_message?.external_message_id || null,
+          last_human_message_at: context.latest_human_message?.created_at || metadata.last_specialist_message_at || null,
+          human_hold_active: context.human_hold_active,
+          stage_before: metadata.conversation_stage || context.lead_profile.stage || null,
+          stage_after: decision.new_stage,
+          open_order_id: context.open_order?.id || null,
+          payment_status: context.latest_order?.status || context.open_order?.status || context.lead_profile.payment_status || null,
+          confidence: decision.confidence
+        }
+      });
+
+      if (!policy.shouldSend) {
+        skipped++;
+        await this.conversationsRepository.updateConversationMetadata(
+          conversation.id,
+          buildCancelledFollowupMetadata(metadata, context, decision, policy.reason || decision.reason, now)
+        );
+        continue;
+      }
+
+      if (policy.dedupeKey) {
+        inProcessDedupeKeys.add(policy.dedupeKey);
+      }
+
       const leadRecovery = getLeadRecoveryFollowup(metadata);
       const stageId = unansweredCustomerFollowup
         ? unansweredCustomerFollowup.stageId
@@ -86,14 +143,15 @@ export class WhatsappFollowupService {
         : leadRecovery
         ? leadRecovery.stageId
         : String(metadata.last_followup_stage_id || randomUUID());
-      const promoRecovery = !leadRecovery && shouldSendPromoRecoveryFollowup(metadata);
-      const followupText = unansweredCustomerFollowup
+      const promoRecovery = !leadRecovery && decision.followup_type !== "payment_check" && shouldSendPromoRecoveryFollowup(metadata);
+      const followupText = policy.message || (unansweredCustomerFollowup
         ? await this.buildUnansweredCustomerFollowupText(conversation, metadata)
         : leadRecovery
         ? buildLeadRecoveryFollowupText(leadRecovery.step, metadata, conversation)
         : promoRecovery
           ? buildPromoRecoveryFollowupText(metadata, conversation)
-          : buildFollowupText(metadata);
+          : buildFollowupText(metadata));
+      const followupTextHash = hashText(followupText);
       const sendResult = await this.evolutionService.sendTextMessage({ phone, text: followupText });
       const leadProfile = readLeadProfile(metadata);
       const nextLeadRecoveryDueAt = leadRecovery ? getNextLeadRecoveryDueAt(leadRecovery.step, now) : null;
@@ -103,6 +161,12 @@ export class WhatsappFollowupService {
         followup_due_at: nextLeadRecoveryDueAt,
         followup_sent_at: now.toISOString(),
         followup_sent_stage_id: stageId,
+        last_followup_sent_at: now.toISOString(),
+        last_followup_key_sent: decision.new_followup_key || metadata.followup_key || null,
+        last_followup_base_message_id: context.latest_customer_message?.id || context.latest_customer_message?.external_message_id || context.latest_bot_message?.id || context.latest_bot_message?.external_message_id || null,
+        last_followup_text_hash: followupTextHash,
+        followup_dedupe_key: policy.dedupeKey,
+        followup_context_hash: context.last_followup_context_hash,
         followup_count: Number(metadata.followup_count || 0) + 1,
         last_followup_stage_id: leadRecovery && nextLeadRecoveryDueAt
           ? `${leadRecovery.baseStageId}:recovery:${leadRecovery.step + 1}`
@@ -143,7 +207,16 @@ export class WhatsappFollowupService {
                 proxima_acao: "cliente confirmar promocao para receber Pix"
               }
             }
-          : {})
+          : {
+              lead_profile: {
+                ...leadProfile,
+                ...(decision.new_stage ? { stage: decision.new_stage, commercial_stage: decision.new_stage } : {}),
+                ...(decision.new_followup_key === "reseller_check" || decision.new_stage === "reseller_flow" || decision.new_stage === "human_support_reseller"
+                  ? { reseller_intent: true }
+                  : {}),
+                updated_at: now.toISOString()
+              }
+            })
       };
 
       await this.messagesRepository.createMessage({
@@ -157,6 +230,9 @@ export class WhatsappFollowupService {
           sendResult,
           followup_key: metadata.followup_key,
           stageId,
+          followup_decision: decision,
+          followup_dedupe_key: policy.dedupeKey,
+          followup_text_hash: followupTextHash,
           promo_recovery: promoRecovery,
           unanswered_bot_followup: Boolean(unansweredBotFollowup),
           unanswered_customer_followup: Boolean(unansweredCustomerFollowup),
@@ -174,6 +250,9 @@ export class WhatsappFollowupService {
           followup_key: metadata.followup_key,
           stageId,
           sendResult,
+          reason: decision.reason,
+          confidence: decision.confidence,
+          dedupe_key: policy.dedupeKey,
           promo_recovery: promoRecovery,
           unanswered_bot_followup: Boolean(unansweredBotFollowup),
           lead_recovery_step: leadRecovery?.step || null
@@ -192,6 +271,9 @@ export class WhatsappFollowupService {
           followup_key: metadata.followup_key,
           followup_count: nextMetadata.followup_count,
           stageId,
+          reason: decision.reason,
+          confidence: decision.confidence,
+          dedupe_key: policy.dedupeKey,
           promo_recovery: promoRecovery,
           unanswered_bot_followup: Boolean(unansweredBotFollowup),
           unanswered_customer_followup: Boolean(unansweredCustomerFollowup),
@@ -233,13 +315,88 @@ export class WhatsappFollowupService {
     }
 
     try {
-      const messages = await listMessages.call(this.messagesRepository, conversationId, 12);
+      const messages = await listMessages.call(this.messagesRepository, conversationId, 50);
       return messages.map((item) => ({
+        id: typeof item.id === "string" ? item.id : null,
         role: typeof item.role === "string" ? item.role : undefined,
-        content: typeof item.content === "string" ? item.content : null
+        content: typeof item.content === "string" ? item.content : null,
+        created_at: typeof item.created_at === "string" ? item.created_at : null,
+        external_message_id: typeof item.external_message_id === "string" ? item.external_message_id : null,
+        metadata: item.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata)
+          ? item.metadata as Record<string, unknown>
+          : null
       }));
     } catch {
       return [];
+    }
+  }
+
+  private async buildFollowupContext(
+    conversation: ConversationRow,
+    metadata: Record<string, unknown>,
+    now: Date,
+    phone: string
+  ): Promise<FollowupContext> {
+    const recentMessages = await this.listRecentMessages(conversation.id) as FollowupContextMessage[];
+    const leadProfile = readLeadProfile(metadata);
+    const latestCustomerMessage = findLatestMessageByRole(recentMessages, "customer");
+    const latestBotMessage = findLatestMessageByRole(recentMessages, "assistant");
+    const latestHumanMessage = findLatestMessageByRole(recentMessages, "human_agent");
+    const lastMessage = recentMessages[recentMessages.length - 1] || null;
+    const customerId = conversation.customer_id || conversation.customers?.id || null;
+    const openOrder = customerId ? await this.safeFindLatestOpenOrder(customerId) : null;
+    const latestOrder = customerId ? await this.safeFindLatestOrder(customerId) : null;
+    const contextBase = {
+      conversation_id: conversation.id,
+      followup_key: metadata.followup_key || null,
+      latest_customer_message_id: latestCustomerMessage?.id || latestCustomerMessage?.external_message_id || null,
+      latest_bot_message_id: latestBotMessage?.id || latestBotMessage?.external_message_id || null,
+      latest_human_message_id: latestHumanMessage?.id || latestHumanMessage?.external_message_id || null,
+      stage: metadata.conversation_stage || leadProfile.stage || null,
+      open_order_id: openOrder?.id || null,
+      open_order_status: openOrder?.status || null,
+      last_messages: recentMessages.slice(-8).map((message) => `${message.role}:${message.content}`)
+    };
+
+    return {
+      conversation_id: conversation.id,
+      customer_id: customerId,
+      phone,
+      now: now.toISOString(),
+      metadata,
+      lead_profile: leadProfile,
+      recent_messages: recentMessages,
+      latest_customer_message: latestCustomerMessage,
+      latest_bot_message: latestBotMessage,
+      latest_human_message: latestHumanMessage,
+      last_speaker: typeof lastMessage?.role === "string" ? lastMessage.role : null,
+      last_customer_was_answered: !isAfter(latestCustomerMessage?.created_at || metadata.last_customer_message_at, latestBotMessage?.created_at || metadata.last_bot_message_at),
+      last_bot_question: extractLastQuestionFromMessage(latestBotMessage?.content || String(leadProfile.last_bot_question || "")),
+      last_human_question: extractLastQuestionFromMessage(latestHumanMessage?.content || ""),
+      open_order: sanitizeOrder(openOrder),
+      latest_order: sanitizeOrder(latestOrder),
+      human_hold_active: Boolean(metadata.human_hold_until && isFutureDate(metadata.human_hold_until, now)) ||
+        Boolean(metadata.requires_human && isRecentDate(metadata.last_specialist_message_at, now, HUMAN_SILENCE_WINDOW_MS)),
+      followup_key: typeof metadata.followup_key === "string" ? metadata.followup_key : null,
+      followup_due_at: typeof metadata.followup_due_at === "string" ? metadata.followup_due_at : null,
+      last_followup_text_hash: typeof metadata.last_followup_text_hash === "string" ? metadata.last_followup_text_hash : null,
+      last_followup_context_hash: buildFollowupContextHash(contextBase)
+    };
+  }
+
+  private async safeFindLatestOpenOrder(customerId: string) {
+    try {
+      return await this.ordersService.findLatestOpenOrderByCustomerId(customerId) as Record<string, unknown> | null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async safeFindLatestOrder(customerId: string) {
+    try {
+      return await this.ordersService.findLatestOrderByCustomerId(customerId) as Record<string, unknown> | null;
+    } catch {
+      return null;
     }
   }
 
@@ -250,6 +407,161 @@ export class WhatsappFollowupService {
       return null;
     }
   }
+}
+
+function validateFollowupPolicy(context: FollowupContext, decision: FollowupDecision, now: Date) {
+  const message = decision.suggested_message?.trim() || "";
+  const textHash = message ? hashText(message) : null;
+  const baseMessageId =
+    context.latest_customer_message?.id ||
+    context.latest_customer_message?.external_message_id ||
+    context.latest_bot_message?.id ||
+    context.latest_bot_message?.external_message_id ||
+    "no-base-message";
+  const dedupeKey = `${context.conversation_id}:${decision.new_followup_key || context.followup_key || "none"}:${baseMessageId}:${context.last_followup_context_hash}`;
+
+  if (!decision.should_send_followup || !message) {
+    return { shouldSend: false, message: null, dedupeKey, reason: decision.reason, duplicateBlocked: false };
+  }
+
+  if (context.human_hold_active) {
+    return { shouldSend: false, message: null, dedupeKey, reason: "human_hold_active", duplicateBlocked: false };
+  }
+
+  if (inProcessDedupeKeys.has(dedupeKey) || context.metadata.followup_dedupe_key === dedupeKey) {
+    return { shouldSend: false, message: null, dedupeKey, reason: "duplicate_dedupe_key", duplicateBlocked: true };
+  }
+
+  if (textHash && context.last_followup_text_hash === textHash && isRecentDate(context.metadata.last_followup_sent_at, now, RECENT_DUPLICATE_WINDOW_MS)) {
+    return { shouldSend: false, message: null, dedupeKey, reason: "duplicate_recent_text", duplicateBlocked: true };
+  }
+
+  if (isRecentDate(context.metadata.last_followup_sent_at || context.metadata.followup_sent_at, now, RECENT_DUPLICATE_WINDOW_MS)) {
+    return { shouldSend: false, message: null, dedupeKey, reason: "recent_followup_sent", duplicateBlocked: true };
+  }
+
+  if (context.last_followup_context_hash && context.metadata.followup_context_hash === context.last_followup_context_hash) {
+    return { shouldSend: false, message: null, dedupeKey, reason: "duplicate_context_hash", duplicateBlocked: true };
+  }
+
+  if ((decision.followup_type === "payment_check" || context.followup_key === "pix") && !hasPendingPaymentOrder(context)) {
+    return { shouldSend: false, message: null, dedupeKey, reason: "payment_followup_without_pending_order", duplicateBlocked: false };
+  }
+
+  if (isPaidContext(context)) {
+    return { shouldSend: false, message: null, dedupeKey, reason: "payment_already_confirmed", duplicateBlocked: false };
+  }
+
+  if (isFinalCustomerMessageResolved(context)) {
+    return { shouldSend: false, message: null, dedupeKey, reason: "customer_resolved_or_self_monitoring", duplicateBlocked: false };
+  }
+
+  if (isResellerMetadata(context) && !decision.followup_type.includes("reseller")) {
+    return { shouldSend: false, message: null, dedupeKey, reason: "reseller_flow_blocks_customer_followup", duplicateBlocked: false };
+  }
+
+  return { shouldSend: true, message, dedupeKey, reason: null, duplicateBlocked: false };
+}
+
+function buildCancelledFollowupMetadata(
+  metadata: Record<string, unknown>,
+  context: FollowupContext,
+  decision: FollowupDecision & { new_followup_due_at?: string | null },
+  reason: string,
+  now: Date
+) {
+  const leadProfile = readLeadProfile(metadata);
+  const newStage = decision.new_stage || inferCancelledStage(context, reason);
+  const newFollowupKey = decision.new_followup_key || null;
+  return {
+    ...metadata,
+    followup_key: newFollowupKey,
+    followup_due_at: decision.new_followup_due_at || null,
+    followup_cancelled_at: now.toISOString(),
+    followup_cancel_reason: reason,
+    followup_context_hash: context.last_followup_context_hash,
+    conversation_stage: newStage || metadata.conversation_stage || null,
+    lead_profile: {
+      ...leadProfile,
+      ...(newStage ? { stage: newStage, commercial_stage: newStage } : {}),
+      ...(reason.includes("reseller") || newStage === "reseller_flow" || newStage === "human_support_reseller" ? { reseller_intent: true } : {}),
+      ...(reason.includes("resolved") || reason.includes("self_monitoring") || newStage === "active" ? { download_status: "resolved", install_status: "resolved" } : {}),
+      ...(newStage === "active_trial" ? { trial_status: "testing", self_monitoring: true } : {}),
+      last_followup_decision_reason: reason,
+      updated_at: now.toISOString()
+    }
+  };
+}
+
+function findLatestMessageByRole(messages: FollowupContextMessage[], role: string) {
+  return [...messages].reverse().find((message) => message.role === role) || null;
+}
+
+function sanitizeOrder(order: Record<string, unknown> | null) {
+  if (!order) {
+    return null;
+  }
+
+  return {
+    id: order.id,
+    status: order.status,
+    total_cents: order.total_cents,
+    payment_method: order.payment_method,
+    payment_provider: order.payment_provider,
+    payment_reference: order.payment_reference,
+    paid_at: order.paid_at,
+    created_at: order.created_at,
+    plans: order.plans
+  };
+}
+
+function extractLastQuestionFromMessage(value: string) {
+  const questions = value
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.endsWith("?"));
+  return questions[questions.length - 1] || null;
+}
+
+function hasPendingPaymentOrder(context: FollowupContext) {
+  const order = context.open_order;
+  if (!order) {
+    return false;
+  }
+
+  const status = String(order.status || "");
+  return ["draft", "pending_payment", "manual_review", "receipt_under_review"].includes(status);
+}
+
+function isPaidContext(context: FollowupContext) {
+  const profile = context.lead_profile || {};
+  const status = String(context.latest_order?.status || context.open_order?.status || profile.payment_status || "");
+  return ["paid", "confirmed", "code_reserved", "code_sent"].includes(status) || profile.codigo_enviado === true;
+}
+
+function isFinalCustomerMessageResolved(context: FollowupContext) {
+  const text = normalizeText(context.recent_messages.slice(-12).map((message) => message.content || "").join("\n"));
+  return /\b(vou comecar a testar|qualquer problema.*aviso|te aviso|ja baixei|ja instalei|consegui instalar|deu certo|funcionou)\b/.test(text);
+}
+
+function isResellerMetadata(context: FollowupContext) {
+  const profile = context.lead_profile || {};
+  const text = normalizeText(context.recent_messages.slice(-20).map((message) => message.content || "").join("\n"));
+  return Boolean(profile.reseller_intent || profile.stage === "reseller_flow" || /\b(revenda|revendedor|revender|rounds|creditos|recarga com revendedor|valor que fazia)\b/.test(text));
+}
+
+function inferCancelledStage(context: FollowupContext, reason: string) {
+  if (reason.includes("reseller")) return "human_support_reseller";
+  if (reason.includes("payment_already")) return "paid";
+  if (reason.includes("resolved") || reason.includes("self_monitoring")) return "active_trial";
+  return context.lead_profile.stage || context.metadata.conversation_stage || null;
+}
+
+function normalizeText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 export function getLeadRecoveryFollowup(metadata: Record<string, unknown>) {
@@ -620,6 +932,14 @@ function isRecentDate(value: unknown, now: Date, windowMs: number) {
   }
   const date = new Date(value);
   return !Number.isNaN(date.getTime()) && now.getTime() - date.getTime() < windowMs;
+}
+
+function isFutureDate(value: unknown, now: Date) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const date = new Date(value);
+  return !Number.isNaN(date.getTime()) && date.getTime() > now.getTime();
 }
 
 function isAfter(left: unknown, right: unknown) {

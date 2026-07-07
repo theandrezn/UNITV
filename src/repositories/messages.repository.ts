@@ -38,10 +38,10 @@ export class MessagesRepository {
       .from("messages")
       .select("*")
       .eq("conversation_id", conversationId)
-      .order("created_at", { ascending: true })
+      .order("created_at", { ascending: false })
       .limit(limit);
 
-    return assertSupabaseSuccess(data || [], error);
+    return assertSupabaseSuccess((data || []).reverse(), error);
   }
 
   async listMessagesBetween(periodStart: string, periodEnd: string) {
