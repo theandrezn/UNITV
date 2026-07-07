@@ -7,20 +7,45 @@ export class ActivationCodesRepository {
   constructor(private readonly supabase: SupabaseClient = createSupabaseAdminClient()) {}
 
   async countAvailableCodes(productId: string, planId?: string | null) {
-    let query = this.supabase
+    const baseQuery = this.supabase
       .from("activation_codes")
       .select("id", { count: "exact", head: true })
       .eq("product_id", productId)
       .eq("status", "available");
 
-    query = planId ? query.eq("plan_id", planId) : query.is("plan_id", null);
-    const { count, error } = await query;
+    if (!planId) {
+      const { count, error } = await baseQuery.is("plan_id", null);
+      assertSupabaseSuccess(count, error);
+      return count ?? 0;
+    }
 
-    assertSupabaseSuccess(count, error);
-    return count ?? 0;
+    const [{ count: planCount, error: planError }, { count: universalCount, error: universalError }] = await Promise.all([
+      baseQuery.eq("plan_id", planId),
+      this.supabase
+        .from("activation_codes")
+        .select("id", { count: "exact", head: true })
+        .eq("product_id", productId)
+        .eq("status", "available")
+        .is("plan_id", null)
+    ]);
+
+    assertSupabaseSuccess(planCount, planError);
+    assertSupabaseSuccess(universalCount, universalError);
+    return (planCount ?? 0) + (universalCount ?? 0);
   }
 
   async findAvailableCode(productId: string, planId?: string | null) {
+    if (planId) {
+      const planSpecificCode = await this.findAvailableCodeByPlan(productId, planId);
+      if (planSpecificCode) {
+        return planSpecificCode;
+      }
+    }
+
+    return this.findAvailableCodeByPlan(productId, null);
+  }
+
+  private async findAvailableCodeByPlan(productId: string, planId: string | null) {
     let query = this.supabase
       .from("activation_codes")
       .select("*")
