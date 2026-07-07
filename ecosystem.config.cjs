@@ -23,7 +23,9 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         FOLLOWUPS_JOB_URL: "http://127.0.0.1:3000/api/jobs/followups",
-        FOLLOWUPS_WORKER_INTERVAL_MS: "60000"
+        FOLLOWUPS_WORKER_INTERVAL_MS: "60000",
+        FOLLOWUPS_WORKER_START_DELAY_MS: "15000",
+        FOLLOWUPS_WORKER_REQUEST_TIMEOUT_MS: "50000"
       }
     }
   ]
