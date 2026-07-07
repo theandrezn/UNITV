@@ -118,6 +118,10 @@ export class ChatAgentService {
     const allowMenu = shouldUseMenu(message);
     const leadProfile = readLeadProfile(input.conversation.metadata);
 
+    if (isTrafficRechargeOpener(message)) {
+      return buildTrafficRechargeWelcomeReply();
+    }
+
     const contextualReply = getContextualCommercialReply(message, leadProfile);
     const contextualAiReply = await this.generateContextualCommercialAIReply(input, message, intent, leadProfile, contextualReply?.reply || null);
     if (contextualAiReply) {
@@ -339,20 +343,7 @@ export class ChatAgentService {
       if (!plan) {
         const preferenceMenu = allowMenu && plans.length ? buildPlansMenu(plans) : null;
         if (intent === "renew_plan" && isTrafficRechargeOpener(message)) {
-          return {
-            reply: TRAFFIC_RECHARGE_WELCOME,
-            menu: undefined,
-            sendTextBeforeMenu: false,
-            leadProfilePatch: {
-              commercial_stage: "welcome_activation",
-              stage: "welcome_activation",
-              wants_recharge: true,
-              traffic_source_opener: true,
-              last_customer_intent: "traffic_recharge_opener",
-              next_expected_reply: "activation_or_renewal",
-              last_bot_question: "Voce ja faz o uso do app? Ou e a primeira vez?"
-            }
-          };
+          return buildTrafficRechargeWelcomeReply();
         }
         if (intent === "renew_plan" && isRenewalLeadMessage(message)) {
           return {
@@ -1167,6 +1158,23 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
   }
 
   return null;
+}
+
+function buildTrafficRechargeWelcomeReply(): CommercialReplyResult {
+  return {
+    reply: TRAFFIC_RECHARGE_WELCOME,
+    menu: undefined,
+    sendTextBeforeMenu: false,
+    leadProfilePatch: {
+      commercial_stage: "welcome_activation",
+      stage: "welcome_activation",
+      wants_recharge: true,
+      traffic_source_opener: true,
+      last_customer_intent: "traffic_recharge_opener",
+      next_expected_reply: "activation_or_renewal",
+      last_bot_question: "Voce ja faz o uso do app? Ou e a primeira vez?"
+    }
+  };
 }
 
 function buildMonthlyPriceComparisonReply(leadProfile: Record<string, unknown>) {

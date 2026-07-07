@@ -525,6 +525,35 @@ describe("commercial WhatsApp agent", () => {
     });
   });
 
+  it.each(["buy_plan", "ask_price", "unknown", "greeting"] as const)(
+    "keeps the traffic-source recharge opener as welcome before plan flow when intent is %s",
+    async (intent) => {
+      const { service, ordersService, mercadoPagoService } = createChatAgent();
+
+      const result = await service.generateCommercialReply({
+        message: "Olá! Quero fazer Recarga Codigo UNITV",
+        classification: { intent, confidence: 0.95, summary: "trafego", suggested_reply: "" },
+        customer: { id: "customer-id" },
+        conversation: { id: "conversation-id" },
+        webhookEventId: "webhook-id"
+      });
+
+      expect(ordersService.createOrder).not.toHaveBeenCalled();
+      expect(mercadoPagoService.createPixPayment).not.toHaveBeenCalled();
+      expect(result.reply).toContain("Seja bem-vindo ao melhor aplicativo de filmes e canais");
+      expect(result.reply).toContain("Voce ja faz o uso do app? Ou e a primeira vez?");
+      expect(result.reply).not.toContain("Qual plano");
+      expect(result.reply).not.toContain("mensal, 3 meses");
+      expect(result.reply).not.toContain("R$ 25");
+      expect(result.menu).toBeUndefined();
+      expect(result.leadProfilePatch).toMatchObject({
+        traffic_source_opener: true,
+        stage: "welcome_activation",
+        next_expected_reply: "activation_or_renewal"
+      });
+    }
+  );
+
   it("asks plan preference without prices when customer says they already use UNITV", async () => {
     const { service } = createChatAgent();
 
