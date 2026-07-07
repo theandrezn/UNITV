@@ -7,8 +7,14 @@ import { AuditService } from "@/services/audit.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
+const MAX_LEAD_RECOVERY_FOLLOWUPS = 4;
 const HUMAN_SILENCE_WINDOW_MS = 5 * 60 * 1000;
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
+const LEAD_RECOVERY_DELAYS_AFTER_SEND_MS = [
+  45 * 60 * 1000,
+  4 * 60 * 60 * 1000,
+  24 * 60 * 60 * 1000
+];
 
 type ConversationRow = {
   id: string;
@@ -63,19 +69,39 @@ export class WhatsappFollowupService {
         continue;
       }
 
-      const stageId = String(metadata.last_followup_stage_id || randomUUID());
-      const promoRecovery = shouldSendPromoRecoveryFollowup(metadata);
-      const followupText = promoRecovery ? buildPromoRecoveryFollowupText(metadata, conversation) : buildFollowupText(metadata);
+      const leadRecovery = getLeadRecoveryFollowup(metadata);
+      const stageId = leadRecovery
+        ? leadRecovery.stageId
+        : String(metadata.last_followup_stage_id || randomUUID());
+      const promoRecovery = !leadRecovery && shouldSendPromoRecoveryFollowup(metadata);
+      const followupText = leadRecovery
+        ? buildLeadRecoveryFollowupText(leadRecovery.step, metadata, conversation)
+        : promoRecovery
+          ? buildPromoRecoveryFollowupText(metadata, conversation)
+          : buildFollowupText(metadata);
       const sendResult = await this.evolutionService.sendTextMessage({ phone, text: followupText });
       const leadProfile = readLeadProfile(metadata);
+      const nextLeadRecoveryDueAt = leadRecovery ? getNextLeadRecoveryDueAt(leadRecovery.step, now) : null;
+      const sentSpecialOffer = promoRecovery || (leadRecovery && [2, 4].includes(leadRecovery.step));
       const nextMetadata = {
         ...metadata,
-        followup_due_at: null,
+        followup_due_at: nextLeadRecoveryDueAt,
         followup_sent_at: now.toISOString(),
         followup_sent_stage_id: stageId,
         followup_count: Number(metadata.followup_count || 0) + 1,
-        last_followup_stage_id: stageId,
-        ...(promoRecovery
+        last_followup_stage_id: leadRecovery && nextLeadRecoveryDueAt
+          ? `${leadRecovery.baseStageId}:recovery:${leadRecovery.step + 1}`
+          : stageId,
+        last_bot_message_at: now.toISOString(),
+        ...(leadRecovery
+          ? {
+              lead_recovery_followup_step: leadRecovery.step,
+              lead_recovery_followup_last_sent_at: now.toISOString(),
+              lead_recovery_followup_completed: leadRecovery.step >= MAX_LEAD_RECOVERY_FOLLOWUPS,
+              lead_recovery_followup_base_stage_id: leadRecovery.baseStageId
+            }
+          : {}),
+        ...(sentSpecialOffer
           ? {
               promo_followup_sent_at: now.toISOString(),
               promo_followup_stage_id: stageId,
@@ -98,7 +124,13 @@ export class WhatsappFollowupService {
         content: followupText,
         content_type: "text",
         external_message_id: `followup:${conversation.id}:${stageId}`,
-        metadata: { sendResult, followup_key: metadata.followup_key, stageId, promo_recovery: promoRecovery }
+        metadata: {
+          sendResult,
+          followup_key: metadata.followup_key,
+          stageId,
+          promo_recovery: promoRecovery,
+          lead_recovery_step: leadRecovery?.step || null
+        }
       });
       await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
       await this.conversationsRepository.touchConversation(conversation.id, now.toISOString());
@@ -107,7 +139,13 @@ export class WhatsappFollowupService {
         action: "whatsapp_followup_sent",
         entity_type: "conversations",
         entity_id: conversation.id,
-        metadata: { followup_key: metadata.followup_key, stageId, sendResult, promo_recovery: promoRecovery }
+        metadata: {
+          followup_key: metadata.followup_key,
+          stageId,
+          sendResult,
+          promo_recovery: promoRecovery,
+          lead_recovery_step: leadRecovery?.step || null
+        }
       });
       await this.safeCreateAgentEvent({
         conversation_id: conversation.id,
@@ -122,7 +160,8 @@ export class WhatsappFollowupService {
           followup_key: metadata.followup_key,
           followup_count: nextMetadata.followup_count,
           stageId,
-          promo_recovery: promoRecovery
+          promo_recovery: promoRecovery,
+          lead_recovery_step: leadRecovery?.step || null
         }
       });
 
@@ -139,6 +178,88 @@ export class WhatsappFollowupService {
       return null;
     }
   }
+}
+
+export function getLeadRecoveryFollowup(metadata: Record<string, unknown>) {
+  if (!shouldUseLeadRecoverySequence(metadata)) {
+    return null;
+  }
+
+  const nextStep = Number(metadata.lead_recovery_followup_step || 0) + 1;
+  if (nextStep < 1 || nextStep > MAX_LEAD_RECOVERY_FOLLOWUPS) {
+    return null;
+  }
+
+  const baseStageId = String(metadata.lead_recovery_followup_base_stage_id || metadata.last_followup_stage_id || randomUUID());
+  return {
+    step: nextStep,
+    baseStageId,
+    stageId: `${baseStageId}:recovery:${nextStep}`
+  };
+}
+
+export function shouldUseLeadRecoverySequence(metadata: Record<string, unknown>) {
+  const key = String(metadata.followup_key || "");
+  if (!["welcome_activation", "plan_choice"].includes(key)) {
+    return false;
+  }
+
+  if (metadata.lead_recovery_followup_completed) {
+    return false;
+  }
+
+  const profile = readLeadProfile(metadata);
+  if (
+    profile.selected_plan ||
+    profile.plano_interesse ||
+    metadata.plan_interest ||
+    profile.pediu_pix ||
+    profile.payment_status === "paid" ||
+    profile.payment_status === "confirmed" ||
+    profile.codigo_enviado === true
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+export function buildLeadRecoveryFollowupText(
+  step: number,
+  metadata: Record<string, unknown>,
+  conversation?: Pick<ConversationRow, "customers">
+) {
+  const firstName = readFirstName(conversation?.customers?.name || readLeadProfile(metadata).nome);
+  const namePrefix = firstName ? `${firstName}, ` : "";
+
+  if (step === 1) {
+    return [
+      firstName ? `${namePrefix}só pra eu te ajudar melhor:` : "Só pra eu te ajudar melhor:",
+      "Você teria interesse em algum plano UNITV hoje? ✅"
+    ].join("\n\n");
+  }
+
+  if (step === 2) {
+    return [
+      firstName ? `${namePrefix}consigo uma condição especial pra você hoje.` : "Consigo uma condição especial pra você hoje.",
+      "O mensal é R$ 25, mas pra você começar agora consigo liberar por R$ 19,99.",
+      "Se quiser, me confirma aqui que já te explico como ativar ✅"
+    ].join("\n\n");
+  }
+
+  if (step === 3) {
+    return [
+      "Com a UNITV você já fica com filmes, séries e canais em um só lugar ✅",
+      "A ativação é rápida e eu te ajudo por aqui mesmo.",
+      "Quer que eu deixe seu acesso encaminhado hoje?"
+    ].join("\n\n");
+  }
+
+  return [
+    firstName ? `Oi, ${firstName} ✅` : "Oi ✅",
+    "Ainda quer aproveitar a condição especial da UNITV?",
+    "Consigo deixar o mensal por R$ 19,99 pra você começar, mas essa condição é só pra fechar hoje."
+  ].join("\n\n");
 }
 
 export function shouldSendPromoRecoveryFollowup(metadata: Record<string, unknown>) {
@@ -271,7 +392,8 @@ function getSkipReason(metadata: Record<string, unknown>, now: Date) {
     return "already_sent_for_stage";
   }
 
-  if (Number(metadata.followup_count || 0) >= MAX_FOLLOWUP_COUNT_PER_STAGE) {
+  const maxFollowups = shouldUseLeadRecoverySequence(metadata) ? MAX_LEAD_RECOVERY_FOLLOWUPS : MAX_FOLLOWUP_COUNT_PER_STAGE;
+  if (Number(metadata.followup_count || 0) >= maxFollowups) {
     return "followup_limit_reached";
   }
 
@@ -281,6 +403,14 @@ function getSkipReason(metadata: Record<string, unknown>, now: Date) {
 function readCustomerPhone(conversation: ConversationRow) {
   const phone = conversation.customers?.phone || conversation.external_conversation_id || "";
   return phone.split("@")[0]?.replace(/\D/g, "") || null;
+}
+
+function getNextLeadRecoveryDueAt(step: number, now: Date) {
+  const delay = LEAD_RECOVERY_DELAYS_AFTER_SEND_MS[step - 1];
+  if (!delay) {
+    return null;
+  }
+  return new Date(now.getTime() + delay).toISOString();
 }
 
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {

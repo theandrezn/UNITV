@@ -4,8 +4,11 @@ vi.mock("server-only", () => ({}));
 
 import {
   buildFollowupText,
+  buildLeadRecoveryFollowupText,
   buildPromoRecoveryFollowupText,
+  getLeadRecoveryFollowup,
   shouldSendPromoRecoveryFollowup,
+  shouldUseLeadRecoverySequence,
   WhatsappFollowupService
 } from "@/services/followups/whatsapp-followup.service";
 
@@ -108,6 +111,121 @@ describe("WhatsappFollowupService", () => {
         followup_count: 1
       })
     );
+  });
+
+  it("runs progressive lead recovery after the first unanswered agent message", async () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const { service, evolutionService, messagesRepository, conversationsRepository } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888", name: "João Cliente" },
+        metadata: {
+          followup_key: "welcome_activation",
+          followup_due_at: "2026-07-06T11:59:00.000Z",
+          last_bot_message_at: "2026-07-06T11:54:00.000Z",
+          last_customer_message_at: "2026-07-06T11:53:00.000Z",
+          last_followup_stage_id: "greeting:welcome_activation:1",
+          followup_count: 0,
+          lead_profile: { intencao_inicial: "greeting" }
+        }
+      }
+    ]);
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result.sent).toBe(1);
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "João, só pra eu te ajudar melhor:\n\nVocê teria interesse em algum plano UNITV hoje? ✅"
+      })
+    );
+    expect(messagesRepository.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        external_message_id: "followup:conversation-id:greeting:welcome_activation:1:recovery:1",
+        metadata: expect.objectContaining({ lead_recovery_step: 1 })
+      })
+    );
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_due_at: "2026-07-06T12:45:00.000Z",
+        followup_count: 1,
+        lead_recovery_followup_step: 1,
+        lead_recovery_followup_completed: false,
+        last_followup_stage_id: "greeting:welcome_activation:1:recovery:2"
+      })
+    );
+  });
+
+  it("marks the lead recovery promotion and schedules the next recovery step", async () => {
+    const now = new Date("2026-07-06T13:00:00.000Z");
+    const { service, evolutionService, conversationsRepository } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888" },
+        metadata: {
+          followup_key: "welcome_activation",
+          followup_due_at: "2026-07-06T13:00:00.000Z",
+          last_bot_message_at: "2026-07-06T12:00:00.000Z",
+          last_customer_message_at: "2026-07-06T11:53:00.000Z",
+          last_followup_stage_id: "greeting:welcome_activation:1:recovery:2",
+          lead_recovery_followup_base_stage_id: "greeting:welcome_activation:1",
+          lead_recovery_followup_step: 1,
+          followup_count: 1,
+          lead_profile: { intencao_inicial: "greeting" }
+        }
+      }
+    ]);
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result.sent).toBe(1);
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("O mensal é R$ 25, mas pra você começar agora consigo liberar por R$ 19,99.")
+      })
+    );
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_due_at: "2026-07-06T17:00:00.000Z",
+        lead_recovery_followup_step: 2,
+        promo_followup_sent_at: now.toISOString(),
+        lead_profile: expect.objectContaining({
+          special_promo_followup_sent: true,
+          special_promo_offer: "mensal_19_99_first_2_months"
+        })
+      })
+    );
+  });
+
+  it("finishes lead recovery after the fourth follow-up without payment language", () => {
+    expect(shouldUseLeadRecoverySequence({
+      followup_key: "welcome_activation",
+      lead_recovery_followup_step: 3,
+      lead_profile: { intencao_inicial: "greeting" }
+    })).toBe(true);
+    expect(getLeadRecoveryFollowup({
+      followup_key: "welcome_activation",
+      last_followup_stage_id: "greeting:welcome_activation:1:recovery:4",
+      lead_recovery_followup_base_stage_id: "greeting:welcome_activation:1",
+      lead_recovery_followup_step: 3,
+      lead_profile: { intencao_inicial: "greeting" }
+    })).toEqual({
+      step: 4,
+      baseStageId: "greeting:welcome_activation:1",
+      stageId: "greeting:welcome_activation:1:recovery:4"
+    });
+
+    const lastCall = buildLeadRecoveryFollowupText(4, { lead_profile: { nome: "Maria" } });
+    expect(lastCall).toContain("Oi, Maria");
+    expect(lastCall).toContain("R$ 19,99");
+    expect(lastCall).not.toContain("pagamento");
+    expect(lastCall).not.toContain("comprovante");
+    expect(buildLeadRecoveryFollowupText(1, { lead_profile: {} }).startsWith("Só pra eu te ajudar melhor:")).toBe(true);
+    expect(buildLeadRecoveryFollowupText(2, { lead_profile: {} }).startsWith("Consigo uma condição especial")).toBe(true);
   });
 
   it("sends a one-time promotional recovery follow-up for hot leads before payment", async () => {
