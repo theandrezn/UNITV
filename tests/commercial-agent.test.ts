@@ -209,13 +209,14 @@ describe("commercial WhatsApp agent", () => {
     expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(result.reply).toContain("mensal");
     expect(result.reply).toContain("R$");
-    expect(result.reply).toContain("Pix");
+    expect(result.reply).toContain("faz a quanto?");
+    expect(result.reply).not.toContain("R$ 19,99");
   });
 
   it.each([
     ["Ativar", {}, "ja usa o UNITV", "R$ 25"],
     ["Nao paguei ainda", {}, "3 dias", "comprovante"],
-    ["Mensal", { wants_activation: true }, "Pix", "Qual plano"],
+    ["Mensal", { wants_activation: true }, "faz a quanto?", "Qual plano"],
     ["Ja baixei", { device: "tvbox" }, "3 dias", "ja baixou"],
     ["Sim", { last_bot_question: "Voce ja baixou o app?" }, "ativa\u00e7\u00e3o", "ja baixou"],
     ["Ja usei", {}, "preferencia por qual plano", "R$ 25"],
@@ -423,9 +424,58 @@ describe("commercial WhatsApp agent", () => {
 
     expect(result.reply).toContain("mensal");
     expect(result.reply).toContain("R$ 25");
-    expect(result.reply).toContain("Pix");
+    expect(result.reply).toContain("Voce ja faz a recarga?");
     expect(result.leadProfilePatch).toMatchObject({
       selected_plan: "mensal",
+      next_expected_reply: "current_recharge_price",
+      commercial_stage: "price_comparison"
+    });
+  });
+
+  it("answers monthly price with name and asks current recharge price before Pix", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Qual o valor mensal?",
+      classification: { intent: "ask_price", confidence: 0.95, summary: "valor mensal", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: { nome: "Celio Luiz" } } },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("O mensal, Celio, esta saindo a R$ 25");
+    expect(result.reply).toContain("Voce ja faz a recarga?");
+    expect(result.reply).toContain("faz a quanto?");
+    expect(result.reply).not.toContain("Pix");
+    expect(result.reply).not.toContain("R$ 70");
+    expect(result.leadProfilePatch).toMatchObject({
+      selected_plan: "mensal",
+      next_expected_reply: "current_recharge_price",
+      last_bot_question: "Voce ja faz a recarga? Se sim, faz a quanto?"
+    });
+  });
+
+  it("offers the 19.99 condition after customer says current recharge is 20", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "faço a 20",
+      classification: { intent: "unknown", confidence: 0.95, summary: "preco atual", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: { lead_profile: { last_bot_question: "Voce ja faz a recarga? Se sim, faz a quanto?" } }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("R$ 19,99");
+    expect(result.reply).toContain("Quer que eu gere o Pix");
+    expect(result.leadProfilePatch).toMatchObject({
+      selected_plan: "mensal",
+      current_recharge_price_cents: 2000,
+      special_promo_followup_sent: true,
+      special_promo_offer: "mensal_19_99_first_2_months",
       next_expected_reply: "payment_method"
     });
   });
@@ -496,6 +546,8 @@ describe("commercial WhatsApp agent", () => {
     expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(result.reply).toContain("mensal");
     expect(result.reply).toContain("R$");
+    expect(result.reply).toContain("faz a quanto?");
+    expect(result.reply).not.toContain("Pix");
     expect(result.reply).not.toContain("R$ 70");
     expect(result.reply).not.toContain("R$ 120");
     expect(result.reply).not.toContain("R$ 200");
@@ -620,7 +672,8 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(result.reply).not.toContain("Cartao:");
     expect(result.reply).not.toContain("Para gerar o Pix Copia e Cola");
-    expect(result.reply).toContain("Pix");
+    expect(result.reply).toContain("faz a quanto?");
+    expect(result.reply).not.toContain("Quer que eu gere o Pix");
     expect(result.menu).toBeUndefined();
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
   });

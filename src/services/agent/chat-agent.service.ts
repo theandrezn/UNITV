@@ -35,6 +35,7 @@ const PLANS_TEXT = ["Mensal — R$ 25", "3 meses — R$ 70", "6 meses — R$ 120
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
+const CURRENT_RECHARGE_PRICE_QUESTION = "Voce ja faz a recarga? Se sim, faz a quanto?";
 const RENEWAL_CONTEXT_QUESTION = "Perfeito. Voce ja usa o UNITV e quer so renovar o codigo, ou seria sua primeira vez usando?";
 
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
@@ -239,6 +240,20 @@ export class ChatAgentService {
       const objectionReply = salesObjectionReply?.reply;
       const { plan } = await this.plansService.findPlanMentionedInText(message);
       if (plan && !isAllPricesRequested(message)) {
+        if (getCommercialPlanLabel(plan) === "mensal") {
+          return {
+            reply: buildMonthlyPriceComparisonReply(leadProfile),
+            leadProfilePatch: {
+              selected_plan: "mensal",
+              plano_interesse: "mensal",
+              commercial_stage: "price_comparison",
+              stage: "price_comparison",
+              last_customer_intent: "ask_monthly_price",
+              next_expected_reply: "current_recharge_price",
+              last_bot_question: CURRENT_RECHARGE_PRICE_QUESTION
+            }
+          };
+        }
         return {
           reply: formatSpecificPlanPriceReply(plan, intent),
           leadProfilePatch: {
@@ -362,6 +377,21 @@ export class ChatAgentService {
         return {
           requiresHuman: true,
           reply: "Encontrei esse plano, mas o valor ainda precisa ser confirmado no cadastro. Vou encaminhar para atendimento humano finalizar seu pedido com seguranca."
+        };
+      }
+
+      if (getCommercialPlanLabel(plan) === "mensal") {
+        return {
+          reply: buildMonthlyPriceComparisonReply(leadProfile),
+          leadProfilePatch: {
+            selected_plan: "mensal",
+            plano_interesse: "mensal",
+            commercial_stage: "price_comparison",
+            stage: "price_comparison",
+            last_customer_intent: "ask_monthly_price",
+            next_expected_reply: "current_recharge_price",
+            last_bot_question: CURRENT_RECHARGE_PRICE_QUESTION
+          }
         };
       }
 
@@ -1042,16 +1072,58 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
 
   if (/^(sim|s|isso|ok|pode|quero|pode ser)$/.test(normalized) && /\b(interesse no mensal|mensal mesmo)\b/.test(lastBotQuestion)) {
     return {
-      reply: "Perfeito, o mensal fica R$ 25. Voce prefere pagar por Pix ou cartao?",
+      reply: buildMonthlyPriceComparisonReply(leadProfile),
       leadProfilePatch: {
         selected_plan: "mensal",
         plano_interesse: "mensal",
-        commercial_stage: "plan_selected",
-        stage: "plan_selected",
-        last_customer_intent: "choose_plan",
-        next_expected_reply: "payment_method"
+        commercial_stage: "price_comparison",
+        stage: "price_comparison",
+        last_customer_intent: "ask_monthly_price",
+        next_expected_reply: "current_recharge_price",
+        last_bot_question: CURRENT_RECHARGE_PRICE_QUESTION
       }
     };
+  }
+
+  if (/\b(faz a quanto|recarga.*quanto|quanto voce paga|quanto vc paga)\b/.test(lastBotQuestion)) {
+    const currentPriceCents = extractCurrencyCents(normalized);
+    if (currentPriceCents && currentPriceCents <= 2000) {
+      return {
+        reply:
+          "Consigo cobrir pra voce e deixar o mensal por R$ 19,99 pra comecar.\n\n" +
+          "Quer que eu gere o Pix nessa condicao?",
+        leadProfilePatch: {
+          selected_plan: "mensal",
+          plano_interesse: "mensal",
+          commercial_stage: "special_promo_offered",
+          stage: "special_promo_offered",
+          current_recharge_price_cents: currentPriceCents,
+          special_promo_followup_sent: true,
+          special_promo_offer: SPECIAL_PROMO_OFFER_ID,
+          special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+          original_price_cents: 2500,
+          last_customer_intent: "price_objection",
+          next_expected_reply: "payment_method",
+          last_bot_question: "Quer que eu gere o Pix nessa condicao?"
+        }
+      };
+    }
+
+    if (currentPriceCents) {
+      return {
+        reply: "Entendi. O meu mensal esta saindo a R$ 25 e eu te ajudo na ativacao por aqui. Quer seguir no Pix?",
+        leadProfilePatch: {
+          selected_plan: "mensal",
+          plano_interesse: "mensal",
+          commercial_stage: "plan_selected",
+          stage: "plan_selected",
+          current_recharge_price_cents: currentPriceCents,
+          last_customer_intent: "choose_plan",
+          next_expected_reply: "payment_method",
+          last_bot_question: "Quer seguir no Pix?"
+        }
+      };
+    }
   }
 
   if (/^(ativar|ativacao|ativa|liberar)$/i.test(normalized)) {
@@ -1062,11 +1134,47 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
 
   if (/^(mensal|plano mensal)$/i.test(normalized)) {
     return {
-      reply: "Perfeito, o mensal fica R$ 25. Voc\u00ea prefere pagar por Pix ou cart\u00e3o?"
+      reply: buildMonthlyPriceComparisonReply(leadProfile),
+      leadProfilePatch: {
+        selected_plan: "mensal",
+        plano_interesse: "mensal",
+        commercial_stage: "price_comparison",
+        stage: "price_comparison",
+        last_customer_intent: "ask_monthly_price",
+        next_expected_reply: "current_recharge_price",
+        last_bot_question: CURRENT_RECHARGE_PRICE_QUESTION
+      }
     };
   }
 
   return null;
+}
+
+function buildMonthlyPriceComparisonReply(leadProfile: Record<string, unknown>) {
+  const firstName = getLeadFirstName(leadProfile);
+  const namePart = firstName ? `, ${firstName},` : "";
+  return `O mensal${namePart} esta saindo a R$ 25.\n\n${CURRENT_RECHARGE_PRICE_QUESTION}`;
+}
+
+function getLeadFirstName(leadProfile: Record<string, unknown>) {
+  const rawName = String(
+    leadProfile.nome ||
+    leadProfile.name ||
+    leadProfile.customer_name ||
+    leadProfile.contact_name ||
+    ""
+  ).trim();
+  const firstName = rawName.split(/\s+/).find(Boolean) || "";
+  return /^[A-Za-zÀ-ÿ]{2,}$/.test(firstName) ? firstName : "";
+}
+
+function extractCurrencyCents(normalizedMessage: string) {
+  const match = normalizedMessage.match(/(?:r\$\s*)?(\d{1,3})(?:[,.](\d{1,2}))?/);
+  if (!match) return null;
+  const reais = Number(match[1]);
+  const cents = Number((match[2] || "0").padEnd(2, "0"));
+  if (!Number.isFinite(reais) || !Number.isFinite(cents)) return null;
+  return reais * 100 + cents;
 }
 
 function isFreeTrialContextMessage(normalized: string, lastBotQuestion: string) {
