@@ -176,7 +176,7 @@ describe("WhatsappFollowupService", () => {
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        followup_due_at: "2026-07-06T12:45:00.000Z",
+        followup_due_at: "2026-07-06T14:00:00.000Z",
         followup_count: 1,
         lead_recovery_followup_step: 1,
         lead_recovery_followup_completed: false,
@@ -226,12 +226,12 @@ describe("WhatsappFollowupService", () => {
       expect.objectContaining({
         unanswered_bot_followup_for_message_at: "2026-07-06T12:29:00.000Z",
         lead_recovery_followup_step: 1,
-        followup_due_at: "2026-07-06T13:20:00.000Z"
+        followup_due_at: "2026-07-06T14:35:00.000Z"
       })
     );
   });
 
-  it("marks the lead recovery promotion and schedules the next recovery step", async () => {
+  it("sends the second contextual recovery and schedules the final one for 6 hours later", async () => {
     const now = new Date("2026-07-06T13:00:00.000Z");
     const { service, evolutionService, conversationsRepository } = createService([
       {
@@ -256,43 +256,44 @@ describe("WhatsappFollowupService", () => {
 
     expect(result.sent).toBe(1);
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ text: expect.stringContaining("Voce ja usou o UNITV?") })
+      expect.objectContaining({ text: expect.stringContaining("se ainda quiser testar") })
     );
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        followup_due_at: "2026-07-06T17:00:00.000Z",
+        followup_due_at: "2026-07-06T19:00:00.000Z",
         lead_recovery_followup_step: 2,
-        promo_followup_sent_at: now.toISOString(),
-        lead_profile: expect.objectContaining({
-          special_promo_followup_sent: true,
-          special_promo_offer: "mensal_19_99_first_2_months"
-        })
+        followup_count: 2,
+        last_followup_stage_id: "greeting:welcome_activation:1:recovery:3"
       })
     );
   });
 
-  it("finishes lead recovery after the fourth follow-up without payment language", () => {
+  it("finishes lead recovery after the third follow-up without payment language", () => {
     expect(shouldUseLeadRecoverySequence({
       followup_key: "welcome_activation",
-      lead_recovery_followup_step: 3,
+      lead_recovery_followup_step: 2,
       lead_profile: { intencao_inicial: "greeting" }
     })).toBe(true);
     expect(getLeadRecoveryFollowup({
       followup_key: "welcome_activation",
-      last_followup_stage_id: "greeting:welcome_activation:1:recovery:4",
+      last_followup_stage_id: "greeting:welcome_activation:1:recovery:3",
       lead_recovery_followup_base_stage_id: "greeting:welcome_activation:1",
-      lead_recovery_followup_step: 3,
+      lead_recovery_followup_step: 2,
       lead_profile: { intencao_inicial: "greeting" }
     })).toEqual({
-      step: 4,
+      step: 3,
       baseStageId: "greeting:welcome_activation:1",
-      stageId: "greeting:welcome_activation:1:recovery:4"
+      stageId: "greeting:welcome_activation:1:recovery:3"
     });
+    expect(getLeadRecoveryFollowup({
+      followup_key: "welcome_activation",
+      lead_recovery_followup_step: 3,
+      lead_profile: { intencao_inicial: "greeting" }
+    })).toBeNull();
 
-    const lastCall = buildLeadRecoveryFollowupText(4, { lead_profile: { nome: "Maria" } });
-    expect(lastCall).toContain("Oi, Maria");
-    expect(lastCall).toContain("R$ 19,99");
+    const lastCall = buildLeadRecoveryFollowupText(3, { lead_profile: { nome: "Maria" } });
+    expect(lastCall).toContain("Quer que eu deixe seu acesso encaminhado hoje?");
     expect(lastCall).not.toContain("pagamento");
     expect(lastCall).not.toContain("comprovante");
     expect(buildLeadRecoveryFollowupText(1, { lead_profile: {} })).toContain("Voce ja usou o UNITV?");

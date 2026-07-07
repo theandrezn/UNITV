@@ -218,12 +218,14 @@ export function decideFollowupDeterministically(context: FollowupContext): Follo
   }
 
   if (followupKey === "welcome_activation" || followupKey === "test") {
+    const recoveryStep = readRecoveryStep(context);
+    const trialMessage = buildTrialRecoveryMessage(context, recoveryStep);
     return sendDecision({
       type: "trial_check",
       reason: "Lead inicial sem resposta apos abordagem.",
       summary: "Cliente ainda nao informou se quer teste ou ativacao.",
       evidence: collectEvidence(context, ["teste", "ativar", "recarga"]),
-      message: "Voce ja usou o UNITV? Se nao, posso liberar 3 dias gratis. Qual aparelho voce quer testar?",
+      message: trialMessage,
       stage: "qualified",
       key: "welcome_activation",
       confidence: 0.88
@@ -329,6 +331,39 @@ function collectEvidence(context: FollowupContext, terms: string[]) {
     })
     .slice(-4)
     .map((message) => `${message.role || "unknown"}: ${String(message.content || "").slice(0, 140)}`);
+}
+
+function readRecoveryStep(context: FollowupContext) {
+  const raw = Number(context.metadata.lead_recovery_followup_step || 0);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0;
+}
+
+function buildTrialRecoveryMessage(context: FollowupContext, recoveryStep: number) {
+  const firstName = readFirstName(context.lead_profile.nome || context.latest_customer_message?.metadata?.pushName);
+  const prefix = firstName ? `${firstName}, ` : "";
+
+  if (recoveryStep <= 0) {
+    return firstName
+      ? `${prefix}voce ja usou o UNITV? Se nao, posso liberar 3 dias gratis. Qual aparelho voce quer testar?`
+      : "Voce ja usou o UNITV? Se nao, posso liberar 3 dias gratis. Qual aparelho voce quer testar?";
+  }
+
+  if (recoveryStep === 1) {
+    return firstName
+      ? `${prefix}passando rapidinho: se ainda quiser testar, eu libero 3 dias e te ajudo pelo aparelho que voce usa. Qual aparelho seria?`
+      : "Passando rapidinho: se ainda quiser testar, eu libero 3 dias e te ajudo pelo aparelho que voce usa. Qual aparelho seria?";
+  }
+
+  return firstName
+    ? `${prefix}ultima tentativa por aqui hoje: quer que eu deixe o teste de 3 dias encaminhado pra voce?`
+    : "Ultima tentativa por aqui hoje: quer que eu deixe o teste de 3 dias encaminhado pra voce?";
+}
+
+function readFirstName(value: unknown) {
+  if (typeof value !== "string") {
+    return "";
+  }
+  return value.trim().split(/\s+/)[0]?.replace(/[^\p{L}'-]/gu, "") || "";
 }
 
 function distantTrialDue(now: string) {

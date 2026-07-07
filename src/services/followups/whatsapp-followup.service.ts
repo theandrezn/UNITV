@@ -17,16 +17,15 @@ import {
 } from "@/services/followups/contextual-followup-decision.service";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
-const MAX_LEAD_RECOVERY_FOLLOWUPS = 4;
+const MAX_LEAD_RECOVERY_FOLLOWUPS = 3;
 const HUMAN_SILENCE_WINDOW_MS = 5 * 60 * 1000;
 const UNANSWERED_BOT_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const UNANSWERED_CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const RECENT_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const LEAD_RECOVERY_DELAYS_AFTER_SEND_MS = [
-  45 * 60 * 1000,
-  4 * 60 * 60 * 1000,
-  24 * 60 * 60 * 1000
+  2 * 60 * 60 * 1000,
+  6 * 60 * 60 * 1000
 ];
 
 type ConversationRow = {
@@ -196,7 +195,7 @@ export class WhatsappFollowupService {
       const sendResult = await this.evolutionService.sendTextMessage({ phone, text: followupText });
       const leadProfile = readLeadProfile(metadata);
       const nextLeadRecoveryDueAt = leadRecovery ? getNextLeadRecoveryDueAt(leadRecovery.step, now) : null;
-      const sentSpecialOffer = promoRecovery || (leadRecovery && [2, 4].includes(leadRecovery.step));
+      const sentSpecialOffer = promoRecovery;
       const nextMetadata = {
         ...metadata,
         followup_due_at: nextLeadRecoveryDueAt,
