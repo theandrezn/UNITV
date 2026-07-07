@@ -543,6 +543,50 @@ describe("WhatsappFollowupService", () => {
     expect(evolutionService.sendTextMessage).toHaveBeenCalledTimes(1);
   });
 
+  it("sends only one follow-up when duplicate open conversations share the same phone", async () => {
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const { service, evolutionService, conversationsRepository } = createService([
+      {
+        id: "conversation-id-a",
+        customer_id: "customer-id-a",
+        external_conversation_id: "5511999998888@s.whatsapp.net",
+        customers: { id: "customer-id-a", phone: "5511999998888" },
+        metadata: {
+          followup_key: "values",
+          followup_due_at: "2026-07-06T11:59:00.000Z",
+          last_bot_message_at: "2026-07-06T11:54:00.000Z",
+          last_customer_message_at: "2026-07-06T11:53:00.000Z",
+          last_followup_stage_id: "ask_price:values:a",
+          followup_count: 0
+        }
+      },
+      {
+        id: "conversation-id-b",
+        customer_id: "customer-id-b",
+        external_conversation_id: "5511999998888@s.whatsapp.net",
+        customers: { id: "customer-id-b", phone: "5511999998888" },
+        metadata: {
+          followup_key: "values",
+          followup_due_at: "2026-07-06T11:59:00.000Z",
+          last_bot_message_at: "2026-07-06T11:54:00.000Z",
+          last_customer_message_at: "2026-07-06T11:53:00.000Z",
+          last_followup_stage_id: "ask_price:values:b",
+          followup_count: 0
+        }
+      }
+    ]);
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result.sent).toBe(1);
+    expect(result.skipped).toBe(1);
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledTimes(1);
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id-b",
+      expect.objectContaining({ followup_cancel_reason: "duplicate_phone_in_job" })
+    );
+  });
+
   it("cancels download follow-up when the customer started testing and said they would report problems", async () => {
     const { service, evolutionService, conversationsRepository } = createService(
       [

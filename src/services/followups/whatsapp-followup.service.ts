@@ -62,6 +62,7 @@ export class WhatsappFollowupService {
     let sent = 0;
     let skipped = 0;
     inProcessDedupeKeys.clear();
+    const phonesSentThisRun = new Set<string>();
 
     for (const conversation of conversations) {
       const metadata = conversation.metadata || {};
@@ -90,6 +91,45 @@ export class WhatsappFollowupService {
       const phone = readCustomerPhone(conversation);
       if (!phone) {
         skipped++;
+        continue;
+      }
+
+      if (phonesSentThisRun.has(phone)) {
+        skipped++;
+        await this.conversationsRepository.updateConversationMetadata(
+          conversation.id,
+          buildCancelledFollowupMetadata(
+            metadata,
+            buildMinimalDuplicatePhoneContext(conversation, metadata, now, phone),
+            {
+              should_send_followup: false,
+              followup_type: "none",
+              reason: "Outra conversa aberta do mesmo WhatsApp ja recebeu follow-up nesta rodada.",
+              conversation_summary: "Duplicidade de conversa aberta para o mesmo telefone.",
+              evidence: [`phone=${phone}`],
+              suggested_message: null,
+              cancel_existing_followup: true,
+              new_stage: null,
+              new_followup_key: null,
+              confidence: 1
+            },
+            "duplicate_phone_in_job",
+            now
+          )
+        );
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "followup_decision",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: {
+            should_send_followup: false,
+            reason: "duplicate_phone_in_job",
+            duplicate_blocked: true,
+            phone,
+            previous_followup_key: metadata.followup_key
+          }
+        });
         continue;
       }
 
@@ -134,6 +174,7 @@ export class WhatsappFollowupService {
       if (policy.dedupeKey) {
         inProcessDedupeKeys.add(policy.dedupeKey);
       }
+      phonesSentThisRun.add(phone);
 
       const leadRecovery = getLeadRecoveryFollowup(metadata);
       const stageId = unansweredCustomerFollowup
@@ -490,6 +531,43 @@ function buildCancelledFollowupMetadata(
       last_followup_decision_reason: reason,
       updated_at: now.toISOString()
     }
+  };
+}
+
+function buildMinimalDuplicatePhoneContext(
+  conversation: ConversationRow,
+  metadata: Record<string, unknown>,
+  now: Date,
+  phone: string
+): FollowupContext {
+  const leadProfile = readLeadProfile(metadata);
+  return {
+    conversation_id: conversation.id,
+    customer_id: conversation.customer_id || conversation.customers?.id || null,
+    phone,
+    now: now.toISOString(),
+    metadata,
+    lead_profile: leadProfile,
+    recent_messages: [],
+    latest_customer_message: null,
+    latest_bot_message: null,
+    latest_human_message: null,
+    last_speaker: null,
+    last_customer_was_answered: true,
+    last_bot_question: null,
+    last_human_question: null,
+    open_order: null,
+    latest_order: null,
+    human_hold_active: false,
+    followup_key: typeof metadata.followup_key === "string" ? metadata.followup_key : null,
+    followup_due_at: typeof metadata.followup_due_at === "string" ? metadata.followup_due_at : null,
+    last_followup_text_hash: typeof metadata.last_followup_text_hash === "string" ? metadata.last_followup_text_hash : null,
+    last_followup_context_hash: buildFollowupContextHash({
+      conversation_id: conversation.id,
+      phone,
+      followup_key: metadata.followup_key || null,
+      duplicate_phone_in_job: true
+    })
   };
 }
 
