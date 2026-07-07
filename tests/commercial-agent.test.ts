@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("server-only", () => ({}));
 
 import { ChatAgentService } from "@/services/agent/chat-agent.service";
+import { extractDeterministicDecision } from "@/services/agent/contextual-intelligence.service";
 import { PlansService } from "@/services/plans.service";
 import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
 import { MAIN_MENU } from "@/lib/whatsapp/menus";
@@ -165,6 +166,93 @@ describe("commercial WhatsApp agent", () => {
 
     expect(result.reply).toContain(expected);
     expect(result.reply.toLowerCase()).not.toContain(forbidden.toLowerCase());
+  });
+
+  it("extracts contextual commercial decisions from short customer replies", () => {
+    const pixDecision = extractDeterministicDecision({
+      current_message: "sim",
+      recent_messages: [],
+      lead_profile: { selected_plan: "mensal" },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: "Quer que eu gere o Pix?",
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(pixDecision).toMatchObject({
+      intent: "request_pix",
+      selected_plan: "mensal",
+      payment_method: "pix",
+      should_create_order: true,
+      should_generate_pix: true,
+      next_expected_reply: "payment_proof"
+    });
+
+    const planAfterPixDecision = extractDeterministicDecision({
+      current_message: "Mensal",
+      recent_messages: [],
+      lead_profile: { pediu_pix: true },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: "Qual plano você quer ativar para eu gerar o Pix?",
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(planAfterPixDecision).toMatchObject({
+      intent: "choose_plan",
+      selected_plan: "mensal",
+      payment_method: "pix",
+      should_create_order: true,
+      should_generate_pix: true
+    });
+
+    const downloadDecision = extractDeterministicDecision({
+      current_message: "já baixei",
+      recent_messages: [],
+      lead_profile: { device: "tvbox_android" },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: "Conseguiu baixar?",
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: "download",
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(downloadDecision).toMatchObject({
+      intent: "already_downloaded",
+      install_status: "downloaded",
+      stage: "install_support"
+    });
+
+    const failedDownloadDecision = extractDeterministicDecision({
+      current_message: "não consegui baixar",
+      recent_messages: [],
+      lead_profile: {},
+      open_order: null,
+      latest_order: null,
+      last_bot_question: "Conseguiu baixar?",
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: "download",
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(failedDownloadDecision).toMatchObject({
+      intent: "download_issue",
+      install_status: "failed",
+      stage: "download_support"
+    });
   });
 
   it("replaces an unsafe agent reply in the real WhatsApp send path", async () => {
@@ -695,6 +783,27 @@ describe("commercial WhatsApp agent", () => {
     });
     expect(result.reply).toContain("PIX do pedido UTV-20260704-000011");
     expect(result.copyText).toBe("000201-pix-copy-paste");
+  });
+
+  it("does not create an order when Pix is requested without a selected plan", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce(null);
+
+    const result = await service.generateCommercialReply({
+      message: "Pix",
+      classification: { intent: "pix_payment", confidence: 0.99, summary: "pix", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444", email: null },
+      conversation: { id: "55555555-5555-4555-8555-555555555555", metadata: { lead_profile: {} } },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(mercadoPagoService.createPixPayment).not.toHaveBeenCalled();
+    expect(result.reply).toBe("Perfeito. Qual plano você quer ativar: mensal, trimestral ou anual?");
+    expect(result.leadProfilePatch).toMatchObject({
+      payment_method: "pix",
+      next_expected_reply: "plan_choice"
+    });
   });
 
   it("creates a dynamic Pix charge and returns copy-paste plus QR media", async () => {

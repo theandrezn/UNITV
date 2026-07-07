@@ -24,6 +24,11 @@ import { SpecialistInterventionAnalysisService } from "@/services/agent/speciali
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 import { HotLeadAlertService } from "@/services/leads/hot-lead-alert.service";
 import {
+  ContextualIntelligenceService,
+  type CommercialContext,
+  type ContextualDecision
+} from "@/services/agent/contextual-intelligence.service";
+import {
   detectUnitvDevice,
   isUnitvInstallationRequest,
   UNITV_DEVICE_COMPATIBILITY
@@ -54,7 +59,8 @@ export class WhatsappMessageService {
     private readonly specialistTrainingExamplesRepository?: SpecialistTrainingExamplesRepository,
     private readonly specialistInterventionAnalysis = new SpecialistInterventionAnalysisService(),
     private readonly agentEventLogService?: AgentEventLogService,
-    private readonly hotLeadAlertService?: HotLeadAlertService
+    private readonly hotLeadAlertService?: HotLeadAlertService,
+    private readonly contextualIntelligenceService = new ContextualIntelligenceService()
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -137,6 +143,7 @@ export class WhatsappMessageService {
 
       const existingLeadProfile = readLeadProfile(conversation.metadata);
       const manualFollowupState = buildManualOutboundFollowupState(message.text, conversation.metadata, new Date(messageAt));
+      const manualLeadProfilePatch = buildManualOutboundLeadProfilePatch(message.text, messageAt);
       const manualLastQuestion = extractLastQuestion(message.text);
       const pausedMetadata = {
         ...(conversation.metadata || {}),
@@ -147,10 +154,13 @@ export class WhatsappMessageService {
         handoff_requested_at: conversation.metadata?.handoff_requested_at || messageAt,
         last_specialist_message_at: messageAt,
         last_bot_message_at: messageAt,
+        human_hold_until: new Date(new Date(messageAt).getTime() + HUMAN_HANDOFF_TIMEOUT_MS).toISOString(),
         lead_profile: {
           ...existingLeadProfile,
+          ...manualLeadProfilePatch,
           last_bot_question: manualLastQuestion || existingLeadProfile.last_bot_question,
           last_specialist_message_at: messageAt,
+          human_hold_until: new Date(new Date(messageAt).getTime() + HUMAN_HANDOFF_TIMEOUT_MS).toISOString(),
           specialist_intervention_count: Number(existingLeadProfile.specialist_intervention_count || 0) + 1,
           learned_from_specialist: true
         }
@@ -409,6 +419,56 @@ export class WhatsappMessageService {
     }
 
     const recentMessages = await this.listRecentConversationMessages(conversation.id);
+    const contextSnapshot = await this.buildCommercialContext({
+      message,
+      conversation,
+      recentMessages
+    });
+    const contextualDecision = await this.contextualIntelligenceService.extract({
+      context: contextSnapshot,
+      useStrongModel: shouldUseStrongContextModel(message.text, contextSnapshot)
+    });
+    const contextualPatch = buildContextualLeadProfilePatch(contextualDecision);
+    if (Object.keys(contextualPatch).length) {
+      const currentLeadProfile = readLeadProfile(conversation.metadata);
+      const nextMetadata = {
+        ...(conversation.metadata || {}),
+        lead_profile: {
+          ...currentLeadProfile,
+          ...contextualPatch,
+          updated_at: new Date().toISOString()
+        }
+      };
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
+      conversation.metadata = nextMetadata;
+    }
+    const policy = applyContextualPolicy({
+      decision: contextualDecision,
+      classification,
+      effectiveMessage
+    });
+    classification = policy.classification;
+    effectiveMessage = policy.effectiveMessage;
+    await this.auditService.createAuditLog({
+      actor_type: "ai_agent",
+      action: "contextual_commercial_decision",
+      entity_type: "conversations",
+      entity_id: conversation.id,
+      metadata: {
+        webhookEventId,
+        detected_intent: contextualDecision.intent,
+        previous_stage: contextSnapshot.lead_profile.stage || contextSnapshot.lead_profile.etapa_atual || null,
+        new_stage: contextualDecision.stage,
+        selected_plan: contextualDecision.selected_plan,
+        open_order_id: contextSnapshot.open_order?.id || null,
+        should_create_order: contextualDecision.should_create_order,
+        should_generate_pix: contextualDecision.should_generate_pix,
+        confidence: contextualDecision.confidence,
+        human_hold_active: contextSnapshot.human_hold_active,
+        followup_key: contextSnapshot.followup_key,
+        followup_due_at: contextSnapshot.followup_due_at
+      }
+    });
     const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata, message.text);
     const commercialReply = await this.chatAgent.generateCommercialReply({
       message: effectiveMessage,
@@ -548,7 +608,7 @@ export class WhatsappMessageService {
     webhookEventId: string;
     message: IncomingEvolutionMessage;
     customer: { id: string };
-    conversation: { id: string; metadata?: Record<string, unknown> | null };
+    conversation: { id: string; customer_id?: string | null; metadata?: Record<string, unknown> | null };
     reply: string;
     classification: Record<string, unknown>;
     media?: { base64: string; mimetype: string; fileName: string; caption: string };
@@ -779,6 +839,63 @@ export class WhatsappMessageService {
       }));
     } catch {
       return [];
+    }
+  }
+
+  private async buildCommercialContext({
+    message,
+    conversation,
+    recentMessages
+  }: {
+    message: IncomingEvolutionMessage;
+    conversation: { id: string; customer_id?: string | null; metadata?: Record<string, unknown> | null };
+    recentMessages: Array<{ role?: string; content?: string | null }>;
+  }): Promise<CommercialContext> {
+    const leadProfile = readLeadProfile(conversation.metadata);
+    const customerId = typeof conversation.customer_id === "string" ? conversation.customer_id : "";
+    const [openOrder, latestOrder] = await Promise.all([
+      this.safeFindLatestOpenOrderByCustomerId(customerId),
+      this.safeFindLatestOrderByConversationCustomer(conversation)
+    ]);
+    const lastBotQuestion = typeof leadProfile.last_bot_question === "string"
+      ? leadProfile.last_bot_question
+      : null;
+
+    return {
+      current_message: message.text,
+      recent_messages: recentMessages,
+      lead_profile: leadProfile,
+      open_order: sanitizeOrderForContext(openOrder),
+      latest_order: sanitizeOrderForContext(latestOrder),
+      last_bot_question: lastBotQuestion,
+      last_bot_message_at: typeof conversation.metadata?.last_bot_message_at === "string" ? conversation.metadata.last_bot_message_at : null,
+      last_specialist_message_at: typeof conversation.metadata?.last_specialist_message_at === "string" ? conversation.metadata.last_specialist_message_at : null,
+      followup_key: typeof conversation.metadata?.followup_key === "string" ? conversation.metadata.followup_key : null,
+      followup_due_at: typeof conversation.metadata?.followup_due_at === "string" ? conversation.metadata.followup_due_at : null,
+      human_hold_active: isRecentSpecialistActivity(conversation.metadata)
+    };
+  }
+
+  private async safeFindLatestOrderByConversationCustomer(conversation: { customer_id?: string | null; metadata?: Record<string, unknown> | null }) {
+    const customerId = typeof conversation.customer_id === "string" ? conversation.customer_id : null;
+    if (!customerId) {
+      return null;
+    }
+    try {
+      return await this.ordersService.findLatestOrderByCustomerId(customerId) as Record<string, unknown> | null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async safeFindLatestOpenOrderByCustomerId(customerId: string) {
+    if (!customerId) {
+      return null;
+    }
+    try {
+      return await this.ordersService.findLatestOpenOrderByCustomerId(customerId) as Record<string, unknown> | null;
+    } catch {
+      return null;
     }
   }
 
@@ -1184,6 +1301,142 @@ function readResponseIntentLocks(leadProfile: Record<string, unknown>) {
     : {};
 }
 
+function buildContextualLeadProfilePatch(decision: ContextualDecision) {
+  const patch: Record<string, unknown> = {
+    commercial_stage: decision.stage,
+    stage: decision.stage,
+    last_customer_intent: decision.intent,
+    next_expected_reply: decision.next_expected_reply,
+    contextual_confidence: decision.confidence,
+    contextual_meaning: decision.customer_message_meaning,
+    should_create_order: decision.should_create_order,
+    should_generate_pix: decision.should_generate_pix
+  };
+
+  if (decision.selected_plan) {
+    patch.selected_plan = decision.selected_plan;
+    patch.plano_interesse = decision.selected_plan;
+    patch.nivel_interesse = "quente";
+  }
+  if (decision.payment_method) {
+    patch.payment_method = decision.payment_method;
+    if (decision.payment_method === "pix") {
+      patch.pediu_pix = true;
+    }
+  }
+  if (decision.install_status) {
+    patch.install_status = decision.install_status;
+    patch.download_status = decision.install_status;
+    if (decision.install_status === "downloaded" || decision.install_status === "installed") {
+      patch.downloaded_app = true;
+    }
+    if (decision.install_status === "installed") {
+      patch.installed_app = true;
+    }
+  }
+
+  return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+}
+
+function sanitizeOrderForContext(order: Record<string, unknown> | null) {
+  if (!order) {
+    return null;
+  }
+
+  return {
+    id: order.id,
+    order_number: order.order_number,
+    status: order.status,
+    plan_id: order.plan_id,
+    amount_cents: order.amount_cents,
+    currency: order.currency,
+    payment_provider: order.payment_provider,
+    has_payment_reference: Boolean(order.payment_reference),
+    has_pix_qr_code: Boolean(readOrderMetadataForContext(order).mercado_pago_pix_qr_code),
+    plans: order.plans
+  };
+}
+
+function readOrderMetadataForContext(order: Record<string, unknown>) {
+  const metadata = order.metadata;
+  return metadata && typeof metadata === "object" && !Array.isArray(metadata)
+    ? metadata as Record<string, unknown>
+    : {};
+}
+
+function applyContextualPolicy({
+  decision,
+  classification,
+  effectiveMessage
+}: {
+  decision: ContextualDecision;
+  classification: IntentClassification;
+  effectiveMessage: string;
+}) {
+  if (decision.confidence < 0.55) {
+    return { classification, effectiveMessage };
+  }
+
+  if (decision.intent === "request_pix" || decision.should_generate_pix) {
+    return {
+      effectiveMessage: "pix",
+      classification: {
+        intent: "pix_payment",
+        confidence: decision.confidence,
+        summary: decision.customer_message_meaning,
+        suggested_reply: ""
+      } satisfies IntentClassification
+    };
+  }
+
+  if (decision.intent === "request_card") {
+    return {
+      effectiveMessage: "cartao",
+      classification: {
+        intent: "card_payment",
+        confidence: decision.confidence,
+        summary: decision.customer_message_meaning,
+        suggested_reply: ""
+      } satisfies IntentClassification
+    };
+  }
+
+  if (decision.intent === "receipt_sent") {
+    return {
+      effectiveMessage,
+      classification: {
+        intent: "receipt_sent",
+        confidence: decision.confidence,
+        summary: decision.customer_message_meaning,
+        suggested_reply: ""
+      } satisfies IntentClassification
+    };
+  }
+
+  if (decision.intent === "download_issue") {
+    return {
+      effectiveMessage,
+      classification: {
+        intent: "technical_support",
+        confidence: decision.confidence,
+        summary: decision.customer_message_meaning,
+        suggested_reply: ""
+      } satisfies IntentClassification
+    };
+  }
+
+  return { classification, effectiveMessage };
+}
+
+function shouldUseStrongContextModel(message: string, context: CommercialContext) {
+  const normalized = normalizeFreeText(message);
+  return (
+    /\b(paguei|pagamento|comprovante|erro|nao consegui|n[aã]o consegui|irritado|reclamacao|reclama[cç][aã]o)\b/.test(normalized) ||
+    Boolean(context.human_hold_active) ||
+    (context.recent_messages || []).some((item) => item.role === "human_agent")
+  );
+}
+
 function isHardDuplicateSafetyReason(reason: string | undefined) {
   return [
     "repeats_welcome",
@@ -1263,6 +1516,47 @@ function buildManualOutboundFollowupState(
   }, metadata, now);
 
   return state.followup_key ? state : {};
+}
+
+function buildManualOutboundLeadProfilePatch(text: string, messageAt: string) {
+  const normalized = normalizeFreeText(text);
+  const patch: Record<string, unknown> = {
+    last_specialist_message_at: messageAt,
+    learned_from_specialist: true
+  };
+
+  if (/\b(mediafire\.com|apk|download|baixar|baixe|downloader|8322904|tutorial|instalar|instalacao)\b/.test(normalized)) {
+    patch.commercial_stage = "download_support";
+    patch.stage = "download_support";
+    patch.install_status = "link_sent";
+    patch.download_status = "link_sent";
+    patch.next_expected_reply = "download_confirmation";
+    patch.followup_reason = "manual_download_link_sent";
+  }
+
+  if (/\b(seja bem vindo|seja bem-vindo|meu nome e andre|meu nome é andre|recarga|renovar|ativar)\b/.test(normalized)) {
+    patch.commercial_stage = patch.commercial_stage || "qualified";
+    patch.stage = patch.stage || "qualified";
+    patch.next_expected_reply = patch.next_expected_reply || "activation_or_renewal";
+    patch.followup_reason = patch.followup_reason || "manual_welcome_or_activation";
+  }
+
+  if (/\b(mensal|3 meses|6 meses|anual|r\$ ?25|r\$ ?70|r\$ ?120|r\$ ?200)\b/.test(normalized)) {
+    patch.commercial_stage = "plan_selected";
+    patch.stage = "plan_selected";
+    patch.next_expected_reply = "payment_method";
+    patch.followup_reason = "manual_plan_offer_sent";
+  }
+
+  if (/\b(pix|copia e cola|qr code|chave)\b/.test(normalized)) {
+    patch.commercial_stage = "awaiting_payment";
+    patch.stage = "awaiting_payment";
+    patch.payment_method = "pix";
+    patch.next_expected_reply = "payment_proof";
+    patch.followup_reason = "manual_payment_instruction_sent";
+  }
+
+  return patch;
 }
 
 function inferManualOutboundIntent(text: string) {

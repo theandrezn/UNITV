@@ -689,8 +689,15 @@ export class ChatAgentService {
       const plans = await this.plansService.listActivePlans();
       const menu = shouldUseMenu(input.message) && plans.length ? buildPlansMenu(plans) : null;
       return {
-        reply: "Ainda não encontrei um pedido aberto. Qual plano você quer ativar: mensal, 3 meses, 6 meses ou anual?",
-        menu: menu || undefined
+        reply: "Perfeito. Qual plano você quer ativar: mensal, trimestral ou anual?",
+        menu: menu || undefined,
+        leadProfilePatch: {
+          commercial_stage: "qualified",
+          stage: "qualified",
+          payment_method: "pix",
+          last_customer_intent: "request_pix",
+          next_expected_reply: "plan_choice"
+        }
       };
     }
 
@@ -702,7 +709,17 @@ export class ChatAgentService {
       return {
         order,
         reply: formatPixReply(order, existingQrCode, existingTicketUrl, promoAccepted),
-        copyText: existingQrCode
+        copyText: existingQrCode,
+        leadProfilePatch: {
+          commercial_stage: "awaiting_payment",
+          stage: "awaiting_payment",
+          payment_method: "pix",
+          payment_status: "pending",
+          last_customer_intent: "request_pix",
+          next_expected_reply: "payment_proof",
+          selected_plan: leadProfile.selected_plan || leadProfile.plano_interesse || null,
+          plano_interesse: leadProfile.plano_interesse || leadProfile.selected_plan || null
+        }
       };
     }
 
@@ -767,6 +784,16 @@ export class ChatAgentService {
         order,
         reply: formatPixReply(paymentOrder, pix.qrCode, pix.ticketUrl, promoAccepted),
         copyText: pix.qrCode,
+        leadProfilePatch: {
+          commercial_stage: "awaiting_payment",
+          stage: "awaiting_payment",
+          payment_method: "pix",
+          payment_status: "pending",
+          last_customer_intent: "request_pix",
+          next_expected_reply: "payment_proof",
+          selected_plan: leadProfile.selected_plan || leadProfile.plano_interesse || null,
+          plano_interesse: leadProfile.plano_interesse || leadProfile.selected_plan || null
+        },
         media: {
           base64: pix.qrCodeBase64,
           mimetype: "image/png",
@@ -1313,10 +1340,10 @@ function findPlanFromLeadProfile(plans: Array<Record<string, unknown>>, leadProf
     if (selectedPlan === "mensal") {
       return slug.includes("mensal") || name.includes("mensal") || durationDays === 30;
     }
-    if (selectedPlan === "3_meses") {
+    if (selectedPlan === "3_meses" || selectedPlan === "trimestral") {
       return slug.includes("3") || name.includes("3_meses") || name.includes("trimestral") || durationDays === 90;
     }
-    if (selectedPlan === "6_meses") {
+    if (selectedPlan === "6_meses" || selectedPlan === "semestral") {
       return slug.includes("6") || name.includes("6_meses") || name.includes("semestral") || durationDays === 180;
     }
     if (selectedPlan === "anual") {
