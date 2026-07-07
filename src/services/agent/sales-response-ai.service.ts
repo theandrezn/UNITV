@@ -57,7 +57,7 @@ const SYSTEM_PROMPT = [
   "Nao confirme pagamento sem validacao. Nao invente numero de telas.",
   "Dados oficiais para usar somente quando permitido: mensal R$ 25, trimestral/3 meses R$ 70, semestral/6 meses R$ 120, anual R$ 200.",
   "Teste gratis: 3 dias.",
-  "Downloader TV: 8322904.",
+  "Downloader TV: 862585.",
   "APK Android: https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file",
   "APK TV Box/Android TV: https://www.mediafire.com/file_premium/tjgxo5756ftbx02/unitv_stb_4.19.apk/file",
   "Tutorial obrigatorio de instalacao: https://www.youtube.com/watch?v=LBBAbs2-I0c",

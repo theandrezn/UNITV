@@ -1289,7 +1289,8 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("Downloader by AFTVnews");
-    expect(result.reply).toContain("8322904");
+    expect(result.reply).toContain("862585");
+    expect(result.reply).not.toContain("8322904");
     expect(result.reply).toContain("https://www.youtube.com/watch?v=LBBAbs2-I0c");
   });
 
@@ -1345,7 +1346,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toContain("já baixou o app");
     expect(result.reply).toContain("teste grátis de 3 dias");
     expect(result.reply).not.toContain("mediafire.com");
-    expect(result.reply).not.toContain("8322904");
+    expect(result.reply).not.toContain("862585");
   });
 
   it("answers screen questions without inventing a number or sending a menu", async () => {

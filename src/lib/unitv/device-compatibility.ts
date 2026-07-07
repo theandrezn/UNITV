@@ -1,5 +1,5 @@
 export const UNITV_TUTORIAL_URL = "https://www.youtube.com/watch?v=LBBAbs2-I0c";
-export const UNITV_DOWNLOADER_CODE = "8322904";
+export const UNITV_DOWNLOADER_CODE = "862585";
 export const UNITV_ANDROID_APK_URL = "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file";
 export const UNITV_TV_APK_URL = "https://www.mediafire.com/file_premium/tjgxo5756ftbx02/unitv_stb_4.19.apk/file";
 

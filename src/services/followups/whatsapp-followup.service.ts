@@ -913,7 +913,7 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
       return "Conseguiu encontrar o Downloader na Play Store da TV?";
     }
     if (/firestick|fire stick/i.test(device)) {
-      return "Conseguiu abrir o Downloader no Fire Stick e digitar o código 8322904?";
+      return "Conseguiu abrir o Downloader no Fire Stick e digitar o código 862585?";
     }
     return "Conseguiu confirmar se seu aparelho tem Android ou Play Store?";
   }

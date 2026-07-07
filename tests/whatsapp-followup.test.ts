@@ -87,7 +87,7 @@ describe("WhatsappFollowupService", () => {
     expect(downloadFollowup.trim().endsWith("?")).toBe(true);
     expect(buildFollowupText({ followup_key: "download", device: "android_tv_google_tv" })).toContain("Play Store");
     expect(buildFollowupText({ followup_key: "download", device: "android_phone" })).toContain("celular Android");
-    expect(buildFollowupText({ followup_key: "download", device: "firestick" })).toContain("8322904");
+    expect(buildFollowupText({ followup_key: "download", device: "firestick" })).toContain("862585");
     expect(buildFollowupText({ followup_key: "install", device: "unknown" })).toContain("Android ou Play Store?");
     expect(buildUnansweredCustomerFallbackText({ followup_key: "download", conversation_stage: "instalacao" }, "Ok")).toBe("Você conseguiu?");
   });

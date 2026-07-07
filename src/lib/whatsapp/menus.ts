@@ -69,7 +69,7 @@ export const DEVICE_MENU: WhatsAppMenu = {
 };
 
 const installRows: WhatsAppMenuRow[] = [
-  { title: "Instalar na TV pelo Downloader", description: "Código 8322904 e passo a passo", rowId: "menu:install:downloader_tv" },
+  { title: "Instalar na TV pelo Downloader", description: "Código 862585 e passo a passo", rowId: "menu:install:downloader_tv" },
   { title: "Quero download no celular", description: "Versão mobile para Android", rowId: "menu:install:apk_android" },
   { title: "Quero download na TV Box/Televisão Android", description: "TV Box, Android TV e aparelhos compatíveis", rowId: "menu:install:apk_tv" },
   { title: "Ver vídeo tutorial", description: "Tutorial no YouTube", rowId: "menu:install:video" },

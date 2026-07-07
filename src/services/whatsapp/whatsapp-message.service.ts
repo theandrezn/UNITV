@@ -1576,7 +1576,7 @@ function buildManualOutboundLeadProfilePatch(text: string, messageAt: string) {
     learned_from_specialist: true
   };
 
-  if (/\b(mediafire\.com|apk|download|baixar|baixe|downloader|8322904|tutorial|instalar|instalacao)\b/.test(normalized)) {
+  if (/\b(mediafire\.com|apk|download|baixar|baixe|downloader|862585|tutorial|instalar|instalacao)\b/.test(normalized)) {
     patch.commercial_stage = "download_support";
     patch.stage = "download_support";
     patch.install_status = "link_sent";
@@ -1636,7 +1636,7 @@ function inferManualOutboundIntent(text: string) {
   const normalized = normalizeFreeText(text);
 
   if (
-    /\b(mediafire\.com|apk|download|baixar|baixe|downloader|8322904|tutorial|instalar|instalacao)\b/.test(normalized)
+    /\b(mediafire\.com|apk|download|baixar|baixe|downloader|862585|tutorial|instalar|instalacao)\b/.test(normalized)
   ) {
     return "technical_support";
   }

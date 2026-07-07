@@ -110,7 +110,7 @@ export function validateResponseAgainstLeadProfile(
       profile.device_compatible === "unknown" ||
       ["iphone", "roku", "samsung_tv", "lg_tv", "computer"].includes(String(profile.device || ""))
     ) &&
-    /(mediafire\.com|\b8322904\b|baixe o apk|use esse link)/i.test(response)
+    /(mediafire\.com|\b862585\b|baixe o apk|use esse link)/i.test(response)
   ) {
     return { valid: false, reason: "sends_installation_to_unconfirmed_device" };
   }
