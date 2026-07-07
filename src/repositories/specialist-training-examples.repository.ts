@@ -64,7 +64,8 @@ export class SpecialistTrainingExamplesRepository {
       .order("created_at", { ascending: false })
       .limit(50);
 
-    const candidates = assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+    const rawCandidates = assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+    const candidates = rawCandidates.filter((example) => example.success_signal !== "negative");
     const keywords = tokenize(`${input.customerMessage || ""} ${input.recentContext || ""}`);
     const ranked = candidates
       .map((example) => ({ example, score: scoreExample(example, input, keywords) }))
@@ -130,12 +131,16 @@ export class SpecialistTrainingExamplesRepository {
 }
 
 function scoreExample(example: Record<string, unknown>, input: RelevantSpecialistExamplesInput, keywords: Set<string>) {
-  let score = example.success_signal === "positive" ? 30 : example.success_signal === "negative" ? -20 : 0;
+  let score = example.success_signal === "positive" ? 55 : example.success_signal === "negative" ? -60 : 5;
   if (input.intent && example.inferred_intent === input.intent) score += 24;
   if (input.stage && example.inferred_stage === input.stage) score += 18;
   if (input.objection && example.inferred_objection === input.objection) score += 12;
   const metadata = example.metadata && typeof example.metadata === "object" ? example.metadata as Record<string, unknown> : {};
   if (input.device && (metadata.device === input.device || metadata.aparelho === input.device)) score += 10;
+  if (metadata.fast_learning === true) score += 14;
+  if (metadata.global_reusable_example === true) score += 8;
+  if (metadata.specialist_message_is_short === true || Number(metadata.specialist_message_words || 0) <= 22) score += 8;
+  if (metadata.human_style === "curto_direto_uma_acao") score += 6;
   const exampleKeywords = tokenize([
     example.customer_last_message || "",
     example.bot_previous_message || "",
@@ -148,6 +153,7 @@ function scoreExample(example: Record<string, unknown>, input: RelevantSpecialis
   ].join(" "));
   score += [...keywords].filter((keyword) => exampleKeywords.has(keyword)).length * 3;
   score += Math.min(Number(example.used_count || 0), 10) * 0.2;
+  score += recencyBoost(example.created_at);
   return score;
 }
 
@@ -158,4 +164,14 @@ function tokenize(value: string) {
 function dateValue(value: unknown) {
   const date = typeof value === "string" ? new Date(value).getTime() : 0;
   return Number.isNaN(date) ? 0 : date;
+}
+
+function recencyBoost(value: unknown) {
+  const timestamp = dateValue(value);
+  if (!timestamp) return 0;
+  const ageHours = (Date.now() - timestamp) / 3_600_000;
+  if (ageHours <= 6) return 12;
+  if (ageHours <= 24) return 8;
+  if (ageHours <= 72) return 4;
+  return 0;
 }

@@ -13,6 +13,9 @@ type SpecialistExample = {
   specialist_message?: string | null;
   style_notes?: string | null;
   inferred_specialist_action?: string | null;
+  why_specialist_intervened?: string | null;
+  success_signal?: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 type GenerateSalesResponseInput = {
@@ -37,6 +40,8 @@ const RESPONSE_SCHEMA = {
 const SYSTEM_PROMPT = [
   "Voce e Andre, vendedor humano da UNITV no WhatsApp.",
   "Interprete o historico e responda como um atendente experiente, natural, curto e comercial.",
+  "O especialista humano costuma responder curto. Prefira 1 ou 2 frases curtas, sem texto grande.",
+  "Nao explique demais. Uma pergunta por vez. Uma acao clara por mensagem.",
   "Nunca repita pergunta que o cliente ja respondeu.",
   "Se disse que ja baixou, nao pergunte se baixou.",
   "Se disse que ja usou, considere que conhece o app.",
@@ -63,6 +68,7 @@ const SYSTEM_PROMPT = [
   "Se o cliente ja baixou ou instalou, nao envie download novamente; avance para teste ou ativacao.",
   "Use exemplos reais do especialista como referencia de logica e estilo, nunca como texto para copiar cegamente.",
   "Quando houver specialist_examples, priorize a logica, o ritmo e a forma de conduzir do especialista sobre respostas padrao.",
+  "Se o exemplo do especialista for curto, responda curto tambem. Nao transforme resposta curta em paragrafo grande.",
   "Evite templates genericos quando um exemplo do especialista mostrar uma abordagem mais contextual.",
   "Nao copie safe_fallback literalmente; use apenas como contexto de seguranca se precisar.",
   "Varie a resposta conforme o historico recente e o ultimo passo real da conversa.",
@@ -85,6 +91,7 @@ export class SalesResponseAIService {
         content: item.content
       })),
       specialist_examples: (input.specialistExamples || []).slice(0, 3),
+      specialist_style_directives: buildSpecialistStyleDirectives(input.specialistExamples || []),
       safe_fallback: input.fallbackReply || null
     };
 
@@ -112,6 +119,30 @@ export class SalesResponseAIService {
       return null;
     }
   }
+}
+
+function buildSpecialistStyleDirectives(examples: SpecialistExample[]) {
+  const selected = examples.slice(0, 3);
+  const hasFastLearning = selected.some((example) => example.metadata?.fast_learning === true);
+  const hasShortHumanStyle = selected.some((example) =>
+    example.metadata?.human_style === "curto_direto_uma_acao" ||
+    example.metadata?.specialist_message_is_short === true ||
+    countWords(example.specialist_message || "") <= 22
+  );
+
+  return {
+    use_fast_learning_examples: hasFastLearning,
+    preferred_style: hasShortHumanStyle ? "curto_direto_contextual" : "contextual_sem_textao",
+    max_sentences: hasShortHumanStyle ? 2 : 3,
+    avoid: ["template_generico", "pergunta_repetida", "resposta_longa", "listar_opcoes_sem_contexto"],
+    instruction: hasShortHumanStyle
+      ? "Responder como especialista: frase curta, proximo passo claro, no maximo uma pergunta."
+      : "Responder pelo contexto recente, sem alongar e sem copiar texto fixo."
+  };
+}
+
+function countWords(value: string) {
+  return value.trim().split(/\s+/).filter(Boolean).length;
 }
 
 export function shouldUseAIResponse(input: {

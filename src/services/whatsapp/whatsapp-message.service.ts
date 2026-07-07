@@ -1031,6 +1031,7 @@ export class WhatsappMessageService {
       });
 
       const repository = this.specialistTrainingExamplesRepository || new SpecialistTrainingExamplesRepository();
+      const quickLearning = buildQuickSpecialistLearningSignals(message.text, botWasOverridden);
       await repository.createExample({
         conversation_id: conversation.id,
         customer_id: customer.id,
@@ -1046,19 +1047,25 @@ export class WhatsappMessageService {
         inferred_customer_state: analysis.inferred_customer_state,
         inferred_specialist_action: analysis.inferred_specialist_action,
         why_specialist_intervened: analysis.why_specialist_intervened,
-        style_notes: analysis.style_notes,
+        style_notes: mergeStyleNotes(analysis.style_notes, quickLearning.styleNotes),
         should_copy_style: true,
         reason: botWasOverridden ? "correction" : "human_takeover",
         bot_response_was_overridden: botWasOverridden,
         human_intervention_detected: true,
-        success_signal: "unknown",
+        success_signal: quickLearning.successSignal,
         metadata: {
           webhookEventId,
           externalMessageId: message.externalMessageId,
           device: leadProfile.device || leadProfile.aparelho || null,
           summary: analysis.summary,
           learned_pattern: analysis.learned_pattern,
-          next_best_action: analysis.next_best_action
+          next_best_action: analysis.next_best_action,
+          fast_learning: true,
+          global_reusable_example: true,
+          human_style: quickLearning.humanStyle,
+          max_reply_sentences: quickLearning.maxReplySentences,
+          specialist_message_words: quickLearning.wordCount,
+          specialist_message_is_short: quickLearning.isShort
         }
       });
       return { analysis, summary: analysis.summary, botResponseWasOverridden: botWasOverridden };
@@ -1932,6 +1939,32 @@ function inferSpecialistExampleSuccessSignal(message: string): "positive" | "neu
     return "positive";
   }
   return "neutral";
+}
+
+function buildQuickSpecialistLearningSignals(message: string, botWasOverridden: boolean) {
+  const normalized = normalizeFreeText(message);
+  const wordCount = normalized.split(/\s+/).filter(Boolean).length;
+  const isShort = wordCount > 0 && wordCount <= 22;
+  const isOperationalCorrection = botWasOverridden || /\b(tente|verifique|coloca|crie|manda|abre|entra|veja|me mande|pronto|aguardando)\b/.test(normalized);
+
+  return {
+    successSignal: isOperationalCorrection || isShort ? "positive" as const : "unknown" as const,
+    humanStyle: isShort ? "curto_direto_uma_acao" : "direto_contextual",
+    styleNotes: isShort
+      ? "Especialista usa frase curta, direta e contextual. Manter 1 ou 2 frases, sem textao e com no maximo uma pergunta."
+      : "Especialista conduz pelo contexto real. Resumir, nao alongar, e avancar para uma acao clara.",
+    maxReplySentences: isShort ? 2 : 3,
+    wordCount,
+    isShort
+  };
+}
+
+function mergeStyleNotes(...notes: Array<string | null | undefined>) {
+  return notes
+    .map((note) => String(note || "").trim())
+    .filter(Boolean)
+    .filter((note, index, list) => list.indexOf(note) === index)
+    .join(" ");
 }
 
 function inferCustomerAgentEvents(text: string, intent: string, leadProfilePatch: Record<string, unknown>) {

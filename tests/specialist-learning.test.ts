@@ -130,7 +130,16 @@ describe("specialist operational learning", () => {
       inferred_specialist_action: "corrigiu_bot",
       why_specialist_intervened: "bot_repetiu_pergunta",
       human_intervention_detected: true,
+      success_signal: "positive",
       specialist_message: expect.stringContaining("[CODIGO_MASCARADO]")
+    }));
+    expect(createExample).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        fast_learning: true,
+        global_reusable_example: true,
+        human_style: "curto_direto_uma_acao",
+        max_reply_sentences: 2
+      })
     }));
     expect(updateConversationMetadata).toHaveBeenCalledWith("conversation-id", expect.objectContaining({
       lead_profile: expect.objectContaining({
@@ -229,6 +238,36 @@ describe("specialist operational learning", () => {
     const request = openAIResponsesCreate.mock.calls[0][0] as { input: Array<{ role: string; content: Array<{ text: string }> }> };
     const context = JSON.parse(request.input[1].content[0].text);
     expect(context.specialist_examples).toHaveLength(3);
+  });
+
+  it("passes fast specialist style directives to avoid long template replies", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    openAIResponsesCreate.mockClear();
+
+    await new SalesResponseAIService().generateResponse({
+      message: "ok",
+      intent: "activation_help",
+      leadProfile: {},
+      specialistExamples: [{
+        customer_last_message: "Ta pedindo senha",
+        specialist_message: "Coloca so numero",
+        style_notes: "Resposta curta.",
+        success_signal: "positive",
+        metadata: {
+          fast_learning: true,
+          human_style: "curto_direto_uma_acao",
+          specialist_message_is_short: true
+        }
+      }]
+    });
+
+    const request = openAIResponsesCreate.mock.calls[0][0] as { input: Array<{ role: string; content: Array<{ text: string }> }> };
+    const context = JSON.parse(request.input[1].content[0].text);
+    expect(context.specialist_style_directives).toEqual(expect.objectContaining({
+      use_fast_learning_examples: true,
+      preferred_style: "curto_direto_contextual",
+      max_sentences: 2
+    }));
   });
 
   it("activates AI response generation when a relevant specialist example exists", () => {
