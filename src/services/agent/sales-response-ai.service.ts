@@ -60,6 +60,8 @@ const SYSTEM_PROMPT = [
   "Use exemplos reais do especialista como referencia de logica e estilo, nunca como texto para copiar cegamente.",
   "Quando houver specialist_examples, priorize a logica, o ritmo e a forma de conduzir do especialista sobre respostas padrao.",
   "Evite templates genericos quando um exemplo do especialista mostrar uma abordagem mais contextual.",
+  "Nao copie safe_fallback literalmente; use apenas como contexto de seguranca se precisar.",
+  "Varie a resposta conforme o historico recente e o ultimo passo real da conversa.",
   "Ignore preco, Pix, link ou codigo de exemplos se divergirem dos dados oficiais acima."
 ].join("\n");
 

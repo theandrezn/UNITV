@@ -184,13 +184,25 @@ export class WhatsappFollowupService {
         ? leadRecovery.stageId
         : String(metadata.last_followup_stage_id || randomUUID());
       const promoRecovery = !leadRecovery && decision.followup_type !== "payment_check" && shouldSendPromoRecoveryFollowup(metadata);
-      const followupText = policy.message || (unansweredCustomerFollowup
-        ? await this.buildUnansweredCustomerFollowupText(conversation, metadata)
+      const fallbackFollowupText = policy.message || (unansweredCustomerFollowup
+        ? buildUnansweredCustomerFallbackText(metadata, context.latest_customer_message?.content || "")
         : leadRecovery
         ? buildLeadRecoveryFollowupText(leadRecovery.step, metadata, conversation)
         : promoRecovery
           ? buildPromoRecoveryFollowupText(metadata, conversation)
           : buildFollowupText(metadata));
+      const followupText = await this.buildContextualFollowupText({
+        context,
+        decision,
+        fallbackText: fallbackFollowupText,
+        reason: unansweredCustomerFollowup
+          ? "ultima_mensagem_do_cliente_sem_resposta"
+          : leadRecovery
+          ? `recuperacao_de_lead_etapa_${leadRecovery.step}`
+          : promoRecovery
+            ? "recuperacao_promocional"
+            : "followup_contextual"
+      });
       const followupTextHash = hashText(followupText);
       const sendResult = await this.evolutionService.sendTextMessage({ phone, text: followupText });
       const leadProfile = readLeadProfile(metadata);
@@ -344,6 +356,44 @@ export class WhatsappFollowupService {
     });
 
     return aiReply || fallbackReply;
+  }
+
+  private async buildContextualFollowupText(input: {
+    context: FollowupContext;
+    decision: FollowupDecision;
+    fallbackText: string;
+    reason: string;
+  }) {
+    const leadProfile = input.context.lead_profile || {};
+    const latestCustomerMessage = input.context.latest_customer_message?.content || String(leadProfile.last_customer_answer || "");
+    const aiReply = await this.salesResponseAIService.generateResponse({
+      message: [
+        latestCustomerMessage,
+        "",
+        `Contexto do follow-up: ${input.reason}.`,
+        `Resumo da decisao: ${input.decision.conversation_summary}.`,
+        `Motivo: ${input.decision.reason}.`,
+        "Escreva uma unica mensagem curta, natural e contextual.",
+        "Nao copie texto pronto nem repita mensagem recente.",
+        "Use o historico completo para decidir o proximo passo.",
+        "Nao invente Pix, preco, codigo, pagamento confirmado ou compatibilidade."
+      ].join("\n"),
+      intent: input.decision.followup_type,
+      leadProfile: {
+        ...leadProfile,
+        followup_type: input.decision.followup_type,
+        followup_reason: input.reason,
+        followup_evidence: input.decision.evidence
+      },
+      recentMessages: input.context.recent_messages.map((message) => ({
+        role: message.role || undefined,
+        content: message.content || null
+      })),
+      fallbackReply: input.fallbackText,
+      useStrongModel: shouldUseStrongFollowupTextModel(input.context, input.decision)
+    });
+
+    return aiReply || input.fallbackText;
   }
 
   private async listRecentMessages(conversationId: string) {
@@ -992,6 +1042,15 @@ function isRenewalFollowup(metadata: Record<string, unknown>, profile: Record<st
       profile.ultima_intencao === "renew_plan" ||
       metadata.conversation_stage === "recarga" ||
       metadata.awaiting_customer_action === "renew_plan"
+  );
+}
+
+function shouldUseStrongFollowupTextModel(context: FollowupContext, decision: FollowupDecision) {
+  const text = normalizeText(context.recent_messages.map((message) => message.content || "").join("\n"));
+  return (
+    decision.confidence < 0.82 ||
+    /\b(revenda|revendedor|pix|comprovante|pagamento|senha|erro|reclama|cancelar|humano)\b/.test(text) ||
+    Boolean(context.latest_human_message)
   );
 }
 

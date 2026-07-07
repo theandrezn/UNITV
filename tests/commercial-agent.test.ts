@@ -81,6 +81,9 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
     reserveCode: vi.fn(async () => null as Record<string, unknown> | null),
     markCodeAsSent: vi.fn(async () => null as Record<string, unknown> | null)
   };
+  const salesResponseAIService = (overrides.salesResponseAIService as { generateResponse: ReturnType<typeof vi.fn> } | undefined) || {
+    generateResponse: vi.fn(async () => null as string | null)
+  };
 
   return {
     service: new ChatAgentService(
@@ -91,7 +94,8 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
       agentActionsService as never,
       auditService as never,
       mercadoPagoService as never,
-      activationCodesService as never
+      activationCodesService as never,
+      salesResponseAIService as never
     ),
     plansService,
     knowledgeService,
@@ -101,6 +105,7 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
     auditService,
     mercadoPagoService,
     activationCodesService,
+    salesResponseAIService,
     ...overrides
   };
 }
@@ -142,6 +147,56 @@ describe("commercial WhatsApp agent", () => {
     expect(classifyCustomerFacingResponseIntent("Olá! Seja bem-vindo. Meu nome é André.")).toBe("saudacao_inicial");
     expect(classifyCustomerFacingResponseIntent("Mensal — R$ 25\n3 meses — R$ 70\n6 meses — R$ 120\nAnual — R$ 200")).toBe("valores_enviados");
     expect(classifyCustomerFacingResponseIntent("Vou te passar a chave PIX agora.")).toBe("pix_enviado");
+  });
+
+  it("uses contextual AI before fixed commercial templates for non-sensitive replies", async () => {
+    const salesResponseAIService = {
+      generateResponse: vi.fn(async () => "Consigo te passar os valores sim. Pelo seu caso, eu comecaria pelo mensal ou pelo teste antes de fechar.")
+    };
+    const { service } = createChatAgent({ salesResponseAIService });
+
+    const result = await service.generateCommercialReply({
+      message: "quais valores?",
+      classification: { intent: "ask_price", confidence: 0.99, summary: "valores", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: { learned_from_specialist: true } } },
+      webhookEventId: "webhook-id",
+      recentMessages: [
+        { role: "customer", content: "quero conhecer" },
+        { role: "human_agent", content: "Se quiser, comeco te explicando o mensal e depois vemos teste." }
+      ],
+      specialistExamples: [
+        {
+          customer_last_message: "quais valores?",
+          specialist_message: "Eu comecaria te passando o mensal e vendo se prefere testar primeiro."
+        }
+      ]
+    });
+
+    expect(salesResponseAIService.generateResponse).toHaveBeenCalled();
+    expect(result.responseRule).toBe("sales_response_ai_contextual_first");
+    expect(result.reply).toContain("Pelo seu caso");
+    expect(result.reply).not.toContain("Hoje temos");
+    expect(result.reply).not.toContain("O mensal é bom para começar");
+  });
+
+  it("keeps sensitive order creation out of free AI writing", async () => {
+    const salesResponseAIService = {
+      generateResponse: vi.fn(async () => "texto da IA que nao deve ser usado")
+    };
+    const { service, ordersService } = createChatAgent({ salesResponseAIService });
+
+    const result = await service.generateCommercialReply({
+      message: "quero mensal",
+      classification: { intent: "buy_plan", confidence: 0.99, summary: "compra", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+    expect(ordersService.createOrder).toHaveBeenCalled();
+    expect(result.reply).toContain("Pedido criado");
   });
 
   it.each([

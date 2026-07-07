@@ -426,17 +426,23 @@ describe("WhatsappFollowupService", () => {
           { role: "assistant", content: "Se preferir, eu também te passo o passo a passo pelo celular para instalar mais rápido." },
           { role: "customer", content: "Ok" }
         ],
-        aiReply: "Você conseguiu?"
+        aiReply: "Conseguiu chegar na tela de login por aí?"
       }
     );
 
     const result = await service.processDueFollowups(now);
 
     expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
-    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+    expect(salesResponseAIService.generateResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fallbackReply: "Conseguiu abrir o app e chegar na tela de login?",
+        intent: "download_check",
+        message: expect.stringContaining("Use o historico completo")
+      })
+    );
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
-      text: "Conseguiu abrir o app e chegar na tela de login?"
+      text: "Conseguiu chegar na tela de login por aí?"
     });
     expect(messagesRepository.createMessage).toHaveBeenCalledWith(
       expect.objectContaining({

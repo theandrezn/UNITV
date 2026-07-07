@@ -111,6 +111,11 @@ export class ChatAgentService {
     const leadProfile = readLeadProfile(input.conversation.metadata);
 
     const contextualReply = getContextualCommercialReply(message, leadProfile);
+    const contextualAiReply = await this.generateContextualCommercialAIReply(input, message, intent, leadProfile, contextualReply?.reply || null);
+    if (contextualAiReply) {
+      return contextualAiReply;
+    }
+
     if (leadProfile.downloaded_app === true && intent === "technical_support" && isInstallationMessage(message)) {
       return {
         reply:
@@ -399,6 +404,30 @@ export class ChatAgentService {
     }
 
     return { reply: this.generateReply(input) };
+  }
+
+  private async generateContextualCommercialAIReply(
+    input: CommercialReplyInput,
+    message: string,
+    intent: string,
+    leadProfile: Record<string, unknown>,
+    fallbackReply: string | null
+  ): Promise<CommercialReplyResult | null> {
+    if (isSensitiveExecutionIntent(intent)) {
+      return null;
+    }
+
+    const aiReply = await this.salesResponseAIService.generateResponse({
+      message,
+      intent,
+      leadProfile,
+      recentMessages: input.recentMessages,
+      specialistExamples: input.specialistExamples,
+      fallbackReply,
+      useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
+    });
+
+    return aiReply ? { reply: aiReply, responseSource: "ai", responseRule: "sales_response_ai_contextual_first" } : null;
   }
 
   private async generateCardPayment(
@@ -1001,6 +1030,18 @@ function shouldUseStrongSalesModel(
     leadProfile.nivel_interesse === "quente" ||
     (recentMessages || []).some((item) => item.role === "human_agent")
   );
+}
+
+function isSensitiveExecutionIntent(intent: string) {
+  return [
+    "pix_payment",
+    "card_payment",
+    "buy_plan",
+    "renew_plan",
+    "receipt_sent",
+    "activation_help",
+    "human_help"
+  ].includes(intent);
 }
 
 function formatMoney(priceCents: number, currency = "BRL") {
