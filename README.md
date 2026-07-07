@@ -42,17 +42,17 @@ SUPABASE_SERVICE_ROLE_KEY=
 SUPABASE_DB_URL=
 
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-5.5-mini
-OPENAI_MODEL_SALES_AGENT=gpt-5.5-mini
-OPENAI_MODEL_SALES_AGENT_STRONG=gpt-5.5-mini
-OPENAI_MODEL_INTENT=gpt-5.5-mini
+OPENAI_MODEL=gpt-5.4-mini
+OPENAI_MODEL_SALES_AGENT=gpt-5.4-mini
+OPENAI_MODEL_SALES_AGENT_STRONG=gpt-5.5
+OPENAI_MODEL_INTENT=gpt-5.4-mini
 
 APP_ENV=development
 APP_BASE_URL=
 WEBHOOK_SECRET=
 ```
 
-`OPENAI_MODEL` pode ficar vazio; o codigo usa `gpt-5.5-mini` como default.
+`OPENAI_MODEL` pode ficar vazio; o codigo usa `gpt-5.4-mini` como default porque `gpt-5.5-mini` nao existe na API.
 
 `SUPABASE_DB_URL` e necessario para ferramentas e scripts diretos de banco, mas os clients server-side usam `SUPABASE_URL` e `SUPABASE_SERVICE_ROLE_KEY`.
 
