@@ -36,6 +36,9 @@ const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
 const CURRENT_RECHARGE_PRICE_QUESTION = "Voce ja faz a recarga? Se sim, faz a quanto?";
+const TRAFFIC_RECHARGE_WELCOME =
+  "Ol\u00e1! Seja bem-vindo ao melhor aplicativo de filmes e canais \u{1F9E1}. Meu nome \u00e9 Andr\u00e9.\n\n" +
+  "Voce ja faz o uso do app? Ou e a primeira vez?";
 const RENEWAL_CONTEXT_QUESTION = "Perfeito. Voce ja usa o UNITV e quer so renovar o codigo, ou seria sua primeira vez usando?";
 
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
@@ -335,6 +338,22 @@ export class ChatAgentService {
 
       if (!plan) {
         const preferenceMenu = allowMenu && plans.length ? buildPlansMenu(plans) : null;
+        if (intent === "renew_plan" && isTrafficRechargeOpener(message)) {
+          return {
+            reply: TRAFFIC_RECHARGE_WELCOME,
+            menu: undefined,
+            sendTextBeforeMenu: false,
+            leadProfilePatch: {
+              commercial_stage: "welcome_activation",
+              stage: "welcome_activation",
+              wants_recharge: true,
+              traffic_source_opener: true,
+              last_customer_intent: "traffic_recharge_opener",
+              next_expected_reply: "activation_or_renewal",
+              last_bot_question: "Voce ja faz o uso do app? Ou e a primeira vez?"
+            }
+          };
+        }
         if (intent === "renew_plan" && isRenewalLeadMessage(message)) {
           return {
             reply: RENEWAL_CONTEXT_QUESTION,
@@ -1309,6 +1328,17 @@ function isRenewalLeadMessage(message: string) {
     .replace(/[\u0300-\u036f]/g, "");
 
   return /\b(recarga|renovar|renovacao|codigo unitv)\b/.test(normalized) && !/\b(mensal|3 meses|6 meses|anual|trimestral|semestral)\b/.test(normalized);
+}
+
+function isTrafficRechargeOpener(message: string) {
+  const normalized = message
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+
+  return /\bol[aá]!\s*quero fazer recarga codigo unitv\b/.test(normalized) ||
+    /\bquero fazer recarga codigo unitv\b/.test(normalized);
 }
 
 function isPixPaymentMessage(message: string) {

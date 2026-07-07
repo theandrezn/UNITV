@@ -509,11 +509,20 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("ja usa o UNITV");
+    expect(result.reply).toContain("Seja bem-vindo ao melhor aplicativo de filmes e canais");
+    expect(result.reply).toContain("Meu nome");
+    expect(result.reply).toContain("Voce ja faz o uso do app? Ou e a primeira vez?");
+    expect(result.reply).not.toContain("renovação de qual plano");
+    expect(result.reply).not.toContain("mensal, 3 meses");
     expect(result.reply).not.toContain("R$ 25");
     expect(result.reply).not.toContain("R$ 70");
     expect(result.reply).not.toContain("R$ 120");
     expect(result.reply).not.toContain("R$ 200");
+    expect(result.leadProfilePatch).toMatchObject({
+      traffic_source_opener: true,
+      stage: "welcome_activation",
+      next_expected_reply: "activation_or_renewal"
+    });
   });
 
   it("asks plan preference without prices when customer says they already use UNITV", async () => {
@@ -627,7 +636,10 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("ja usa o UNITV");
+    expect(result.reply).toContain("Seja bem-vindo ao melhor aplicativo de filmes e canais");
+    expect(result.reply).toContain("Meu nome");
+    expect(result.reply).toContain("Voce ja faz o uso do app? Ou e a primeira vez?");
+    expect(result.reply).not.toContain("renovação de qual plano");
     expect(result.reply).not.toContain("R$ 25");
     expect(result.reply).not.toContain("R$ 70");
     expect(result.menu).toBeUndefined();
