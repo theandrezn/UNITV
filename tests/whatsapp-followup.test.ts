@@ -814,4 +814,53 @@ describe("WhatsappFollowupService", () => {
     expect(result.sent).toBe(0);
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
+
+  it("cancels generic plan follow-up when specialist already closed sale and is delivering access", async () => {
+    const now = new Date("2026-07-06T15:02:00.000Z");
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "plan_choice",
+            followup_due_at: "2026-07-06T15:01:00.000Z",
+            last_bot_message_at: "2026-07-06T14:40:00.000Z",
+            last_customer_message_at: "2026-07-06T14:57:00.000Z",
+            last_specialist_message_at: "2026-07-06T14:57:00.000Z",
+            last_followup_stage_id: "ask_price:plan_choice:1",
+            followup_count: 0
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { role: "human_agent", content: "Entre nesse mesmo local", created_at: "2026-07-06T14:51:00.000Z" },
+          { role: "human_agent", content: "E me mande uma foto", created_at: "2026-07-06T14:51:00.000Z" },
+          { role: "human_agent", content: "Pra lhe instruir onde entrar", created_at: "2026-07-06T14:51:00.000Z" },
+          { role: "customer", content: "[foto da tela de recarga]", created_at: "2026-07-06T14:52:00.000Z" },
+          { role: "human_agent", content: "Veja se voce ver se tem algum botao ativar recarga", created_at: "2026-07-06T14:53:00.000Z" },
+          { role: "customer", content: "[foto centro de resgate]", created_at: "2026-07-06T14:54:00.000Z" },
+          { role: "human_agent", content: "Pronto ai mesmo, ja lhe mando.", created_at: "2026-07-06T14:54:00.000Z" },
+          { role: "human_agent", content: "So aguardando o fornecedor responder", created_at: "2026-07-06T14:57:00.000Z" },
+          { role: "human_agent", content: "E ja lhe mando o acesso", created_at: "2026-07-06T14:57:00.000Z" },
+          { role: "customer", content: "👍", created_at: "2026-07-06T14:57:00.000Z" }
+        ]
+      }
+    );
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_key: null,
+        followup_cancel_reason: expect.stringMatching(/specialist|customer_resolved|self_monitoring/),
+        conversation_stage: "human_support_activation"
+      })
+    );
+  });
 });

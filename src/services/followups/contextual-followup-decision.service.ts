@@ -122,6 +122,16 @@ export function decideFollowupDeterministically(context: FollowupContext): Follo
     return cancelDecision("Atendimento humano recente ainda esta ativo.", "Humano falou recentemente e o bot deve aguardar.", ["human_hold_active=true"], "human_support", 0.98);
   }
 
+  if (isHumanLedAccessOrClosedSale(textWindow, profile)) {
+    return cancelDecision(
+      "Especialista ja conduziu a venda/ativacao e esta tratando a entrega do acesso.",
+      "Historico mostra humano orientando telas, pedindo foto ou aguardando fornecedor/acesso; follow-up comercial generico seria atropelo.",
+      collectEvidence(context, ["mando acesso", "fornecedor", "foto", "ativar recarga", "centro de resgate", "onde entrar"]),
+      "human_support_activation",
+      0.99
+    );
+  }
+
   if (isResellerContext(textWindow, profile)) {
     const humanLeading = context.latest_human_message && context.last_speaker !== "customer";
     if (humanLeading || context.last_human_question) {
@@ -308,6 +318,20 @@ function customerStartedTesting(text: string) {
 
 function customerResolvedInstall(text: string) {
   return /\b(ja baixei|baixei|ja instalei|instalei|consegui instalar|deu certo|entrei certinho|funcionou)\b/.test(text);
+}
+
+function isHumanLedAccessOrClosedSale(text: string, profile: Record<string, unknown>) {
+  return Boolean(
+    profile.sale_closed_by_specialist ||
+    profile.access_delivery_status === "human_handling" ||
+    profile.stage === "human_support_activation" ||
+    /\b(mando|mandar|envio|enviar|libero|liberar|entrego|entregar)\b.{0,35}\b(acesso|codigo|recarga)\b/.test(text) ||
+    /\b(aguardando|esperando)\b.{0,35}\b(fornecedor|responder|retornar)\b/.test(text) ||
+    /\b(fornecedor)\b.{0,35}\b(acesso|responder|retornar)\b/.test(text) ||
+    /\b(mande|envie|manda|envia)\b.{0,35}\b(foto|print|tela)\b/.test(text) ||
+    /\b(instruir|mostrar|orientar)\b.{0,35}\b(onde entrar|entrar|tela)\b/.test(text) ||
+    /\b(botao ativar recarga|centro de resgate|entrar nesse mesmo local)\b/.test(text)
+  );
 }
 
 function hasPendingPixOrder(context: FollowupContext) {

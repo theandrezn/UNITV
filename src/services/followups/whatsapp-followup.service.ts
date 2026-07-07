@@ -668,7 +668,15 @@ function isPaidContext(context: FollowupContext) {
 
 function isFinalCustomerMessageResolved(context: FollowupContext) {
   const text = normalizeText(context.recent_messages.slice(-12).map((message) => message.content || "").join("\n"));
-  return /\b(vou comecar a testar|qualquer problema.*aviso|te aviso|ja baixei|ja instalei|consegui instalar|deu certo|funcionou)\b/.test(text);
+  const profile = context.lead_profile || {};
+  return (
+    /\b(vou comecar a testar|qualquer problema.*aviso|te aviso|ja baixei|ja instalei|consegui instalar|deu certo|funcionou)\b/.test(text) ||
+    Boolean(profile.sale_closed_by_specialist || profile.access_delivery_status === "human_handling" || profile.stage === "human_support_activation") ||
+    /\b(mando|mandar|envio|enviar|libero|liberar|entrego|entregar)\b.{0,35}\b(acesso|codigo|recarga)\b/.test(text) ||
+    /\b(aguardando|esperando)\b.{0,35}\b(fornecedor|responder|retornar)\b/.test(text) ||
+    /\b(mande|envie|manda|envia)\b.{0,35}\b(foto|print|tela)\b/.test(text) ||
+    /\b(botao ativar recarga|centro de resgate|entrar nesse mesmo local)\b/.test(text)
+  );
 }
 
 function isResellerMetadata(context: FollowupContext) {

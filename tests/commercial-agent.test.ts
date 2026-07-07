@@ -2297,6 +2297,77 @@ describe("commercial WhatsApp agent", () => {
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
 
+  it("clears stale plan follow-up when specialist is closing sale or delivering access", async () => {
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({
+        id: "conversation-id",
+        metadata: {
+          followup_key: "plan_choice",
+          followup_due_at: "2026-07-04T21:25:00.000Z",
+          conversation_stage: "plan_selected",
+          lead_profile: { selected_plan: "mensal" }
+        }
+      })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+      listMessagesByConversationId: vi.fn(async () => [
+        { role: "customer", content: "👍", created_at: "2026-07-04T21:19:00.000Z" },
+        { role: "human_agent", content: "Veja se tem algum botao ativar recarga", created_at: "2026-07-04T21:18:00.000Z" }
+      ])
+    };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", phone: "5511999998888" })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      { classify: vi.fn() } as never,
+      { generateCommercialReply: vi.fn() } as never,
+      { sendTextMessage: vi.fn() } as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { createExample: vi.fn(async (data) => data) } as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "manual-access-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "So aguardando o fornecedor responder. E ja lhe mando o acesso",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1783200000,
+        fromMe: true,
+        isGroup: false
+      }
+    });
+
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_key: null,
+        followup_due_at: null,
+        conversation_stage: "human_support_activation",
+        lead_profile: expect.objectContaining({
+          sale_closed_by_specialist: true,
+          access_delivery_status: "human_handling",
+          stage: "human_support_activation"
+        })
+      })
+    );
+  });
+
   it("classifies a matching from-me webhook as bot echo instead of specialist training", async () => {
     const sentAt = "2026-07-04T21:20:00.000Z";
     const messagesRepository = {

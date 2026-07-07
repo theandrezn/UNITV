@@ -1511,6 +1511,16 @@ function buildManualOutboundFollowupState(
   metadata: Record<string, unknown> | null | undefined,
   now: Date
 ) {
+  if (isManualAccessDeliveryContext(text)) {
+    return {
+      followup_key: null,
+      followup_due_at: null,
+      awaiting_customer_action: null,
+      conversation_stage: "human_support_activation",
+      followup_cancel_reason: "specialist_closing_sale_or_access"
+    };
+  }
+
   const intent = inferManualOutboundIntent(text);
   if (!intent) {
     return {};
@@ -1562,7 +1572,29 @@ function buildManualOutboundLeadProfilePatch(text: string, messageAt: string) {
     patch.followup_reason = "manual_payment_instruction_sent";
   }
 
+  if (isManualAccessDeliveryContext(text)) {
+    patch.commercial_stage = "human_support_activation";
+    patch.stage = "human_support_activation";
+    patch.sale_closed_by_specialist = true;
+    patch.access_delivery_status = "human_handling";
+    patch.next_expected_reply = "access_delivery_or_screen_photo";
+    patch.followup_reason = "specialist_closing_sale_or_access";
+    patch.self_monitoring = true;
+  }
+
   return patch;
+}
+
+function isManualAccessDeliveryContext(text: string) {
+  const normalized = normalizeFreeText(text);
+  return (
+    /\b(mando|mandar|envio|enviar|libero|liberar|entrego|entregar)\b.{0,35}\b(acesso|codigo|c[oó]digo|recarga)\b/.test(normalized) ||
+    /\b(aguardando|esperando)\b.{0,35}\b(fornecedor|responder|retornar)\b/.test(normalized) ||
+    /\b(fornecedor)\b.{0,35}\b(acesso|responder|retornar)\b/.test(normalized) ||
+    /\b(mande|envie|manda|envia)\b.{0,35}\b(foto|print|tela)\b/.test(normalized) ||
+    /\b(instruir|mostrar|orientar)\b.{0,35}\b(onde entrar|entrar|tela)\b/.test(normalized) ||
+    /\b(botao ativar recarga|centro de resgate|entrar nesse mesmo local)\b/.test(normalized)
+  );
 }
 
 function inferManualOutboundIntent(text: string) {
