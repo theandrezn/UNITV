@@ -719,7 +719,7 @@ describe("WhatsappFollowupService", () => {
     );
   });
 
-  it("does not send a template when contextual AI cannot produce follow-up text", async () => {
+  it("uses contextual decision message when final follow-up AI text is unavailable", async () => {
     const now = new Date("2026-07-06T12:00:00.000Z");
     const { service, evolutionService, messagesRepository, conversationsRepository, auditService } = createService(
       [
@@ -742,20 +742,29 @@ describe("WhatsappFollowupService", () => {
 
     const result = await service.processDueFollowups(now);
 
-    expect(result).toEqual({ checked: 1, sent: 0, skipped: 1 });
-    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
-    expect(messagesRepository.createMessage).not.toHaveBeenCalled();
+    expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "Te ajudo a escolher o melhor plano. Voce quer mensal, trimestral ou anual?"
+    });
+    expect(messagesRepository.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: "assistant",
+        content: "Te ajudo a escolher o melhor plano. Voce quer mensal, trimestral ou anual?"
+      })
+    );
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        followup_due_at: "2026-07-06T12:30:00.000Z",
-        followup_cancel_reason: "contextual_ai_reply_unavailable"
+        followup_due_at: null,
+        followup_sent_stage_id: "ask_price:values:no-ai",
+        followup_count: 1
       })
     );
     expect(auditService.createAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: "whatsapp_followup_skipped",
-        metadata: expect.objectContaining({ reason: "contextual_ai_reply_unavailable" })
+        action: "whatsapp_followup_sent",
+        metadata: expect.objectContaining({ followup_key: "values" })
       })
     );
   });

@@ -414,7 +414,11 @@ export class WhatsappFollowupService {
       useStrongModel: shouldUseStrongFollowupTextModel(input.context, input.decision)
     });
 
-    return aiReply;
+    if (aiReply) {
+      return aiReply;
+    }
+
+    return input.decision.suggested_message?.trim() || null;
   }
 
   private async listRecentMessages(conversationId: string) {
