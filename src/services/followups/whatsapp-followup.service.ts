@@ -10,6 +10,7 @@ import { SalesResponseAIService } from "@/services/agent/sales-response-ai.servi
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
 const MAX_LEAD_RECOVERY_FOLLOWUPS = 4;
 const HUMAN_SILENCE_WINDOW_MS = 5 * 60 * 1000;
+const UNANSWERED_BOT_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const UNANSWERED_CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const LEAD_RECOVERY_DELAYS_AFTER_SEND_MS = [
@@ -50,7 +51,8 @@ export class WhatsappFollowupService {
     for (const conversation of conversations) {
       const metadata = conversation.metadata || {};
       const unansweredCustomerFollowup = getUnansweredCustomerFollowup(metadata, now);
-      if (!isDue(metadata.followup_due_at, now) && !unansweredCustomerFollowup) {
+      const unansweredBotFollowup = getUnansweredBotFollowup(metadata, now);
+      if (!isDue(metadata.followup_due_at, now) && !unansweredCustomerFollowup && !unansweredBotFollowup) {
         continue;
       }
 
@@ -79,6 +81,8 @@ export class WhatsappFollowupService {
       const leadRecovery = getLeadRecoveryFollowup(metadata);
       const stageId = unansweredCustomerFollowup
         ? unansweredCustomerFollowup.stageId
+        : unansweredBotFollowup
+        ? unansweredBotFollowup.stageId
         : leadRecovery
         ? leadRecovery.stageId
         : String(metadata.last_followup_stage_id || randomUUID());
@@ -109,6 +113,13 @@ export class WhatsappFollowupService {
               unanswered_customer_followup_sent_at: now.toISOString(),
               unanswered_customer_followup_stage_id: stageId,
               unanswered_customer_followup_for_message_at: unansweredCustomerFollowup.customerMessageAt
+            }
+          : {}),
+        ...(unansweredBotFollowup
+          ? {
+              unanswered_bot_followup_sent_at: now.toISOString(),
+              unanswered_bot_followup_stage_id: stageId,
+              unanswered_bot_followup_for_message_at: unansweredBotFollowup.botMessageAt
             }
           : {}),
         ...(leadRecovery
@@ -147,6 +158,7 @@ export class WhatsappFollowupService {
           followup_key: metadata.followup_key,
           stageId,
           promo_recovery: promoRecovery,
+          unanswered_bot_followup: Boolean(unansweredBotFollowup),
           unanswered_customer_followup: Boolean(unansweredCustomerFollowup),
           lead_recovery_step: leadRecovery?.step || null
         }
@@ -163,6 +175,7 @@ export class WhatsappFollowupService {
           stageId,
           sendResult,
           promo_recovery: promoRecovery,
+          unanswered_bot_followup: Boolean(unansweredBotFollowup),
           lead_recovery_step: leadRecovery?.step || null
         }
       });
@@ -180,6 +193,7 @@ export class WhatsappFollowupService {
           followup_count: nextMetadata.followup_count,
           stageId,
           promo_recovery: promoRecovery,
+          unanswered_bot_followup: Boolean(unansweredBotFollowup),
           unanswered_customer_followup: Boolean(unansweredCustomerFollowup),
           lead_recovery_step: leadRecovery?.step || null
         }
@@ -292,8 +306,9 @@ export function buildLeadRecoveryFollowupText(
 
   if (step === 1) {
     return [
-      firstName ? `${namePrefix}só pra eu te ajudar melhor:` : "Só pra eu te ajudar melhor:",
-      "Você teria interesse em algum plano UNITV hoje? ✅"
+      firstName ? `${namePrefix}voce ja usou o UNITV?` : "Voce ja usou o UNITV?",
+      "Se nao, posso te enviar 3 dias gratis para testar.",
+      "Qual aparelho voce quer testar: TV Box, Android TV, celular Android ou Fire Stick?"
     ].join("\n\n");
   }
 
@@ -519,6 +534,47 @@ function getUnansweredCustomerFollowup(metadata: Record<string, unknown>, now: D
     customerMessageAt: metadata.last_customer_message_at,
     stageId: `customer_unanswered:${metadata.last_customer_message_at}`
   };
+}
+
+function getUnansweredBotFollowup(metadata: Record<string, unknown>, now: Date) {
+  if (!hasFollowupIntent(metadata)) {
+    return null;
+  }
+
+  if (isAfter(metadata.last_customer_message_at, metadata.last_bot_message_at)) {
+    return null;
+  }
+
+  if (typeof metadata.last_bot_message_at !== "string") {
+    return null;
+  }
+
+  if (isDue(metadata.followup_due_at, now)) {
+    return null;
+  }
+
+  const botMessageAt = new Date(metadata.last_bot_message_at);
+  if (Number.isNaN(botMessageAt.getTime())) {
+    return null;
+  }
+
+  if (now.getTime() - botMessageAt.getTime() < UNANSWERED_BOT_FOLLOWUP_DELAY_MS) {
+    return null;
+  }
+
+  if (metadata.unanswered_bot_followup_for_message_at === metadata.last_bot_message_at) {
+    return null;
+  }
+
+  return {
+    botMessageAt: metadata.last_bot_message_at,
+    stageId: String(metadata.last_followup_stage_id || `bot_unanswered:${metadata.last_bot_message_at}`)
+  };
+}
+
+function hasFollowupIntent(metadata: Record<string, unknown>) {
+  const key = String(metadata.followup_key || "");
+  return Boolean(key && key !== "null" && key !== "undefined");
 }
 
 function readCustomerPhone(conversation: ConversationRow) {

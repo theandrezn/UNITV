@@ -152,7 +152,7 @@ describe("WhatsappFollowupService", () => {
     expect(result.sent).toBe(1);
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: "João, só pra eu te ajudar melhor:\n\nVocê teria interesse em algum plano UNITV hoje? ✅"
+        text: "João, voce ja usou o UNITV?\n\nSe nao, posso te enviar 3 dias gratis para testar.\n\nQual aparelho voce quer testar: TV Box, Android TV, celular Android ou Fire Stick?"
       })
     );
     expect(messagesRepository.createMessage).toHaveBeenCalledWith(
@@ -169,6 +169,52 @@ describe("WhatsappFollowupService", () => {
         lead_recovery_followup_step: 1,
         lead_recovery_followup_completed: false,
         last_followup_stage_id: "greeting:welcome_activation:1:recovery:2"
+      })
+    );
+  });
+
+  it("recovers unanswered bot messages after 5 minutes even when followup_due_at is missing", async () => {
+    const now = new Date("2026-07-06T12:35:00.000Z");
+    const { service, evolutionService, messagesRepository, conversationsRepository } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888" },
+        metadata: {
+          followup_key: "welcome_activation",
+          followup_due_at: null,
+          last_bot_message_at: "2026-07-06T12:29:00.000Z",
+          last_customer_message_at: "2026-07-06T12:28:00.000Z",
+          last_followup_stage_id: "greeting:welcome_activation:1",
+          followup_count: 0,
+          lead_profile: {
+            intencao_inicial: "greeting",
+            last_bot_question: "Voce quer renovar um acesso que ja tem ou ativar um novo plano?"
+          }
+        }
+      }
+    ]);
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("Voce ja usou o UNITV?")
+      })
+    );
+    expect(messagesRepository.createMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        external_message_id: "followup:conversation-id:greeting:welcome_activation:1",
+        metadata: expect.objectContaining({ unanswered_bot_followup: true })
+      })
+    );
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        unanswered_bot_followup_for_message_at: "2026-07-06T12:29:00.000Z",
+        lead_recovery_followup_step: 1,
+        followup_due_at: "2026-07-06T13:20:00.000Z"
       })
     );
   });
@@ -239,7 +285,7 @@ describe("WhatsappFollowupService", () => {
     expect(lastCall).toContain("R$ 19,99");
     expect(lastCall).not.toContain("pagamento");
     expect(lastCall).not.toContain("comprovante");
-    expect(buildLeadRecoveryFollowupText(1, { lead_profile: {} }).startsWith("Só pra eu te ajudar melhor:")).toBe(true);
+    expect(buildLeadRecoveryFollowupText(1, { lead_profile: {} })).toContain("Voce ja usou o UNITV?");
     expect(buildLeadRecoveryFollowupText(2, { lead_profile: {} }).startsWith("Consigo uma condição especial")).toBe(true);
   });
 
