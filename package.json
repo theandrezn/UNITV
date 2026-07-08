@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "training:export-paid": "tsx scripts/export-paid-training-data.ts",
+    "training:review-paid": "tsx scripts/review-paid-training-data.ts",
     "obsidian:sync": "powershell -ExecutionPolicy Bypass -File scripts/sync-obsidian-knowledge.ps1",
     "obsidian:watch": "powershell -ExecutionPolicy Bypass -File scripts/watch-obsidian-knowledge.ps1",
     "db:seed": "supabase db execute --file supabase/seed.sql"
