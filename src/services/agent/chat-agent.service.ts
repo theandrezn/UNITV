@@ -1647,24 +1647,25 @@ function readOrderPlan(order: Record<string, unknown>) {
   return { name: "Plano UNiTV", slug: "unitv" };
 }
 
-function formatPixReply(order: Record<string, unknown>, _qrCode: string, _ticketUrl: string | null, promoAccepted = false) {
+function formatPixReply(order: Record<string, unknown>, qrCode: string, _ticketUrl: string | null, promoAccepted = false) {
   if (promoAccepted) {
     return [
       "Perfeito ✅",
-      "Vou te passar a chave PIX agora.",
-      "Assim que fizer o pagamento, me manda o comprovante por aqui que eu já libero seu acesso.",
+      "Gerei o Pix do mensal por R$ 19,99 pelo Mercado Pago.",
       "Condição especial aplicada: R$ 19,99 nos 2 primeiros meses.",
       `PIX do pedido ${String(order.order_number)}`,
-      "Vou enviar o Pix Copia e Cola na próxima mensagem para facilitar a cópia.",
-      "Toque e segure na próxima mensagem e escolha copiar.",
+      "Pix Copia e Cola:",
+      qrCode,
+      "Se preferir, toque e segure nesta mensagem e escolha copiar.",
       "A confirmação é automática pelo Mercado Pago. Não precisa enviar comprovante."
     ].join("\n\n");
   }
 
   return [
     `PIX do pedido ${String(order.order_number)}`,
-    "Vou enviar o Pix Copia e Cola na próxima mensagem para facilitar a cópia.",
-    "Toque e segure na próxima mensagem e escolha copiar.",
+    "Pix Copia e Cola:",
+    qrCode,
+    "Se preferir, toque e segure nesta mensagem e escolha copiar.",
     "A confirmação é automática pelo Mercado Pago. Não precisa enviar comprovante."
   ].join("\n\n");
 }

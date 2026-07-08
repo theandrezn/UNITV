@@ -1076,8 +1076,9 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("próxima mensagem");
-    expect(result.reply).not.toContain("000201-pix-copy-paste");
+    expect(result.reply).toContain("Pix Copia e Cola");
+    expect(result.reply).toContain("000201-pix-copy-paste");
+    expect(result.reply).not.toContain("67070222000151");
     expect(result.copyText).toBe("000201-pix-copy-paste");
     expect(result.reply).not.toContain("mercadopago.com.br/payments");
     expect(result.reply).not.toContain("e-mail");
@@ -1207,8 +1208,9 @@ describe("commercial WhatsApp agent", () => {
         })
       })
     );
-    expect(result.reply).toContain("próxima mensagem");
-    expect(result.reply).not.toContain("000201-pix-copy-paste");
+    expect(result.reply).toContain("Pix Copia e Cola");
+    expect(result.reply).toContain("000201-pix-copy-paste");
+    expect(result.reply).not.toContain("67070222000151");
     expect(result.copyText).toBe("000201-pix-copy-paste");
     expect(result.reply).not.toContain("mercadopago.com.br/payments");
     expect(result.reply).toContain("confirmação é automática");
@@ -1282,6 +1284,66 @@ describe("commercial WhatsApp agent", () => {
     });
     expect(result.reply).toContain("Perfeito");
     expect(result.reply).toContain("R$ 19,99");
+    expect(result.reply).toContain("Pix Copia e Cola");
+    expect(result.reply).toContain("000201-pix-copy-paste");
+    expect(result.reply).not.toContain("67070222000151");
+    expect(result.copyText).toBe("000201-pix-copy-paste");
+  });
+
+  it("creates a Mercado Pago Pix copy-paste when a promo lead asks for Pix without an open order", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce(null);
+    ordersService.createOrder.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260708-000019",
+      customer_id: "44444444-4444-4444-8444-444444444444",
+      plan_id: plan.id,
+      amount_cents: 1999,
+      currency: "BRL",
+      metadata: {
+        source: "whatsapp_agent",
+        special_promo_offer: "mensal_19_99_first_2_months",
+        special_promo_price_cents: 1999
+      },
+      plans: { name: plan.name, slug: plan.slug }
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "Pix",
+      classification: { intent: "pix_payment", confidence: 1, summary: "pix", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444", email: null },
+      conversation: {
+        id: "55555555-5555-4555-8555-555555555555",
+        metadata: {
+          lead_profile: {
+            accepted_special_promo: true,
+            special_promo_offer: "mensal_19_99_first_2_months",
+            selected_plan: "mensal",
+            plano_interesse: "mensal",
+            payment_method: "pix"
+          }
+        }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(ordersService.createOrder).toHaveBeenCalledWith(
+      expect.objectContaining({
+        amount_cents: 1999,
+        metadata: expect.objectContaining({
+          special_promo_offer: "mensal_19_99_first_2_months",
+          special_promo_price_cents: 1999
+        })
+      })
+    );
+    expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith({
+      order: expect.objectContaining({ order_number: "UTV-20260708-000019", amount_cents: 1999 }),
+      plan: { name: plan.name, slug: plan.slug },
+      payer: { email: "pix-utv-20260708-000019@unitv.com.br" }
+    });
+    expect(result.reply).toContain("Pix Copia e Cola");
+    expect(result.reply).toContain("000201-pix-copy-paste");
+    expect(result.reply).not.toContain("67070222000151");
     expect(result.copyText).toBe("000201-pix-copy-paste");
   });
 
@@ -1311,7 +1373,8 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(mercadoPagoService.createPixPayment).not.toHaveBeenCalled();
-    expect(result.reply).not.toContain("existing-pix-copy-paste");
+    expect(result.reply).toContain("existing-pix-copy-paste");
+    expect(result.reply).not.toContain("67070222000151");
     expect(result.copyText).toBe("existing-pix-copy-paste");
     expect(result.reply).not.toContain("mercadopago.com.br/payments");
   });
