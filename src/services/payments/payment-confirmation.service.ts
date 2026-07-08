@@ -54,7 +54,7 @@ export class PaymentConfirmationService {
         status: paymentStatus,
         amount_cents: payment.amountCents,
         currency: payment.currency,
-        paid_at: payment.approvedAt,
+        paid_at: normalizeMercadoPagoApprovedAt(payment.approvedAt),
         raw_payload: payment.rawPayload
       });
 
@@ -101,7 +101,7 @@ export class PaymentConfirmationService {
 
       const transitioned = await this.ordersService.transitionToPaid(
         orderId,
-        payment.approvedAt || new Date().toISOString(),
+        normalizeMercadoPagoApprovedAt(payment.approvedAt) || new Date().toISOString(),
         payment.id
       );
       if (!transitioned) {
@@ -362,6 +362,16 @@ function firstStringValue(...values: unknown[]) {
 }
 
 function readEventTime(approvedAt: string | null) {
-  const timestamp = approvedAt ? Date.parse(approvedAt) : Date.now();
+  const normalizedApprovedAt = normalizeMercadoPagoApprovedAt(approvedAt);
+  const timestamp = normalizedApprovedAt ? Date.parse(normalizedApprovedAt) : Date.now();
   return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : Math.floor(Date.now() / 1000);
+}
+
+function normalizeMercadoPagoApprovedAt(approvedAt: string | null) {
+  if (!approvedAt) {
+    return null;
+  }
+
+  const timestamp = Date.parse(approvedAt);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
 }

@@ -349,4 +349,24 @@ describe("PaymentConfirmationService", () => {
     }
     expect(harness.evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
+
+  it("stores pending Mercado Pago payments with empty approvedAt as null", async () => {
+    const harness = createHarness();
+    harness.mercadoPagoService.getPayment.mockResolvedValueOnce({
+      ...basePayment,
+      status: "pending",
+      approvedAt: ""
+    });
+
+    const result = await harness.service.process({ webhookEventId: "webhook-id", paymentId: "987654" });
+
+    expect(harness.paymentsService.upsertProviderPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "pending",
+        paid_at: null
+      })
+    );
+    expect(harness.webhooksService.markWebhookProcessed).toHaveBeenCalledWith("webhook-id");
+    expect(result).toEqual({ status: "pending", orderId: baseOrder.id });
+  });
 });
