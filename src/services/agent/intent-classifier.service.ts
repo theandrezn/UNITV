@@ -44,30 +44,34 @@ export class IntentClassifierService {
       return deterministic;
     }
 
-    const client = createOpenAIClient();
-    const content = await classifyWithResponsesApi(client, input.message);
-    if (!content) {
-      const completion = await client.chat.completions.create({
-        model: getDefaultOpenAIModel(),
-        messages: [
-          {
-            role: "system",
-            content:
-              `${UNITV_INTENT_SYSTEM_PROMPT}\nResponda somente JSON valido com intent, confidence, summary e suggested_reply.`
-          },
-          {
-            role: "user",
-            content: input.message
-          }
-        ],
-        response_format: { type: "json_object" },
-        temperature: 0
-      });
+    try {
+      const client = createOpenAIClient();
+      const content = await classifyWithResponsesApi(client, input.message);
+      if (!content) {
+        const completion = await client.chat.completions.create({
+          model: getDefaultOpenAIModel(),
+          messages: [
+            {
+              role: "system",
+              content:
+                `${UNITV_INTENT_SYSTEM_PROMPT}\nResponda somente JSON valido com intent, confidence, summary e suggested_reply.`
+            },
+            {
+              role: "user",
+              content: input.message
+            }
+          ],
+          response_format: { type: "json_object" },
+          temperature: 0
+        });
 
-      return parseClassification(completion.choices[0]?.message.content);
+        return parseClassification(completion.choices[0]?.message.content);
+      }
+
+      return parseClassification(content);
+    } catch {
+      return fallbackClassification;
     }
-
-    return parseClassification(content);
   }
 }
 

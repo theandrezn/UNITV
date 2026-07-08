@@ -1,7 +1,11 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 import { ChatAgentService } from "@/services/agent/chat-agent.service";
 import { extractDeterministicDecision } from "@/services/agent/contextual-intelligence.service";
@@ -431,6 +435,57 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toContain("quantas telas");
     expect(result.reply).not.toContain("R$ 25");
     expect(result.reply).not.toContain("R$ 70");
+  });
+
+  it("does not go silent when OpenAI is unavailable and the customer says no plan preference", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    const { service, salesResponseAIService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Não",
+      classification: { intent: "unknown", confidence: 0.2, summary: "fallback", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            last_bot_question: "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?"
+          }
+        }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(salesResponseAIService.generateResponse).toHaveBeenCalled();
+    expect(result.reply).toContain("teste gratis");
+    expect(result.reply).toContain("mensal");
+    expect(result.requiresHuman).toBeUndefined();
+    expect(result.responseRule).toBe("contextual_reply");
+  });
+
+  it("handles a customer who says they want to start now after broad qualification", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Eu estarei agora",
+      classification: { intent: "unknown", confidence: 0.2, summary: "fallback", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            last_bot_question: "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual? E seria para usar em quantas telas?"
+          }
+        }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("comecar agora");
+    expect(result.reply).toContain("teste gratis");
+    expect(result.reply).toContain("mensal");
+    expect(result.requiresHuman).toBeUndefined();
   });
 
   it("shows the monthly value after the customer confirms monthly interest", async () => {

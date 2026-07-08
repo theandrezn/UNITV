@@ -132,7 +132,7 @@ export class ChatAgentService {
     if (contextualAiReply) {
       return contextualAiReply;
     }
-    if (shouldBlockConversationalTemplateFallback(intent) && intent !== "ask_price" && intent !== "free_trial") {
+    if (!contextualReply && shouldBlockConversationalTemplateFallback(intent) && intent !== "ask_price" && intent !== "free_trial") {
       return this.silentHandoffToHuman(input, "contextual_ai_reply_unavailable", knowledge);
     }
 
@@ -1163,6 +1163,32 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
         last_customer_intent: "ask_monthly_price",
         next_expected_reply: "current_recharge_price",
         last_bot_question: CURRENT_RECHARGE_PRICE_QUESTION
+      }
+    };
+  }
+
+  if (/^(nao|n[aã]o|sem preferencia|tanto faz)$/.test(normalized) && /\b(plano especifico|mensal|trimestral|semestral|anual)\b/.test(lastBotQuestion)) {
+    return {
+      reply: "Entendi. Entao pra comecar mais simples, voce prefere fazer o teste gratis de 3 dias ou ja seguir pelo mensal?",
+      leadProfilePatch: {
+        commercial_stage: "qualified",
+        stage: "qualified",
+        last_customer_intent: "no_specific_plan_preference",
+        next_expected_reply: "activation_or_renewal",
+        last_bot_question: "Voce prefere fazer o teste gratis de 3 dias ou ja seguir pelo mensal?"
+      }
+    };
+  }
+
+  if (/\b(estarei agora|vou querer agora|quero agora|pode ser agora|agora)\b/.test(normalized) && /\b(plano especifico|quantas telas|mensal|trimestral|semestral|anual)\b/.test(lastBotQuestion)) {
+    return {
+      reply: "Perfeito. Pra comecar agora do jeito mais simples, voce quer fazer o teste gratis ou ja ativar o mensal?",
+      leadProfilePatch: {
+        commercial_stage: "qualified",
+        stage: "qualified",
+        last_customer_intent: "wants_to_start_now",
+        next_expected_reply: "activation_or_renewal",
+        last_bot_question: "Voce quer fazer o teste gratis ou ja ativar o mensal?"
       }
     };
   }

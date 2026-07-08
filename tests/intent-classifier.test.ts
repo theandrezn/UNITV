@@ -69,4 +69,17 @@ describe("IntentClassifierService", () => {
     expect(openAIClient.responses.create).toHaveBeenCalledTimes(1);
     expect(openAIClient.chat.completions.create).not.toHaveBeenCalled();
   });
+
+  it("falls back safely when OpenAI quota or network fails", async () => {
+    vi.clearAllMocks();
+    openAIClient.responses.create.mockRejectedValueOnce(new Error("429 quota exceeded"));
+    const service = new IntentClassifierService();
+
+    const result = await service.classify({ message: "Eu estarei agora" });
+
+    expect(result.intent).toBe("unknown");
+    expect(result.confidence).toBeLessThan(0.5);
+    expect(result.suggested_reply).toContain("comprar um plano");
+    expect(openAIClient.chat.completions.create).not.toHaveBeenCalled();
+  });
 });
