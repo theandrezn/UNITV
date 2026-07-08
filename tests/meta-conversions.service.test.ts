@@ -65,7 +65,8 @@ describe("MetaConversionsService", () => {
       event_name: "Purchase",
       event_time: 1783188000,
       event_id: "purchase-event-id",
-      action_source: "business_messaging"
+      action_source: "business_messaging",
+      messaging_channel: "whatsapp"
     }));
     expect(body.data[0].custom_data).toEqual(expect.objectContaining({
       currency: "BRL",

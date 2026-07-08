@@ -42,6 +42,7 @@ export class MetaConversionsService {
           event_time: input.eventTime,
           event_id: input.eventId,
           action_source: "business_messaging",
+          messaging_channel: "whatsapp",
           user_data: buildUserData(input.customerPhone),
           custom_data: {
             currency: input.currency,
