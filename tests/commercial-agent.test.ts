@@ -283,6 +283,28 @@ describe("commercial WhatsApp agent", () => {
       should_generate_pix: true
     });
 
+    const freeTrialDecision = extractDeterministicDecision({
+      current_message: "Ola! Quero fazer teste tem como",
+      recent_messages: [],
+      lead_profile: {},
+      open_order: null,
+      latest_order: null,
+      last_bot_question: null,
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(freeTrialDecision).toMatchObject({
+      selected_plan: null,
+      should_create_order: false,
+      should_generate_pix: false,
+      should_send_download: true,
+      next_expected_reply: "download_confirmation"
+    });
+
     const downloadDecision = extractDeterministicDecision({
       current_message: "já baixei",
       recent_messages: [],
@@ -837,6 +859,31 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toContain("em qual aparelho você vai usar");
     expect(result.menu).toBeUndefined();
     expect(result.sendTextBeforeMenu).toBeUndefined();
+    expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
+    );
+  });
+
+  it("does not silently hand off clear free trial requests when contextual AI has no safe reply", async () => {
+    const { service, ordersService, agentActionsService, salesResponseAIService } = createChatAgent({
+      salesResponseAIService: {
+        generateResponse: vi.fn(async () => null)
+      }
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "Olá! Quero fazer teste tem como",
+      classification: { intent: "free_trial", confidence: 0.95, summary: "Cliente pediu teste grátis.", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444" },
+      conversation: { id: "55555555-5555-4555-8555-555555555555" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(salesResponseAIService.generateResponse).toHaveBeenCalled();
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.reply).toContain("3 dias");
+    expect(result.reply).toMatch(/aparelho/i);
     expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
       expect.objectContaining({ action_name: "handoff_to_human" })
     );

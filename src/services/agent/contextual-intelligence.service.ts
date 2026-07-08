@@ -194,6 +194,20 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
   }
 
   const plan = normalizePlan(normalized);
+  if (plan === "teste") {
+    return buildDecision({
+      ...base,
+      intent: "activate",
+      stage: "qualified",
+      selected_plan: null,
+      should_create_order: false,
+      should_generate_pix: false,
+      should_send_download: true,
+      customer_message_meaning: "Cliente pediu teste gratis; deve confirmar o aparelho antes de liberar o teste.",
+      next_expected_reply: "download_confirmation",
+      confidence: 0.96
+    });
+  }
   if (plan) {
     const askedPixBefore = /\b(pix|chave|pagamento)\b/.test(lastQuestion) || leadProfile.pediu_pix === true;
     return buildDecision({

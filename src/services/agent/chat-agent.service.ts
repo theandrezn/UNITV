@@ -132,7 +132,7 @@ export class ChatAgentService {
     if (contextualAiReply) {
       return contextualAiReply;
     }
-    if (shouldBlockConversationalTemplateFallback(intent) && intent !== "ask_price") {
+    if (shouldBlockConversationalTemplateFallback(intent) && intent !== "ask_price" && intent !== "free_trial") {
       return this.silentHandoffToHuman(input, "contextual_ai_reply_unavailable", knowledge);
     }
 

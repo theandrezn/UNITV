@@ -5,6 +5,7 @@ dist/
 coverage/
 outputs/
 work/
+logs/
 supabase/.temp/
 .worktrees/
 
