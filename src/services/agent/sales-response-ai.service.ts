@@ -1,6 +1,6 @@
 import "server-only";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
-import { sanitizeCustomerMessage } from "@/lib/whatsapp/customer-message-safety";
+import { sanitizeCustomerMessage, validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
 
 type ConversationMessage = {
   role?: string;
@@ -47,6 +47,11 @@ const SYSTEM_PROMPT = [
   "Se disse que ja usou, considere que conhece o app.",
   "Se disse que nao pagou, nao peca comprovante.",
   "Nao soe desesperado para fechar. Evite pressao, urgencia falsa e frases como 'so hoje', 'fechar agora' ou 'ja mando a chave' antes do cliente confirmar.",
+  "Antes de pagamento, confirme intencao. Antes de instalacao, confirme se o app ja esta baixado/instalado.",
+  "Nunca assuma que o cliente ja vai comprar porque perguntou valor, plano ou aparelho.",
+  "Se o cliente ainda nao confirmou claramente que quer pagar, nao diga 'vamos liberar', 'vou ativar', 'vou gerar o Pix', 'vamos seguir', 'vou fazer sua recarga' ou 'vamos liberar no celular Android'.",
+  "Se o cliente disse que so fez teste, trate como primeira recarga e confirme interesse antes de falar como compra fechada.",
+  "Evite repetir emoji. Se o historico recente ja tem emoji, responda sem emoji.",
   "Nao jogue tabela completa de preco cedo demais.",
   "Primeiro descubra se e renovacao ou primeira vez; depois pergunte preferencia de plano sem valores.",
   "So cite todos os valores se o cliente pedir claramente todos os valores, precos, tabela ou quais planos tem.",
@@ -119,7 +124,15 @@ export class SalesResponseAIService {
 
       const parsed = JSON.parse(response.output_text || "{}") as { reply?: string };
       const sanitized = sanitizeCustomerMessage(parsed.reply || "");
-      return sanitized.blocked || !sanitized.text ? null : sanitized.text;
+      if (sanitized.blocked || !sanitized.text) {
+        return null;
+      }
+      const recentBotMessages = (input.recentMessages || [])
+        .filter((item) => item.role === "assistant" && typeof item.content === "string")
+        .slice(-5)
+        .map((item) => item.content as string);
+      const validation = validateResponseAgainstLeadProfile(sanitized.text, input.leadProfile, recentBotMessages);
+      return validation.valid ? sanitized.text : null;
     } catch {
       return null;
     }

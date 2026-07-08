@@ -100,6 +100,10 @@ export function validateResponseAgainstLeadProfile(
     return { valid: false, reason: "asks_plan_again" };
   }
 
+  if (isPrematurePurchaseAssumption(normalized) && !hasClearPurchaseConfirmation(profile)) {
+    return { valid: false, reason: "assumes_purchase_before_confirmation" };
+  }
+
   if ((profile.has_paid === false || profile.payment_status === "not_paid") && /\b(se ja pagou|se já pagou|envie o comprovante|mand[ae] o comprovante)\b/.test(normalized)) {
     return { valid: false, reason: "asks_receipt_when_not_paid" };
   }
@@ -199,6 +203,30 @@ function areSimilar(current: string, previous: string) {
   }
 
   return overlap / Math.max(currentWords.size, previousWords.size) >= 0.82;
+}
+
+function isPrematurePurchaseAssumption(normalized: string) {
+  return (
+    /\b(vamos liberar|vou liberar|entao vamos liberar|entao vou liberar)\b/.test(normalized) ||
+    /\b(vou ativar|vamos ativar|vou fazer sua recarga|vamos fazer sua recarga)\b/.test(normalized) ||
+    /\b(vou gerar o pix|vou gerar pix|vamos gerar o pix|vamos seguir)\b/.test(normalized) ||
+    /\b(liberar no celular android|liberar no celular|ativar no celular android)\b/.test(normalized)
+  );
+}
+
+function hasClearPurchaseConfirmation(profile: Record<string, unknown>) {
+  return (
+    profile.accepted_special_promo === true ||
+    profile.payment_method === "pix" ||
+    profile.payment_method === "card" ||
+    profile.pediu_pix === true ||
+    profile.has_paid === true ||
+    profile.payment_status === "paid" ||
+    profile.payment_status === "confirmed" ||
+    profile.stage === "awaiting_payment" ||
+    profile.commercial_stage === "awaiting_payment" ||
+    profile.next_expected_reply === "payment_proof"
+  );
 }
 
 function normalize(value: string) {

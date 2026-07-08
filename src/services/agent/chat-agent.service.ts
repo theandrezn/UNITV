@@ -23,6 +23,7 @@ import {
 import { SalesResponseAIService, shouldUseAIResponse } from "@/services/agent/sales-response-ai.service";
 import { getUnitvInstallationGuidance, isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
 import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
+import { validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
 
 export const INITIAL_UNITV_REPLY =
   "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\n" +
@@ -36,10 +37,6 @@ const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
 const CURRENT_RECHARGE_PRICE_QUESTION = "Voce ja faz a recarga? Se sim, faz a quanto?";
-const FIRST_RECHARGE_PROMO_QUESTION =
-  "Entendi, entao seria sua primeira recarga mesmo.\n\n" +
-  "Como e sua primeira vez fazendo recarga, consigo deixar o mensal por R$ 19,99 pra voce comecar.\n\n" +
-  "Voce tem interesse?";
 const TRAFFIC_RECHARGE_WELCOME =
   "Ol\u00e1! Seja bem-vindo ao melhor aplicativo de filmes e canais \u{1F9E1}. Meu nome \u00e9 Andr\u00e9.\n\n" +
   "Voce ja faz o uso do app? Ou e a primeira vez?";
@@ -176,7 +173,9 @@ export class ChatAgentService {
         useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
       });
       if (aiReply) {
-        return { reply: aiReply, responseSource: "ai", responseRule: "sales_response_ai" };
+        if (isSafeAICommercialReply(aiReply, leadProfile, input.recentMessages)) {
+          return { reply: aiReply, responseSource: "ai", responseRule: "sales_response_ai" };
+        }
       }
     }
 
@@ -476,7 +475,11 @@ export class ChatAgentService {
       useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
     });
 
-    return aiReply ? { reply: aiReply, responseSource: "ai", responseRule: "sales_response_ai_contextual_first" } : null;
+    if (!aiReply || !isSafeAICommercialReply(aiReply, leadProfile, input.recentMessages)) {
+      return null;
+    }
+
+    return { reply: aiReply, responseSource: "ai", responseRule: "sales_response_ai_contextual_first" };
   }
 
   private async generateCardPayment(
@@ -1138,7 +1141,7 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
   if (/\b(faz a quanto|recarga.*quanto|quanto voce paga|quanto vc paga)\b/.test(lastBotQuestion)) {
     if (isFirstRechargeOnlyTestMessage(normalized)) {
       return {
-        reply: FIRST_RECHARGE_PROMO_QUESTION,
+        reply: buildFirstRechargePromoReply(leadProfile),
         leadProfilePatch: buildSoftPromoOfferPatch({
           currentRechargePriceCents: null,
           lastCustomerIntent: "first_recharge_after_trial"
@@ -1221,6 +1224,18 @@ function buildMonthlyPriceComparisonReply(leadProfile: Record<string, unknown>) 
   return `O mensal${namePart} esta saindo a R$ 25.\n\n${CURRENT_RECHARGE_PRICE_QUESTION}`;
 }
 
+function buildFirstRechargePromoReply(leadProfile: Record<string, unknown>) {
+  const deviceLabel = getKnownDeviceLabel(leadProfile);
+  const activationQuestion = deviceLabel
+    ? `Voce tem interesse em ativar o mensal no ${deviceLabel}?`
+    : "Voce tem interesse em ativar o mensal?";
+  return [
+    "Entendi. Como voce ja fez o teste, agora seria sua primeira recarga mesmo.",
+    "Como e sua primeira vez fazendo recarga, consigo deixar o mensal por R$ 19,99 pra voce comecar.",
+    `${activationQuestion} E so pra eu te orientar certinho: voce ja tem o app instalado ai?`
+  ].join("\n\n");
+}
+
 function buildSoftPriceMatchPromoReply(currentPriceCents: number) {
   const currentPrice = currentPriceCents <= 2000 ? "nesse valor" : "perto desse valor";
   return [
@@ -1259,6 +1274,22 @@ function isFirstRechargeOnlyTestMessage(normalized: string) {
     /\b(fiz|feito|usei)\b.*\b(teste)\b/.test(normalized) ||
     /\b(primeira recarga|nunca recarreguei|nao fiz recarga|nao fiz nenhuma recarga|nunca fiz recarga)\b/.test(normalized)
   );
+}
+
+function getKnownDeviceLabel(leadProfile: Record<string, unknown>) {
+  const rawDevice = normalizeContextMessage(String(
+    leadProfile.device ||
+    leadProfile.aparelho ||
+    leadProfile.device_type ||
+    leadProfile.install_device ||
+    ""
+  ));
+  if (!rawDevice || rawDevice === "unknown") return "";
+  if (/\b(android_phone|celular|celular android)\b/.test(rawDevice)) return "celular Android";
+  if (/\b(tvbox|tv box)\b/.test(rawDevice)) return "TV Box Android";
+  if (/\b(android_tv|android tv|google tv)\b/.test(rawDevice)) return "Android TV";
+  if (/\b(firestick|fire stick)\b/.test(rawDevice)) return "Fire Stick";
+  return "";
 }
 
 function getLeadFirstName(leadProfile: Record<string, unknown>) {
@@ -1324,6 +1355,18 @@ function isSensitiveExecutionIntent(intent: string) {
     "activation_help",
     "human_help"
   ].includes(intent);
+}
+
+function isSafeAICommercialReply(
+  reply: string,
+  leadProfile: Record<string, unknown>,
+  recentMessages?: Array<{ role?: string; content?: string | null }>
+) {
+  const recentBotMessages = (recentMessages || [])
+    .filter((item) => item.role === "assistant" && typeof item.content === "string")
+    .slice(-5)
+    .map((item) => item.content as string);
+  return validateResponseAgainstLeadProfile(reply, leadProfile, recentBotMessages).valid;
 }
 
 function isAllPricesRequested(message: string) {

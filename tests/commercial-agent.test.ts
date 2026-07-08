@@ -503,7 +503,8 @@ describe("commercial WhatsApp agent", () => {
 
     expect(result.reply).toContain("primeira recarga");
     expect(result.reply).toContain("R$ 19,99");
-    expect(result.reply).toContain("Voce tem interesse?");
+    expect(result.reply).toContain("Voce tem interesse em ativar o mensal?");
+    expect(result.reply).toContain("ja tem o app instalado");
     expect(result.reply).not.toContain("Pix");
     expect(result.leadProfilePatch).toMatchObject({
       selected_plan: "mensal",
