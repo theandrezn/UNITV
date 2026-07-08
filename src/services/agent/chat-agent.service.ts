@@ -36,6 +36,10 @@ const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
 const CURRENT_RECHARGE_PRICE_QUESTION = "Voce ja faz a recarga? Se sim, faz a quanto?";
+const FIRST_RECHARGE_PROMO_QUESTION =
+  "Entendi, entao seria sua primeira recarga mesmo.\n\n" +
+  "Como e sua primeira vez fazendo recarga, consigo deixar o mensal por R$ 19,99 pra voce comecar.\n\n" +
+  "Voce tem interesse?";
 const TRAFFIC_RECHARGE_WELCOME =
   "Ol\u00e1! Seja bem-vindo ao melhor aplicativo de filmes e canais \u{1F9E1}. Meu nome \u00e9 Andr\u00e9.\n\n" +
   "Voce ja faz o uso do app? Ou e a primeira vez?";
@@ -1132,32 +1136,30 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
   }
 
   if (/\b(faz a quanto|recarga.*quanto|quanto voce paga|quanto vc paga)\b/.test(lastBotQuestion)) {
+    if (isFirstRechargeOnlyTestMessage(normalized)) {
+      return {
+        reply: FIRST_RECHARGE_PROMO_QUESTION,
+        leadProfilePatch: buildSoftPromoOfferPatch({
+          currentRechargePriceCents: null,
+          lastCustomerIntent: "first_recharge_after_trial"
+        })
+      };
+    }
+
     const currentPriceCents = extractCurrencyCents(normalized);
     if (currentPriceCents && currentPriceCents <= 2000) {
       return {
-        reply:
-          "Consigo cobrir pra voce e deixar o mensal por R$ 19,99 pra comecar.\n\n" +
-          "Quer que eu gere o Pix nessa condicao?",
-        leadProfilePatch: {
-          selected_plan: "mensal",
-          plano_interesse: "mensal",
-          commercial_stage: "special_promo_offered",
-          stage: "special_promo_offered",
-          current_recharge_price_cents: currentPriceCents,
-          special_promo_followup_sent: true,
-          special_promo_offer: SPECIAL_PROMO_OFFER_ID,
-          special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
-          original_price_cents: 2500,
-          last_customer_intent: "price_objection",
-          next_expected_reply: "payment_method",
-          last_bot_question: "Quer que eu gere o Pix nessa condicao?"
-        }
+        reply: buildSoftPriceMatchPromoReply(currentPriceCents),
+        leadProfilePatch: buildSoftPromoOfferPatch({
+          currentRechargePriceCents: currentPriceCents,
+          lastCustomerIntent: "price_objection"
+        })
       };
     }
 
     if (currentPriceCents) {
       return {
-        reply: "Entendi. O meu mensal esta saindo a R$ 25 e eu te ajudo na ativacao por aqui. Quer seguir no Pix?",
+        reply: "Entendi. O mensal comigo fica R$ 25 e eu te ajudo na ativacao por aqui.\n\nVoce quer seguir com ele?",
         leadProfilePatch: {
           selected_plan: "mensal",
           plano_interesse: "mensal",
@@ -1165,8 +1167,8 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
           stage: "plan_selected",
           current_recharge_price_cents: currentPriceCents,
           last_customer_intent: "choose_plan",
-          next_expected_reply: "payment_method",
-          last_bot_question: "Quer seguir no Pix?"
+          next_expected_reply: "plan_confirmation",
+          last_bot_question: "Voce quer seguir com ele?"
         }
       };
     }
@@ -1217,6 +1219,46 @@ function buildMonthlyPriceComparisonReply(leadProfile: Record<string, unknown>) 
   const firstName = getLeadFirstName(leadProfile);
   const namePart = firstName ? `, ${firstName},` : "";
   return `O mensal${namePart} esta saindo a R$ 25.\n\n${CURRENT_RECHARGE_PRICE_QUESTION}`;
+}
+
+function buildSoftPriceMatchPromoReply(currentPriceCents: number) {
+  const currentPrice = currentPriceCents <= 2000 ? "nesse valor" : "perto desse valor";
+  return [
+    `Entendi, voce ja fazia recarga ${currentPrice}.`,
+    "Consigo deixar o mensal por R$ 19,99 pra voce comecar aqui comigo.",
+    "Voce tem interesse?"
+  ].join("\n\n");
+}
+
+function buildSoftPromoOfferPatch({
+  currentRechargePriceCents,
+  lastCustomerIntent
+}: {
+  currentRechargePriceCents: number | null;
+  lastCustomerIntent: string;
+}) {
+  return {
+    selected_plan: "mensal",
+    plano_interesse: "mensal",
+    commercial_stage: "special_promo_offered",
+    stage: "special_promo_offered",
+    ...(currentRechargePriceCents ? { current_recharge_price_cents: currentRechargePriceCents } : {}),
+    special_promo_followup_sent: true,
+    special_promo_offer: SPECIAL_PROMO_OFFER_ID,
+    special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+    original_price_cents: 2500,
+    last_customer_intent: lastCustomerIntent,
+    next_expected_reply: "promo_confirmation",
+    last_bot_question: "Voce tem interesse?"
+  };
+}
+
+function isFirstRechargeOnlyTestMessage(normalized: string) {
+  return (
+    /\b(so|somente|apenas)\b.*\b(teste|testei|testado)\b/.test(normalized) ||
+    /\b(fiz|feito|usei)\b.*\b(teste)\b/.test(normalized) ||
+    /\b(primeira recarga|nunca recarreguei|nao fiz recarga|nao fiz nenhuma recarga|nunca fiz recarga)\b/.test(normalized)
+  );
 }
 
 function getLeadFirstName(leadProfile: Record<string, unknown>) {
@@ -1300,11 +1342,11 @@ function formatSpecificPlanPriceReply(
 ) {
   const label = getCommercialPlanLabel(plan);
   const price = formatMoney(Number(plan.price_cents || 0), String(plan.currency || "BRL")).replace(/\s+/g, " ");
-  const paymentQuestion = intent === "renew_plan" ? "Posso te passar o Pix pra renovar?" : "Quer que eu gere o Pix pra voce?";
+  const nextQuestion = intent === "renew_plan" ? "Voce quer seguir com essa renovacao?" : "Voce tem interesse?";
   if (label === "anual") {
-    return `O anual fica ${price}. Ele e o melhor custo-beneficio. ${paymentQuestion}`;
+    return `O anual fica ${price}. Ele e o melhor custo-beneficio. ${nextQuestion}`;
   }
-  return `O ${label} fica ${price}. ${paymentQuestion}`;
+  return `O ${label} fica ${price}. ${nextQuestion}`;
 }
 
 function getCommercialPlanLabel(plan: { name?: unknown; slug?: unknown; duration_days?: unknown }) {

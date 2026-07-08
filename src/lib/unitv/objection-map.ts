@@ -1,7 +1,5 @@
 import { CONTINUATION_MENU, type WhatsAppMenu } from "@/lib/whatsapp/menus";
 
-const PLANS_TEXT = ["Mensal - R$ 25", "3 meses - R$ 70", "6 meses - R$ 120", "Anual - R$ 200"].join("\n");
-
 export type UnitvObjectionReply = {
   id: string;
   reply: string;
@@ -26,49 +24,35 @@ const rules: ObjectionRule[] = [
     followupKey: "screens",
     menu: CONTINUATION_MENU,
     buildReply: () =>
-      "Depende do tipo de acesso e da configuração.\n\n" +
-      "Para eu te orientar certo, você quer usar em quantos aparelhos e quais seriam eles?\n\n" +
-      "Não quero te passar informação errada sobre telas."
+      "Depende do tipo de acesso e da configuracao.\n\n" +
+      "Para eu te orientar certo, voce quer usar em quantos aparelhos e quais seriam eles?\n\n" +
+      "Nao quero te passar informacao errada sobre telas."
   },
   {
     id: "price",
-    pattern: /\b(qual valor|valor|preco|quanto custa|planos?)\b/,
+    pattern: /\b(qual valor|preco|quanto custa)\b/,
     followupKey: "values",
-    buildReply: () =>
-      "O mensal fica R$ 25.\n\n" +
-      "Também temos:\n" +
-      PLANS_TEXT +
-      "\n\nO mensal é uma boa opção para começar. Se você quiser economizar mais, o anual sai melhor no custo-benefício.\n\n" +
-      "Você quer começar pelo mensal ou prefere um plano maior?"
+    buildReply: () => "Voce teria interesse no mensal mesmo?"
   },
   {
     id: "too_expensive",
     pattern: /\b(caro|ta caro|muito caro)\b/,
     followupKey: "values",
-    buildReply: () =>
-      "Entendo.\n\n" +
-      "O mensal fica R$ 25, que é o valor mais baixo para começar.\n\n" +
-      "Agora, se você pensa em usar por mais tempo, os planos maiores compensam mais:\n" +
-      PLANS_TEXT +
-      "\n\nVocê quer começar com o mensal para testar ou prefere economizar no plano maior?"
+    buildReply: () => "Entendo. Voce ja faz recarga por qual valor hoje?"
   },
   {
     id: "discount",
     pattern: /\b(desconto|promocao|promo)\b/,
     followupKey: "values",
-    buildReply: () =>
-      "Os valores atuais já estão fechados:\n\n" +
-      PLANS_TEXT +
-      "\n\nO desconto real fica nos planos maiores, principalmente no anual.\n\nQuer que eu te passe o melhor custo-benefício?"
+    buildReply: () => "Me diz primeiro qual plano voce quer seguir que eu vejo a melhor condicao pra voce."
   },
   {
     id: "competitor_price",
     pattern: /\b(mais barato|vi barato|concorrente)\b/,
     followupKey: "values",
     buildReply: () =>
-      "Entendo.\n\n" +
-      "A diferença aqui é que você tem suporte para instalação, orientação na ativação e atendimento caso precise de ajuda.\n\n" +
-      "Se quiser começar sem compromisso alto, o mensal é R$ 25.\n\nQuer começar pelo mensal ou fazer o teste grátis primeiro?"
+      "Entendo. Aqui eu te ajudo na instalacao e na ativacao por aqui mesmo.\n\n" +
+      "Voce fazia recarga por qual valor?"
   },
   {
     id: "stability",
@@ -77,8 +61,8 @@ const rules: ObjectionRule[] = [
     menu: CONTINUATION_MENU,
     buildReply: () =>
       "Boa pergunta.\n\n" +
-      "Funciona em aparelhos compatíveis, sim. A qualidade depende da internet, do aparelho e da instalação.\n\n" +
-      "O ideal é você fazer o teste grátis de 3 dias no seu aparelho e ver como fica.\n\nVocê vai usar na TV ou no celular?"
+      "Funciona em aparelhos compativeis, sim. A qualidade depende da internet, do aparelho e da instalacao.\n\n" +
+      "O ideal e voce fazer o teste gratis de 3 dias no seu aparelho e ver como fica.\n\nVoce vai usar na TV ou no celular?"
   },
   {
     id: "catalog_live_channels",
@@ -86,16 +70,15 @@ const rules: ObjectionRule[] = [
     followupKey: "test",
     menu: CONTINUATION_MENU,
     buildReply: () =>
-      "A UNITV reúne canais ao vivo, filmes e séries no app.\n\n" +
-      "A disponibilidade pode variar, mas você pode testar grátis por 3 dias e conferir no seu aparelho.\n\nQuer fazer o teste?"
+      "A UNITV reune canais ao vivo, filmes e series no app.\n\n" +
+      "A disponibilidade pode variar, mas voce pode testar gratis por 3 dias e conferir no seu aparelho.\n\nQuer fazer o teste?"
   },
   {
     id: "catalog_movies",
     pattern: /\b(filmes|series)\b/,
     followupKey: "test",
     menu: CONTINUATION_MENU,
-    buildReply: () =>
-      "Tem sim. A UNITV reúne filmes, séries e canais ao vivo no mesmo app.\n\nVocê quer testar grátis ou já quer ver os planos?"
+    buildReply: () => "Tem sim. A UNITV reune filmes, series e canais ao vivo no mesmo app.\n\nVoce quer testar gratis?"
   },
   {
     id: "iphone",
@@ -103,7 +86,7 @@ const rules: ObjectionRule[] = [
     followupKey: "support",
     menu: CONTINUATION_MENU,
     buildReply: () =>
-      "No iPhone eu não tenho instalação Android para enviar.\n\nVocê teria uma TV Box, Android TV, Fire Stick ou celular Android para usar?"
+      "No iPhone eu nao tenho instalacao Android para enviar.\n\nVoce teria uma TV Box, Android TV, Fire Stick ou celular Android para usar?"
   },
   {
     id: "trust",
@@ -112,18 +95,15 @@ const rules: ObjectionRule[] = [
     menu: CONTINUATION_MENU,
     buildReply: () =>
       "Entendo totalmente.\n\n" +
-      "Por isso o atendimento é feito por aqui, com suporte, orientação de instalação e ativação após confirmação.\n\n" +
-      "Se preferir, você pode começar pelo teste grátis de 3 dias antes de contratar."
+      "Por isso o atendimento e feito por aqui, com suporte, orientacao de instalacao e ativacao apos confirmacao.\n\n" +
+      "Se preferir, voce pode comecar pelo teste gratis de 3 dias antes de contratar."
   },
   {
     id: "thinking",
     pattern: /\b(vou pensar|depois eu vejo|pensar)\b/,
     followupKey: "values",
     menu: CONTINUATION_MENU,
-    buildReply: () =>
-      "Sem problema.\n\nPara facilitar, os planos são:\n\n" +
-      PLANS_TEXT +
-      "\n\nVocê também pode testar grátis por 3 dias antes de decidir."
+    buildReply: () => "Sem problema. Se quiser, eu te ajudo a escolher o melhor caminho: teste gratis ou mensal pra comecar."
   }
 ];
 

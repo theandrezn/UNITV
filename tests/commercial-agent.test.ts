@@ -470,13 +470,46 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("R$ 19,99");
-    expect(result.reply).toContain("Quer que eu gere o Pix");
+    expect(result.reply).toContain("Voce tem interesse?");
+    expect(result.reply).not.toContain("Pix");
     expect(result.leadProfilePatch).toMatchObject({
       selected_plan: "mensal",
       current_recharge_price_cents: 2000,
       special_promo_followup_sent: true,
       special_promo_offer: "mensal_19_99_first_2_months",
-      next_expected_reply: "payment_method"
+      next_expected_reply: "promo_confirmation",
+      last_bot_question: "Voce tem interesse?"
+    });
+  });
+
+  it("offers the first recharge promo softly after customer says they only tested", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "So feito o teste",
+      classification: { intent: "unknown", confidence: 0.95, summary: "teste anterior", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            selected_plan: "mensal",
+            last_bot_question: "Voce ja faz a recarga? Se sim, faz a quanto?"
+          }
+        }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("primeira recarga");
+    expect(result.reply).toContain("R$ 19,99");
+    expect(result.reply).toContain("Voce tem interesse?");
+    expect(result.reply).not.toContain("Pix");
+    expect(result.leadProfilePatch).toMatchObject({
+      selected_plan: "mensal",
+      special_promo_followup_sent: true,
+      next_expected_reply: "promo_confirmation",
+      last_bot_question: "Voce tem interesse?"
     });
   });
 

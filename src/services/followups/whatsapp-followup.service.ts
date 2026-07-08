@@ -811,24 +811,24 @@ export function buildLeadRecoveryFollowupText(
 
   if (step === 2) {
     return [
-      firstName ? `${namePrefix}consigo uma condição especial pra você hoje.` : "Consigo uma condição especial pra você hoje.",
-      "O mensal é R$ 25, mas pra você começar agora consigo liberar por R$ 19,99.",
-      "Se quiser, me confirma aqui que já te explico como ativar ✅"
+      firstName ? `${namePrefix}consigo uma condicao melhor pra sua primeira recarga.` : "Consigo uma condicao melhor pra sua primeira recarga.",
+      "O mensal e R$ 25, mas pra voce comecar consigo deixar por R$ 19,99.",
+      "Voce tem interesse?"
     ].join("\n\n");
   }
 
   if (step === 3) {
     return [
-      "Com a UNITV você já fica com filmes, séries e canais em um só lugar ✅",
-      "A ativação é rápida e eu te ajudo por aqui mesmo.",
-      "Quer que eu deixe seu acesso encaminhado hoje?"
+      "Com a UNITV voce fica com filmes, series e canais em um so lugar.",
+      "A ativacao e rapida e eu te ajudo por aqui mesmo.",
+      "Se fizer sentido pra voce, posso te explicar o proximo passo."
     ].join("\n\n");
   }
 
   return [
-    firstName ? `Oi, ${firstName} ✅` : "Oi ✅",
-    "Ainda quer aproveitar a condição especial da UNITV?",
-    "Consigo deixar o mensal por R$ 19,99 pra você começar, mas essa condição é só pra fechar hoje."
+    firstName ? `Oi, ${firstName}` : "Oi",
+    "Ainda quer ver a condicao especial da UNITV?",
+    "Consigo deixar o mensal por R$ 19,99 pra voce comecar. Se fizer sentido pra voce, eu te explico o proximo passo."
   ].join("\n\n");
 }
 
@@ -872,9 +872,9 @@ export function buildPromoRecoveryFollowupText(
   const firstName = readFirstName(conversation?.customers?.name || readLeadProfile(metadata).nome);
   const prefix = firstName ? `${firstName}, consigo` : "Consigo";
   return [
-    `${prefix} fazer uma condição especial pra você começar hoje.`,
-    "Pra ter você como nosso cliente, libero os 2 primeiros meses por R$ 19,99 cada.",
-    "Se quiser aproveitar, me confirma aqui que já te mando a chave PIX e deixo sua ativação pronta ✅"
+    `${prefix} uma condicao melhor pra voce comecar.`,
+    "O mensal e R$ 25, mas consigo deixar por R$ 19,99 na primeira recarga.",
+    "Voce tem interesse?"
   ].join("\n\n");
 }
 
@@ -884,61 +884,61 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
   const profile = readLeadProfile(metadata);
 
   if (key === "welcome_activation") {
-    return "Você quer que eu te passe os valores ou prefere fazer o teste grátis de 3 dias?";
+    return "Voce prefere fazer o teste gratis ou quer ativar o mensal?";
   }
 
   if (key === "values") {
     if (isRenewalFollowup(metadata, profile)) {
-      return "Você se interessou pelos valores? Posso te indicar o melhor plano pra renovar ✅";
+      return "Voce quer renovar no mensal mesmo ou prefere outro periodo?";
     }
-    return "Você se interessou pelos valores? Posso te indicar o melhor plano pra começar ✅";
+    return "Voce teria interesse no mensal mesmo?";
   }
 
   if (key === "plan_choice") {
-    return "Conseguiu escolher o plano? Pode ser mensal, trimestral, semestral ou anual.";
+    return "Voce prefere seguir no mensal ou em um plano maior?";
   }
 
   if (key === "payment_choice") {
-    return "Fechado ✅ Vou te passar a chave PIX agora. Assim que fizer o pagamento, me envia o comprovante por aqui que já libero sua recarga.";
+    return "Voce prefere seguir pelo Pix ou pelo cartao?";
   }
 
   if (key === "download" || key === "install") {
     if (/android_phone|celular/i.test(device)) {
-      return "Conseguiu baixar no celular Android? Se aparecer aviso de segurança, me fala que eu te oriento?";
+      return "Conseguiu baixar no celular Android? Se aparecer aviso de seguranca, me fala que eu te oriento.";
     }
     if (/tvbox_android|tv box/i.test(device)) {
-      return "Conseguiu instalar na TV Box? Se travou, me diga se foi no link APK ou no Downloader?";
+      return "Conseguiu instalar na TV Box? Se travou, me diga se foi no link APK ou no Downloader.";
     }
     if (/android_tv_google_tv|android tv|google tv/i.test(device)) {
       return "Conseguiu encontrar o Downloader na Play Store da TV?";
     }
     if (/firestick|fire stick/i.test(device)) {
-      return "Conseguiu abrir o Downloader no Fire Stick e digitar o código 862585?";
+      return "Conseguiu abrir o Downloader no Fire Stick e digitar o codigo 862585?";
     }
     return "Conseguiu confirmar se seu aparelho tem Android ou Play Store?";
   }
 
   if (key === "test") {
-    return "Você conseguiu instalar o app para liberar o teste grátis de 3 dias?";
+    return "Conseguiu abrir o app para eu liberar o teste de 3 dias?";
   }
 
   if (key === "pix") {
-    return "Conseguiu fazer o pagamento? Assim que enviar o comprovante por aqui, eu já valido e libero sua recarga ✅";
+    return "Conseguiu fazer o pagamento pelo Pix? Quando o Mercado Pago confirmar, eu libero a recarga por aqui.";
   }
 
   if (key === "proof") {
-    return "Pode me enviar o comprovante por aqui? Assim consigo encaminhar para validação.";
+    return "Pode me enviar o comprovante por aqui? Assim consigo encaminhar para validacao.";
   }
 
   if (key === "screens") {
-    return "Você quer usar em quantos aparelhos ao mesmo tempo?";
+    return "Voce quer usar em quantos aparelhos ao mesmo tempo?";
   }
 
   if (key === "support") {
-    return "Ainda precisa de ajuda? Me mande o erro ou o aparelho que está usando?";
+    return "Ainda precisa de ajuda? Me mande o erro ou o aparelho que esta usando.";
   }
 
-  return "Você ainda precisa de ajuda com valores, download ou ativação?";
+  return "Quer que eu continue te ajudando por aqui?";
 }
 
 export function buildUnansweredCustomerFallbackText(metadata: Record<string, unknown>, latestCustomerMessage = "") {
@@ -952,24 +952,24 @@ export function buildUnansweredCustomerFallbackText(metadata: Record<string, unk
 
   if (key === "download" || key === "install" || stage === "instalacao") {
     if (/^(ok|sim|certo|ta|t[aá]|beleza|blz)$/.test(normalized)) {
-      return "Você conseguiu?";
+      return "Conseguiu avancar?";
     }
-    return "Conseguiu avançar na instalação? Se travou em alguma etapa, me fala que eu te oriento.";
+    return "Conseguiu avancar na instalacao? Se travou em alguma etapa, me fala que eu te oriento.";
   }
 
   if (key === "pix" || stage === "aguardando_pix" || stage === "pagamento_pix") {
-    return "Conseguiu fazer o Pix? Se precisar, eu te mando a chave novamente.";
+    return "Conseguiu fazer o Pix? Se precisar, eu te envio novamente.";
   }
 
   if (key === "payment_choice" || stage === "pagamento") {
-    return "Você quer seguir pelo Pix ou prefere cartão?";
+    return "Voce prefere seguir pelo Pix ou pelo cartao?";
   }
 
   if (key === "welcome_activation" || key === "plan_choice") {
-    return "Quer que eu siga com a ativação pra você?";
+    return "Me confirma qual caminho voce prefere: teste gratis ou ativacao do mensal?";
   }
 
-  return "Você conseguiu? Se precisar, eu te ajudo no próximo passo.";
+  return "Quer que eu continue te ajudando por aqui?";
 }
 
 function isDue(value: unknown, now: Date) {

@@ -73,23 +73,23 @@ function createService(
 describe("WhatsappFollowupService", () => {
   it("builds human commercial follow-up text", () => {
     const valuesFollowup = buildFollowupText({ followup_key: "values", plan_interest: "mensal" });
-    expect(valuesFollowup).toBe("Você se interessou pelos valores? Posso te indicar o melhor plano pra começar ✅");
+    expect(valuesFollowup).toBe("Voce teria interesse no mensal mesmo?");
     expect(valuesFollowup).not.toContain("pagamento");
     expect(valuesFollowup).not.toContain("comprovante");
     expect(valuesFollowup).not.toContain("Ver planos");
-    expect(valuesFollowup).not.toContain("Fazer teste grátis");
+    expect(valuesFollowup).not.toContain("Fazer teste");
     expect(valuesFollowup).not.toContain("Comprar agora");
     expect(buildFollowupText({ followup_key: "welcome_activation" })).toBe(
-      "Você quer que eu te passe os valores ou prefere fazer o teste grátis de 3 dias?"
+      "Voce prefere fazer o teste gratis ou quer ativar o mensal?"
     );
     const downloadFollowup = buildFollowupText({ followup_key: "download", device: "TV Box / Android TV" });
     expect(downloadFollowup).toContain("Conseguiu instalar na TV Box");
-    expect(downloadFollowup.trim().endsWith("?")).toBe(true);
+    expect(downloadFollowup.trim().endsWith(".")).toBe(true);
     expect(buildFollowupText({ followup_key: "download", device: "android_tv_google_tv" })).toContain("Play Store");
     expect(buildFollowupText({ followup_key: "download", device: "android_phone" })).toContain("celular Android");
     expect(buildFollowupText({ followup_key: "download", device: "firestick" })).toContain("862585");
     expect(buildFollowupText({ followup_key: "install", device: "unknown" })).toContain("Android ou Play Store?");
-    expect(buildUnansweredCustomerFallbackText({ followup_key: "download", conversation_stage: "instalacao" }, "Ok")).toBe("Você conseguiu?");
+    expect(buildUnansweredCustomerFallbackText({ followup_key: "download", conversation_stage: "instalacao" }, "Ok")).toBe("Conseguiu avancar?");
   });
 
   it("uses renewal wording after values when the customer wants recarga", () => {
@@ -99,7 +99,7 @@ describe("WhatsappFollowupService", () => {
       lead_profile: { wants_recharge: true, ultima_intencao: "renew_plan" }
     });
 
-    expect(renewalFollowup).toBe("Você se interessou pelos valores? Posso te indicar o melhor plano pra renovar ✅");
+    expect(renewalFollowup).toBe("Voce quer renovar no mensal mesmo ou prefere outro periodo?");
     expect(renewalFollowup).not.toContain("pagamento");
     expect(renewalFollowup).not.toContain("comprovante");
   });
@@ -293,11 +293,12 @@ describe("WhatsappFollowupService", () => {
     })).toBeNull();
 
     const lastCall = buildLeadRecoveryFollowupText(3, { lead_profile: { nome: "Maria" } });
-    expect(lastCall).toContain("Quer que eu deixe seu acesso encaminhado hoje?");
+    expect(lastCall).toContain("Se fizer sentido pra voce, posso te explicar o proximo passo.");
     expect(lastCall).not.toContain("pagamento");
     expect(lastCall).not.toContain("comprovante");
+    expect(lastCall).not.toContain("hoje");
     expect(buildLeadRecoveryFollowupText(1, { lead_profile: {} })).toContain("Voce ja usou o UNITV?");
-    expect(buildLeadRecoveryFollowupText(2, { lead_profile: {} }).startsWith("Consigo uma condição especial")).toBe(true);
+    expect(buildLeadRecoveryFollowupText(2, { lead_profile: {} }).startsWith("Consigo uma condicao melhor")).toBe(true);
   });
 
   it("sends a one-time promotional recovery follow-up for hot leads before payment", async () => {
@@ -367,12 +368,13 @@ describe("WhatsappFollowupService", () => {
 
   it("uses stage-specific copy for payment choice and sent Pix follow-ups", () => {
     const paymentChoice = buildFollowupText({ followup_key: "payment_choice" });
-    expect(paymentChoice).toContain("Vou te passar a chave PIX agora");
+    expect(paymentChoice).toContain("Voce prefere seguir pelo Pix ou pelo cartao?");
+    expect(paymentChoice).not.toContain("chave PIX");
     expect(paymentChoice).not.toContain("Conseguiu fazer o pagamento?");
 
     const pixFollowup = buildFollowupText({ followup_key: "pix" });
-    expect(pixFollowup).toContain("Conseguiu fazer o pagamento?");
-    expect(pixFollowup).toContain("comprovante");
+    expect(pixFollowup).toContain("Conseguiu fazer o pagamento pelo Pix?");
+    expect(pixFollowup).toContain("Mercado Pago confirmar");
   });
 
   it("does not send an unanswered-customer follow-up before the silence delay", async () => {
