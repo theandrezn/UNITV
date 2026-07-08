@@ -143,6 +143,80 @@ export class WhatsappMessageService {
       });
 
       const existingLeadProfile = readLeadProfile(conversation.metadata);
+      const manualPaymentCommand = parseManualPaymentCommand(message.text);
+      if (manualPaymentCommand) {
+        const commandMetadata = {
+          ...(conversation.metadata || {}),
+          requires_human: false,
+          handoff_reason: null,
+          handoff_resolved_at: messageAt,
+          handoff_resolved_by: "manual_payment_command",
+          manual_payment_command: {
+            method: manualPaymentCommand.method,
+            plan: manualPaymentCommand.plan,
+            amount_cents: manualPaymentCommand.amountCents,
+            message_id: message.externalMessageId,
+            created_at: messageAt
+          },
+          lead_profile: {
+            ...existingLeadProfile,
+            ...manualPaymentCommand.leadProfilePatch,
+            last_specialist_message_at: messageAt,
+            learned_from_specialist: true,
+            updated_at: messageAt
+          }
+        };
+        await this.conversationsRepository.updateConversationMetadata(conversation.id, commandMetadata);
+        conversation.metadata = commandMetadata;
+        await this.conversationsRepository.touchConversation(conversation.id, messageAt);
+
+        const recentMessages = await this.listRecentConversationMessages(conversation.id);
+        const commercialReply = await this.chatAgent.generateCommercialReply({
+          message: manualPaymentCommand.effectiveMessage,
+          classification: {
+            intent: manualPaymentCommand.intent,
+            confidence: 1,
+            summary: manualPaymentCommand.summary,
+            suggested_reply: ""
+          },
+          customer,
+          conversation,
+          webhookEventId,
+          recentMessages
+        });
+        await this.auditService.createAuditLog({
+          actor_type: "human_admin",
+          action: "manual_payment_command_executed",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: {
+            webhookEventId,
+            externalMessageId: message.externalMessageId,
+            method: manualPaymentCommand.method,
+            plan: manualPaymentCommand.plan,
+            amount_cents: manualPaymentCommand.amountCents
+          }
+        });
+
+        return this.sendAndStoreAssistantReply({
+          webhookEventId,
+          message,
+          customer,
+          conversation,
+          reply: commercialReply.reply,
+          classification: {
+            intent: manualPaymentCommand.intent,
+            confidence: 1,
+            summary: manualPaymentCommand.summary
+          },
+          media: commercialReply.media,
+          copyText: commercialReply.copyText,
+          followUpMessages: commercialReply.followUpMessages,
+          menu: commercialReply.menu,
+          sendTextBeforeMenu: commercialReply.sendTextBeforeMenu
+        });
+      }
+
       const manualFollowupState = buildManualOutboundFollowupState(message.text, conversation.metadata, new Date(messageAt));
       const manualLeadProfilePatch = buildManualOutboundLeadProfilePatch(message.text, messageAt);
       const manualLastQuestion = extractLastQuestion(message.text);
@@ -1392,6 +1466,99 @@ function buildContextualLeadProfilePatch(decision: ContextualDecision) {
   }
 
   return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+}
+
+type ManualPaymentCommand = {
+  method: "pix" | "card";
+  intent: "pix_payment" | "card_payment";
+  plan: "mensal" | "trimestral" | "semestral" | "anual";
+  amountCents: number | null;
+  effectiveMessage: string;
+  summary: string;
+  leadProfilePatch: Record<string, unknown>;
+};
+
+function parseManualPaymentCommand(text: string): ManualPaymentCommand | null {
+  const normalized = normalizeCommandText(text);
+  const match = normalized.match(/^gerar\s+(pix|cartao)\b/);
+  if (!match) {
+    return null;
+  }
+
+  const method = match[1] === "pix" ? "pix" : "card";
+  const amountCents = extractManualPaymentAmountCents(normalized);
+  const plan = extractManualPaymentPlan(normalized, amountCents);
+  if (!plan) {
+    return null;
+  }
+
+  const isMonthlyPromo = plan === "mensal" && amountCents === 1999;
+  const effectiveMessage = isMonthlyPromo
+    ? `mensal ${method} promocao`
+    : `${plan} ${method}`;
+  const paymentMethod = method === "pix" ? "pix" : "card";
+
+  return {
+    method,
+    intent: method === "pix" ? "pix_payment" : "card_payment",
+    plan,
+    amountCents,
+    effectiveMessage,
+    summary: `Comando manual do especialista para gerar ${method === "pix" ? "Pix" : "cartao"} do plano ${plan}.`,
+    leadProfilePatch: {
+      selected_plan: plan,
+      plano_interesse: plan,
+      payment_method: paymentMethod,
+      last_customer_intent: method === "pix" ? "request_pix" : "request_card_payment",
+      next_expected_reply: "payment_proof",
+      commercial_stage: "checkout",
+      stage: "checkout",
+      manual_payment_command: true,
+      manual_payment_amount_cents: amountCents,
+      ...(isMonthlyPromo
+        ? {
+            accepted_special_promo: true,
+            special_promo_offer: "mensal_19_99_first_2_months",
+            special_promo_price_cents: 1999
+          }
+        : {})
+    }
+  };
+}
+
+function extractManualPaymentPlan(normalized: string, amountCents: number | null) {
+  if (/\b(anual|12 meses|1 ano)\b/.test(normalized)) return "anual" as const;
+  if (/\b(semestral|6 meses|seis meses)\b/.test(normalized)) return "semestral" as const;
+  if (/\b(trimestral|3 meses|tres meses)\b/.test(normalized)) return "trimestral" as const;
+  if (/\b(mensal|1 mes|mes)\b/.test(normalized)) return "mensal" as const;
+  if (amountCents === 1999 || amountCents === 2500) return "mensal" as const;
+  if (amountCents === 7000) return "trimestral" as const;
+  if (amountCents === 12000) return "semestral" as const;
+  if (amountCents === 20000) return "anual" as const;
+  return null;
+}
+
+function extractManualPaymentAmountCents(normalized: string) {
+  const matches = [...normalized.matchAll(/(?:r\$\s*)?(\d{2,3})(?:[,.](\d{1,2}))?\b/g)];
+  for (const match of matches) {
+    const integer = Number(match[1]);
+    const decimal = match[2] ? Number(match[2].padEnd(2, "0").slice(0, 2)) : 0;
+    if (!Number.isFinite(integer) || integer < 10) {
+      continue;
+    }
+    return integer * 100 + decimal;
+  }
+  return null;
+}
+
+function normalizeCommandText(text: string) {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^\p{L}\p{N},.$\s]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function sanitizeOrderForContext(order: Record<string, unknown> | null) {

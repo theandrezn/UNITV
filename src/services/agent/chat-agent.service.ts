@@ -492,18 +492,20 @@ export class ChatAgentService {
   ): Promise<CommercialReplyResult> {
     const leadProfile = readLeadProfile(input.conversation.metadata);
     const metaAttribution = buildMetaAttributionOrderMetadata(input.conversation.metadata);
+    const promoAccepted = isSpecialPromoAccepted(leadProfile);
     let order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
     let planForPayment: { name: string; slug: string } | null = null;
     if (!order) {
       const plans = await this.plansService.listActivePlans();
-      const selectedPlan = findPlanFromLeadProfile(plans, leadProfile);
+      const selectedPlan = promoAccepted ? findMonthlyPlan(plans) : findPlanFromLeadProfile(plans, leadProfile);
       if (selectedPlan) {
+        const amountCents = promoAccepted ? SPECIAL_PROMO_MONTHLY_PRICE_CENTS : Number(selectedPlan.price_cents);
         order = await this.ordersService.createOrder({
           customer_id: input.customer.id,
           product_id: String(selectedPlan.product_id),
           plan_id: String(selectedPlan.id),
           status: "pending_payment",
-          amount_cents: Number(selectedPlan.price_cents),
+          amount_cents: amountCents,
           currency: String(selectedPlan.currency || "BRL"),
           metadata: {
             source: "whatsapp_agent",
@@ -511,7 +513,14 @@ export class ChatAgentService {
             created_from_context: true,
             selected_plan_from_lead_profile: leadProfile.selected_plan || leadProfile.plano_interesse || null,
             payment_method_requested: "card",
-            ...metaAttribution
+            ...metaAttribution,
+            ...(promoAccepted
+              ? {
+                  special_promo_offer: SPECIAL_PROMO_OFFER_ID,
+                  special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+                  original_price_cents: Number(selectedPlan.price_cents)
+                }
+              : {})
           }
         } as never);
         planForPayment = { name: String(selectedPlan.name), slug: String(selectedPlan.slug) };
@@ -529,7 +538,8 @@ export class ChatAgentService {
 
     const metadata = readOrderMetadata(order);
     const checkoutUrl = readOrderCheckoutUrl(order);
-    if (checkoutUrl) {
+    const existingCheckoutMatchesPromo = metadata.special_promo_offer === SPECIAL_PROMO_OFFER_ID;
+    if (checkoutUrl && (!promoAccepted || existingCheckoutMatchesPromo)) {
       return { order, reply: formatCardReply(checkoutUrl) };
     }
 
@@ -543,23 +553,38 @@ export class ChatAgentService {
     }
 
     try {
+      const needsPromoOrderUpdate = promoAccepted &&
+        (Number(order.amount_cents) !== SPECIAL_PROMO_MONTHLY_PRICE_CENTS || metadata.special_promo_offer !== SPECIAL_PROMO_OFFER_ID);
+      const paymentOrder = needsPromoOrderUpdate
+        ? await this.ordersService.updateOrder(String(order.id), {
+            amount_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+            metadata: {
+              ...metadata,
+              ...metaAttribution,
+              special_promo_offer: SPECIAL_PROMO_OFFER_ID,
+              special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
+              original_price_cents: metadata.original_price_cents || Number(order.amount_cents)
+            }
+          })
+        : order;
+      const paymentOrderMetadata = readOrderMetadata(paymentOrder);
       const preference = await this.mercadoPagoService.createOrderPreference({
         order: {
-          id: String(order.id),
-          order_number: String(order.order_number),
-          customer_id: String(order.customer_id),
-          plan_id: String(order.plan_id),
-          amount_cents: Number(order.amount_cents),
-          currency: String(order.currency || "BRL")
+          id: String(paymentOrder.id),
+          order_number: String(paymentOrder.order_number),
+          customer_id: String(paymentOrder.customer_id),
+          plan_id: String(paymentOrder.plan_id),
+          amount_cents: Number(paymentOrder.amount_cents),
+          currency: String(paymentOrder.currency || "BRL")
         },
-        plan: planForPayment || readOrderPlan(order)
+        plan: planForPayment || readOrderPlan(paymentOrder)
       });
 
-      await this.ordersService.updateOrder(String(order.id), {
+      await this.ordersService.updateOrder(String(paymentOrder.id), {
         payment_provider: "mercado_pago",
         payment_reference: preference.id,
         metadata: {
-          ...metadata,
+          ...paymentOrderMetadata,
           ...metaAttribution,
           mercado_pago_preference_id: preference.id,
           mercado_pago_checkout_url: preference.checkoutUrl
@@ -567,7 +592,7 @@ export class ChatAgentService {
       });
 
       return {
-        order,
+        order: paymentOrder,
         reply: formatCardReply(preference.checkoutUrl),
         leadProfilePatch: {
           commercial_stage: "awaiting_payment",
