@@ -9,6 +9,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "obsidian:sync": "powershell -ExecutionPolicy Bypass -File scripts/sync-obsidian-knowledge.ps1",
+    "obsidian:watch": "powershell -ExecutionPolicy Bypass -File scripts/watch-obsidian-knowledge.ps1",
     "db:seed": "supabase db execute --file supabase/seed.sql"
   },
   "dependencies": {

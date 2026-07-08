@@ -262,3 +262,25 @@ Depois rode localmente:
 ```
 
 O script copia `.env.local` para a VPS. Esse arquivo nunca deve ser commitado.
+
+## Sincronizar Obsidian com a VPS
+
+O agente lê a base do Obsidian diretamente dos arquivos `.md`. Em produção, a base fica em:
+
+```text
+/var/www/unitv/obsidian/UNITV-KNOWLEDGE-BASE
+```
+
+Para sincronizar manualmente a pasta local do Obsidian com a VPS:
+
+```powershell
+npm run obsidian:sync
+```
+
+Para deixar sincronizando automaticamente enquanto você edita no Obsidian:
+
+```powershell
+npm run obsidian:watch
+```
+
+O watcher espera alguns segundos depois do salvamento e copia todos os arquivos `.md` para a VPS. Não precisa rebuildar ou reiniciar o app quando a alteração é só conteúdo da base de conhecimento.
