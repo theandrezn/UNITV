@@ -77,7 +77,8 @@ const SYSTEM_PROMPT = [
 export class ContextualFollowupDecisionService {
   async decide(context: FollowupContext): Promise<FollowupDecision> {
     const deterministic = decideFollowupDeterministically(context);
-    if (deterministic.confidence >= 0.92 || !process.env.OPENAI_API_KEY) {
+
+    if (isHardSafetyDecision(deterministic) || !process.env.OPENAI_API_KEY) {
       return deterministic;
     }
 
@@ -104,6 +105,12 @@ export class ContextualFollowupDecisionService {
       return deterministic;
     }
   }
+}
+
+function isHardSafetyDecision(decision: FollowupDecision) {
+  return !decision.should_send_followup &&
+    decision.confidence >= 0.96 &&
+    /\b(humano|human|pagamento|pix|confirmado|codigo|revenda|resolved|resolvido|self-monitoring|self_monitoring|duplicidade)\b/i.test(decision.reason);
 }
 
 export function decideFollowupDeterministically(context: FollowupContext): FollowupDecision {

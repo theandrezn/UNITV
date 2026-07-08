@@ -418,6 +418,10 @@ export class WhatsappFollowupService {
       return aiReply;
     }
 
+    if (process.env.OPENAI_API_KEY) {
+      return null;
+    }
+
     return input.decision.suggested_message?.trim() || null;
   }
 

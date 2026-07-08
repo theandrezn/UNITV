@@ -1,6 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
+
+const openAIResponsesCreate = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/openai/client", () => ({
+  createOpenAIClient: () => ({ responses: { create: openAIResponsesCreate } }),
+  getSalesAgentOpenAIModel: () => "gpt-5.4-mini",
+  getStrongSalesAgentOpenAIModel: () => "gpt-5.4"
+}));
 
 import {
   buildFollowupText,
@@ -72,6 +80,17 @@ function createService(
 }
 
 describe("WhatsappFollowupService", () => {
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+
+  beforeEach(() => {
+    openAIResponsesCreate.mockReset();
+    process.env.OPENAI_API_KEY = originalOpenAiKey;
+  });
+
+  afterEach(() => {
+    process.env.OPENAI_API_KEY = originalOpenAiKey;
+  });
+
   it("builds human commercial follow-up text", () => {
     const valuesFollowup = buildFollowupText({ followup_key: "values", plan_interest: "mensal" });
     expect(valuesFollowup).toBe("Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?");
@@ -490,6 +509,112 @@ describe("WhatsappFollowupService", () => {
     expect(decision.suggested_message).not.toContain("tela de login");
   });
 
+  it("uses the LLM decision for contextual follow-ups before deterministic send text", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    openAIResponsesCreate.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        should_send_followup: true,
+        followup_type: "download_check",
+        reason: "Cliente recebeu orientacao para baixar o Downloader e ainda nao confirmou.",
+        conversation_summary: "Cliente informou Tablet e recebeu orientacao de baixar o Downloader na Play Store.",
+        evidence: ["assistant: Baixe na playstore o aplicativo chamado Downloader After News"],
+        suggested_message: "Conseguiu baixar o Downloader na Play Store?",
+        cancel_existing_followup: false,
+        new_stage: "install_support",
+        new_followup_key: "download",
+        confidence: 0.91
+      })
+    });
+    const now = new Date("2026-07-08T21:53:00.000Z");
+    const { service, evolutionService, salesResponseAIService } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "556581336536" },
+          metadata: {
+            followup_key: "download",
+            followup_due_at: "2026-07-08T21:53:00.000Z",
+            conversation_stage: "instalacao",
+            last_bot_message_at: "2026-07-08T21:47:00.000Z",
+            lead_profile: { device: "tablet" }
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { role: "customer", content: "Tablet" },
+          { role: "assistant", content: "Otimo! Baixe na playstore o aplicativo chamado Downloader After News" }
+        ],
+        aiReply: "Conseguiu baixar o Downloader certinho?"
+      }
+    );
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result.sent).toBe(1);
+    expect(openAIResponsesCreate).toHaveBeenCalledTimes(1);
+    expect(salesResponseAIService.generateResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fallbackReply: "Conseguiu baixar o Downloader na Play Store?",
+        intent: "download_check"
+      })
+    );
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "556581336536",
+      text: "Conseguiu baixar o Downloader certinho?"
+    });
+  });
+
+  it("does not send deterministic follow-up text when LLM text generation fails in production mode", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    openAIResponsesCreate.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        should_send_followup: true,
+        followup_type: "download_check",
+        reason: "Cliente recebeu orientacao para baixar o Downloader.",
+        conversation_summary: "Cliente esta na etapa de baixar Downloader.",
+        evidence: ["assistant: Baixe na playstore o aplicativo chamado Downloader After News"],
+        suggested_message: "Conseguiu baixar o Downloader na Play Store?",
+        cancel_existing_followup: false,
+        new_stage: "install_support",
+        new_followup_key: "download",
+        confidence: 0.91
+      })
+    });
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "556581336536" },
+          metadata: {
+            followup_key: "download",
+            followup_due_at: "2026-07-08T21:53:00.000Z",
+            last_bot_message_at: "2026-07-08T21:47:00.000Z",
+            lead_profile: { device: "tablet" }
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { role: "customer", content: "Tablet" },
+          { role: "assistant", content: "Otimo! Baixe na playstore o aplicativo chamado Downloader After News" }
+        ],
+        aiReply: null
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-08T21:53:00.000Z"));
+
+    expect(result).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ followup_cancel_reason: "contextual_ai_reply_unavailable" })
+    );
+  });
+
   it("does not duplicate unanswered-customer follow-up for the same customer message", async () => {
     const { service, evolutionService } = createService([
       {
@@ -754,7 +879,8 @@ describe("WhatsappFollowupService", () => {
     );
   });
 
-  it("uses contextual decision message when final follow-up AI text is unavailable", async () => {
+  it("uses contextual decision message only when OpenAI is not configured", async () => {
+    process.env.OPENAI_API_KEY = "";
     const now = new Date("2026-07-06T12:00:00.000Z");
     const { service, evolutionService, messagesRepository, conversationsRepository, auditService } = createService(
       [
