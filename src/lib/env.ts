@@ -26,6 +26,8 @@ const serverEnvSchema = z.object({
   PIPEBOARD_API_TOKEN: z.string().optional(),
   META_ACCESS_TOKEN: z.string().optional(),
   META_PIXEL_ID: z.string().optional(),
+  META_PAGE_ID: z.string().optional(),
+  META_WHATSAPP_PAGE_ID: z.string().optional(),
   DATASET_ID: z.string().optional(),
   META_API_VERSION: z.string().optional(),
   META_TRACKING_ENABLED: z.string().optional(),
@@ -68,6 +70,7 @@ export type MetaConversionsConfig = {
   enabled: boolean;
   accessToken: string | null;
   datasetId: string | null;
+  pageId: string | null;
   apiVersion: string | null;
   testEventCode: string | null;
 };
@@ -170,6 +173,7 @@ export function getMetaConversionsConfig(): MetaConversionsConfig {
     enabled: env.META_TRACKING_ENABLED === "true" || env.META_TRACKING_ENABLED === "1",
     accessToken: env.META_ACCESS_TOKEN || null,
     datasetId: env.META_PIXEL_ID || env.DATASET_ID || null,
+    pageId: env.META_WHATSAPP_PAGE_ID || env.META_PAGE_ID || null,
     apiVersion: env.META_API_VERSION || null,
     testEventCode: env.META_TEST_EVENT_CODE || null
   };

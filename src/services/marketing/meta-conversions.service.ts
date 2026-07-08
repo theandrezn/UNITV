@@ -31,7 +31,7 @@ export class MetaConversionsService {
       return { status: "skipped", reason: "disabled" };
     }
 
-    if (!this.config.accessToken || !this.config.datasetId || !this.config.apiVersion) {
+    if (!this.config.accessToken || !this.config.datasetId || !this.config.apiVersion || !this.config.pageId) {
       return { status: "skipped", reason: "missing_config" };
     }
 
@@ -43,7 +43,7 @@ export class MetaConversionsService {
           event_id: input.eventId,
           action_source: "business_messaging",
           messaging_channel: "whatsapp",
-          user_data: buildUserData(input.customerPhone),
+          user_data: buildUserData(input.customerPhone, this.config.pageId),
           custom_data: {
             currency: input.currency,
             value: input.amountCents / 100,
@@ -83,9 +83,12 @@ export class MetaConversionsService {
   }
 }
 
-function buildUserData(phone?: string | null) {
+function buildUserData(phone?: string | null, pageId?: string | null) {
   const normalizedPhone = normalizePhone(phone);
-  return normalizedPhone ? { ph: [sha256(normalizedPhone)] } : {};
+  return {
+    ...(normalizedPhone ? { ph: [sha256(normalizedPhone)] } : {}),
+    ...(pageId ? { page_id: pageId } : {})
+  };
 }
 
 function normalizePhone(phone?: string | null) {

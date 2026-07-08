@@ -11,6 +11,7 @@ describe("MetaConversionsService", () => {
       enabled: false,
       accessToken: "token",
       datasetId: "pixel-id",
+      pageId: "page-id",
       apiVersion: "v23.0",
       testEventCode: null
     }, client as never);
@@ -27,6 +28,7 @@ describe("MetaConversionsService", () => {
       enabled: true,
       accessToken: null,
       datasetId: "pixel-id",
+      pageId: "page-id",
       apiVersion: "v23.0",
       testEventCode: null
     }, client as never);
@@ -45,6 +47,7 @@ describe("MetaConversionsService", () => {
       enabled: true,
       accessToken: "meta-token",
       datasetId: "123456789",
+      pageId: "9988776655",
       apiVersion: "v23.0",
       testEventCode: "TEST123"
     }, client as never);
@@ -68,6 +71,7 @@ describe("MetaConversionsService", () => {
       action_source: "business_messaging",
       messaging_channel: "whatsapp"
     }));
+    expect(body.data[0].user_data.page_id).toBe("9988776655");
     expect(body.data[0].custom_data).toEqual(expect.objectContaining({
       currency: "BRL",
       value: 25,
