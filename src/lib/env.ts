@@ -49,7 +49,9 @@ const serverEnvSchema = z.object({
   UNITV_HOT_LEAD_ALERT_DEDUPE_MINUTES: z.string().optional(),
   UNITV_HOT_LEAD_ALERT_ADMIN_PHONE: z.string().optional(),
   UNITV_HOT_LEAD_ALERT_MIN_TEMPERATURE: z.enum(["frio", "morno", "quente", "muito_quente"]).optional(),
-  UNITV_HOT_LEAD_ALERT_FORMAT: z.enum(["full", "compact"]).optional()
+  UNITV_HOT_LEAD_ALERT_FORMAT: z.enum(["full", "compact"]).optional(),
+  OBSIDIAN_KNOWLEDGE_BASE_PATH: z.string().optional(),
+  UNITV_OBSIDIAN_KNOWLEDGE_BASE_PATH: z.string().optional()
 });
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
