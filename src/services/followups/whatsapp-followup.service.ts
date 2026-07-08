@@ -891,7 +891,7 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
     if (isRenewalFollowup(metadata, profile)) {
       return "Voce quer renovar no mensal mesmo ou prefere outro periodo?";
     }
-    return "Voce teria interesse no mensal mesmo?";
+    return "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?";
   }
 
   if (key === "plan_choice") {

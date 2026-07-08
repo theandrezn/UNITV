@@ -32,7 +32,10 @@ const rules: ObjectionRule[] = [
     id: "price",
     pattern: /\b(qual valor|preco|quanto custa)\b/,
     followupKey: "values",
-    buildReply: () => "Voce teria interesse no mensal mesmo?"
+    buildReply: () =>
+      "Claro, te explico sim.\n\n" +
+      "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?\n\n" +
+      "E seria para usar em quantas telas?"
   },
   {
     id: "too_expensive",

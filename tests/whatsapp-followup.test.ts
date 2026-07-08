@@ -73,7 +73,7 @@ function createService(
 describe("WhatsappFollowupService", () => {
   it("builds human commercial follow-up text", () => {
     const valuesFollowup = buildFollowupText({ followup_key: "values", plan_interest: "mensal" });
-    expect(valuesFollowup).toBe("Voce teria interesse no mensal mesmo?");
+    expect(valuesFollowup).toBe("Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?");
     expect(valuesFollowup).not.toContain("pagamento");
     expect(valuesFollowup).not.toContain("comprovante");
     expect(valuesFollowup).not.toContain("Ver planos");

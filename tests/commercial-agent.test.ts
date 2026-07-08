@@ -386,14 +386,15 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(plansService.listActivePlans).toHaveBeenCalled();
-    expect(result.reply).toContain("Voce teria interesse no mensal mesmo?");
+    expect(result.reply).toContain("Voce tem interesse em algum plano especifico");
+    expect(result.reply).toContain("quantas telas");
     expect(result.reply).not.toContain("R$ 25");
     expect(result.reply).not.toContain("R$ 70");
     expect(result.menu).toBeUndefined();
     expect(result.reply).not.toContain("Ver planos");
   });
 
-  it("answers a short quanto message by confirming monthly interest before showing price", async () => {
+  it("answers a short quanto message by asking plan and screens before showing price", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -404,8 +405,10 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toBe("Voce teria interesse no mensal mesmo?");
+    expect(result.reply).toContain("Voce tem interesse em algum plano especifico");
+    expect(result.reply).toContain("quantas telas");
     expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("R$ 70");
   });
 
   it("shows the monthly value after the customer confirms monthly interest", async () => {

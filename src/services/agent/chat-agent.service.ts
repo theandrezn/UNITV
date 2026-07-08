@@ -36,6 +36,10 @@ const PLANS_TEXT = ["Mensal — R$ 25", "3 meses — R$ 70", "6 meses — R$ 120
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
+const BROAD_PRICE_QUALIFICATION_QUESTION =
+  "Claro, te explico sim.\n\n" +
+  "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?\n\n" +
+  "E seria para usar em quantas telas?";
 const CURRENT_RECHARGE_PRICE_QUESTION = "Voce ja faz a recarga? Se sim, faz a quanto?";
 const TRAFFIC_RECHARGE_WELCOME =
   "Ol\u00e1! Seja bem-vindo ao melhor aplicativo de filmes e canais \u{1F9E1}. Meu nome \u00e9 Andr\u00e9.\n\n" +
@@ -286,13 +290,13 @@ export class ChatAgentService {
       }
       if (!isAllPricesRequested(message)) {
         return {
-          reply: MONTHLY_INTEREST_QUESTION,
+          reply: BROAD_PRICE_QUALIFICATION_QUESTION,
           leadProfilePatch: {
             commercial_stage: "qualified",
             stage: "qualified",
             last_customer_intent: "ask_price",
-            next_expected_reply: "monthly_confirmation",
-            last_bot_question: MONTHLY_INTEREST_QUESTION
+            next_expected_reply: "plan_choice",
+            last_bot_question: BROAD_PRICE_QUALIFICATION_QUESTION
           }
         };
       }
