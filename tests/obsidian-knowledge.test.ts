@@ -40,18 +40,7 @@ describe("Obsidian knowledge base", () => {
     });
   });
 
-  it("uses Obsidian knowledge before database knowledge", async () => {
-    const databaseRepository = {
-      searchKnowledge: vi.fn(async () => [{
-        id: "db-1",
-        title: "Banco",
-        category: "pagamento",
-        content: "Conteudo antigo",
-        status: "active"
-      }]),
-      getKnowledgeByCategory: vi.fn(async () => []),
-      getActiveKnowledge: vi.fn(async () => [])
-    };
+  it("uses Obsidian as the only agent knowledge source", async () => {
     const obsidianRepository = {
       searchKnowledge: vi.fn(async () => [{
         id: "obsidian:06_PAGAMENTO_MERCADO_PAGO.md",
@@ -64,11 +53,11 @@ describe("Obsidian knowledge base", () => {
       getKnowledgeByCategory: vi.fn(async () => []),
       getActiveKnowledge: vi.fn(async () => [])
     };
-    const service = new KnowledgeService(databaseRepository as never, obsidianRepository as never);
+    const service = new KnowledgeService(obsidianRepository as never);
 
     const result = await service.searchKnowledge("pix");
 
-    expect(result.map((article) => article.content)).toEqual(["Conteudo do Obsidian", "Conteudo antigo"]);
+    expect(result.map((article) => article.content)).toEqual(["Conteudo do Obsidian"]);
   });
 });
 
