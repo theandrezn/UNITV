@@ -291,7 +291,8 @@ export class PaymentConfirmationService {
       amountCents: payment.amountCents,
       currency: payment.currency,
       customerPhone: readOrderCustomerPhone(order),
-      planSlug: readOrderPlanSlug(order)
+      planSlug: readOrderPlanSlug(order),
+      ctwaClid: readOrderCtwaClid(order)
     });
 
     await this.auditService.createAuditLog({
@@ -342,6 +343,22 @@ function readOrderPlanSlug(order: Record<string, unknown>) {
     return typeof slug === "string" ? slug : null;
   }
   return typeof order.plan_id === "string" ? order.plan_id : null;
+}
+
+function readOrderCtwaClid(order: Record<string, unknown>) {
+  const metadata = isRecord(order.metadata) ? order.metadata : {};
+  const referral = isRecord(metadata.meta_referral) ? metadata.meta_referral : {};
+  return firstStringValue(metadata.meta_ctwa_clid, referral.ctwaClid, referral.ctwa_clid);
+}
+
+function firstStringValue(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
 }
 
 function readEventTime(approvedAt: string | null) {

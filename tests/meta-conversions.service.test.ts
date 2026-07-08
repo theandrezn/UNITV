@@ -39,6 +39,23 @@ describe("MetaConversionsService", () => {
     expect(client).not.toHaveBeenCalled();
   });
 
+  it("does not call Meta for WhatsApp Purchase without ctwa_clid", async () => {
+    const client = vi.fn();
+    const service = new MetaConversionsService({
+      enabled: true,
+      accessToken: "meta-token",
+      datasetId: "pixel-id",
+      pageId: "page-id",
+      apiVersion: "v23.0",
+      testEventCode: null
+    }, client as never);
+
+    const result = await service.trackPurchase({ ...basePurchaseInput(), ctwaClid: null });
+
+    expect(result).toEqual({ status: "skipped", reason: "missing_ctwa_clid" });
+    expect(client).not.toHaveBeenCalled();
+  });
+
   it("sends a Purchase event to the configured Meta dataset", async () => {
     const client = vi.fn(async (_input: string, _init?: RequestInit) =>
       new Response(JSON.stringify({ events_received: 1 }), { status: 200 })
@@ -72,6 +89,7 @@ describe("MetaConversionsService", () => {
       messaging_channel: "whatsapp"
     }));
     expect(body.data[0].user_data.page_id).toBe("9988776655");
+    expect(body.data[0].user_data.ctwa_clid).toBe("ctwa-click-id");
     expect(body.data[0].custom_data).toEqual(expect.objectContaining({
       currency: "BRL",
       value: 25,
@@ -93,6 +111,7 @@ function basePurchaseInput() {
     amountCents: 2500,
     currency: "BRL",
     customerPhone: "5511999998888",
-    planSlug: "mensal"
+    planSlug: "mensal",
+    ctwaClid: "ctwa-click-id"
   };
 }

@@ -13,10 +13,11 @@ type TrackPurchaseInput = {
   currency: string;
   customerPhone?: string | null;
   planSlug?: string | null;
+  ctwaClid?: string | null;
 };
 
 type TrackPurchaseResult =
-  | { status: "skipped"; reason: "disabled" | "missing_config" }
+  | { status: "skipped"; reason: "disabled" | "missing_config" | "missing_ctwa_clid" }
   | { status: "sent"; eventId: string; response: Record<string, unknown> }
   | { status: "failed"; eventId: string; error: string };
 
@@ -35,6 +36,10 @@ export class MetaConversionsService {
       return { status: "skipped", reason: "missing_config" };
     }
 
+    if (!input.ctwaClid) {
+      return { status: "skipped", reason: "missing_ctwa_clid" };
+    }
+
     const payload = {
       data: [
         {
@@ -43,7 +48,7 @@ export class MetaConversionsService {
           event_id: input.eventId,
           action_source: "business_messaging",
           messaging_channel: "whatsapp",
-          user_data: buildUserData(input.customerPhone, this.config.pageId),
+          user_data: buildUserData(input.customerPhone, this.config.pageId, input.ctwaClid),
           custom_data: {
             currency: input.currency,
             value: input.amountCents / 100,
@@ -83,11 +88,12 @@ export class MetaConversionsService {
   }
 }
 
-function buildUserData(phone?: string | null, pageId?: string | null) {
+function buildUserData(phone?: string | null, pageId?: string | null, ctwaClid?: string | null) {
   const normalizedPhone = normalizePhone(phone);
   return {
     ...(normalizedPhone ? { ph: [sha256(normalizedPhone)] } : {}),
-    ...(pageId ? { page_id: pageId } : {})
+    ...(pageId ? { page_id: pageId } : {}),
+    ...(ctwaClid ? { ctwa_clid: ctwaClid } : {})
   };
 }
 

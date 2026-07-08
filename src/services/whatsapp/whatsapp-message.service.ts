@@ -88,6 +88,7 @@ export class WhatsappMessageService {
     });
 
     const externalConversationId = message.remoteJid;
+    const metaReferralPatch = buildMetaReferralConversationPatch(message.metaReferral);
     const existingConversation = await this.conversationsRepository.findByExternalConversationId(externalConversationId);
     const conversation =
       existingConversation ||
@@ -97,7 +98,7 @@ export class WhatsappMessageService {
         external_conversation_id: externalConversationId,
         status: "open",
         last_message_at: new Date().toISOString(),
-        metadata: { instance: message.instance }
+        metadata: { instance: message.instance, ...metaReferralPatch }
       }));
 
     if (message.fromMe) {
@@ -123,6 +124,7 @@ export class WhatsappMessageService {
         metadata: {
           remoteJid: message.remoteJid,
           media: message.media,
+          metaReferral: message.metaReferral || null,
           hasMedia: message.hasMedia,
           timestamp: message.timestamp,
           webhookEventId,
@@ -220,6 +222,7 @@ export class WhatsappMessageService {
       metadata: {
         remoteJid: message.remoteJid,
         media: message.media,
+        metaReferral: message.metaReferral || null,
         hasMedia: message.hasMedia,
         timestamp: message.timestamp,
         webhookEventId
@@ -237,9 +240,21 @@ export class WhatsappMessageService {
       const customerMessageAt = getMessageDate(message).toISOString();
     conversation.metadata = {
       ...(conversation.metadata || {}),
+      ...metaReferralPatch,
       last_customer_message_at: customerMessageAt,
       followup_due_at: null,
-      awaiting_customer_action: null
+      awaiting_customer_action: null,
+      lead_profile: {
+        ...readLeadProfile(conversation.metadata),
+        ...(metaReferralPatch.meta_ctwa_clid
+          ? {
+              meta_ctwa_clid: metaReferralPatch.meta_ctwa_clid,
+              meta_ad_source_id: metaReferralPatch.meta_ad_source_id || null,
+              meta_ad_source_url: metaReferralPatch.meta_ad_source_url || null,
+              meta_entry_point: metaReferralPatch.meta_entry_point || null
+            }
+          : {})
+      }
     };
     await this.conversationsRepository.updateConversationMetadata(conversation.id, conversation.metadata);
 
@@ -1727,6 +1742,21 @@ function inferConversationStage(intent: string, key: string) {
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
   const profile = metadata?.lead_profile;
   return profile && typeof profile === "object" && !Array.isArray(profile) ? (profile as Record<string, unknown>) : {};
+}
+
+function buildMetaReferralConversationPatch(metaReferral: IncomingEvolutionMessage["metaReferral"] | null | undefined) {
+  if (!metaReferral?.ctwaClid) {
+    return {};
+  }
+
+  return {
+    meta_referral: metaReferral,
+    meta_ctwa_clid: metaReferral.ctwaClid,
+    meta_ad_source_id: metaReferral.sourceId || null,
+    meta_ad_source_url: metaReferral.sourceUrl || null,
+    meta_ad_source_type: metaReferral.sourceType || null,
+    meta_entry_point: metaReferral.entryPointConversionSource || null
+  };
 }
 
 function buildSpecialistExampleLookupContext(recentMessages: Array<{ role?: string; content?: string | null }>) {

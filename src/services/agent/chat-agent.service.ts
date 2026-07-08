@@ -484,6 +484,7 @@ export class ChatAgentService {
     knowledge: Array<{ category?: string; content?: string }>
   ): Promise<CommercialReplyResult> {
     const leadProfile = readLeadProfile(input.conversation.metadata);
+    const metaAttribution = buildMetaAttributionOrderMetadata(input.conversation.metadata);
     let order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
     let planForPayment: { name: string; slug: string } | null = null;
     if (!order) {
@@ -502,7 +503,8 @@ export class ChatAgentService {
             webhookEventId: input.webhookEventId,
             created_from_context: true,
             selected_plan_from_lead_profile: leadProfile.selected_plan || leadProfile.plano_interesse || null,
-            payment_method_requested: "card"
+            payment_method_requested: "card",
+            ...metaAttribution
           }
         } as never);
         planForPayment = { name: String(selectedPlan.name), slug: String(selectedPlan.slug) };
@@ -551,6 +553,7 @@ export class ChatAgentService {
         payment_reference: preference.id,
         metadata: {
           ...metadata,
+          ...metaAttribution,
           mercado_pago_preference_id: preference.id,
           mercado_pago_checkout_url: preference.checkoutUrl
         }
@@ -762,6 +765,7 @@ export class ChatAgentService {
     knowledge: Array<{ category?: string; content?: string }>
   ): Promise<CommercialReplyResult> {
     const leadProfile = readLeadProfile(input.conversation.metadata);
+    const metaAttribution = buildMetaAttributionOrderMetadata(input.conversation.metadata);
     const promoAccepted = isSpecialPromoAccepted(leadProfile);
     let order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
     if (!order) {
@@ -781,6 +785,7 @@ export class ChatAgentService {
             webhookEventId: input.webhookEventId,
             created_from_context: true,
             selected_plan_from_lead_profile: leadProfile.selected_plan || leadProfile.plano_interesse || null,
+            ...metaAttribution,
             ...(promoAccepted
               ? {
                   special_promo_offer: SPECIAL_PROMO_OFFER_ID,
@@ -848,6 +853,7 @@ export class ChatAgentService {
             amount_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
             metadata: {
               ...metadata,
+              ...metaAttribution,
               special_promo_offer: SPECIAL_PROMO_OFFER_ID,
               special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
               original_price_cents: metadata.original_price_cents || Number(order.amount_cents)
@@ -873,6 +879,7 @@ export class ChatAgentService {
         payment_reference: pix.id,
         metadata: {
           ...paymentOrderMetadata,
+          ...metaAttribution,
           mercado_pago_pix_payment_id: pix.id,
           mercado_pago_pix_qr_code: pix.qrCode,
           mercado_pago_pix_ticket_url: pix.ticketUrl,
@@ -1024,6 +1031,39 @@ export class ChatAgentService {
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
   const profile = metadata?.lead_profile;
   return profile && typeof profile === "object" && !Array.isArray(profile) ? profile as Record<string, unknown> : {};
+}
+
+function buildMetaAttributionOrderMetadata(metadata: Record<string, unknown> | null | undefined) {
+  const leadProfile = readLeadProfile(metadata);
+  const referral = isRecord(metadata?.meta_referral) ? metadata.meta_referral : {};
+  const ctwaClid = firstStringValue(metadata?.meta_ctwa_clid, leadProfile.meta_ctwa_clid, referral.ctwaClid, referral.ctwa_clid);
+  if (!ctwaClid) {
+    return {};
+  }
+
+  const sourceId = firstStringValue(metadata?.meta_ad_source_id, leadProfile.meta_ad_source_id, referral.sourceId, referral.source_id);
+  const sourceUrl = firstStringValue(metadata?.meta_ad_source_url, leadProfile.meta_ad_source_url, referral.sourceUrl, referral.source_url);
+  const sourceType = firstStringValue(metadata?.meta_ad_source_type, leadProfile.meta_ad_source_type, referral.sourceType, referral.source_type);
+  const entryPoint = firstStringValue(metadata?.meta_entry_point, leadProfile.meta_entry_point, referral.entryPointConversionSource);
+
+  return {
+    meta_ctwa_clid: ctwaClid,
+    meta_ad_source_id: sourceId || null,
+    meta_ad_source_url: sourceUrl || null,
+    meta_ad_source_type: sourceType || null,
+    meta_entry_point: entryPoint || null,
+    meta_referral: referral && Object.keys(referral).length ? referral : metadata?.meta_referral || null
+  };
+}
+
+function firstStringValue(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return null;
 }
 
 function getContextualCommercialReply(message: string, leadProfile: Record<string, unknown>): CommercialReplyResult | null {

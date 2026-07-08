@@ -19,6 +19,21 @@ export const incomingEvolutionMessageSchema = z.object({
     })
     .default({}),
   timestamp: z.number().nullable().optional(),
+  metaReferral: z
+    .object({
+      ctwaClid: z.string().nullable().optional(),
+      sourceId: z.string().nullable().optional(),
+      sourceUrl: z.string().nullable().optional(),
+      sourceType: z.string().nullable().optional(),
+      title: z.string().nullable().optional(),
+      body: z.string().nullable().optional(),
+      mediaType: z.string().nullable().optional(),
+      thumbnailUrl: z.string().nullable().optional(),
+      entryPointConversionSource: z.string().nullable().optional(),
+      ctwaSignals: z.string().nullable().optional()
+    })
+    .nullable()
+    .optional(),
   fromMe: z.boolean().default(false),
   isGroup: z.boolean().default(false)
 });
@@ -105,6 +120,7 @@ export function extractIncomingMessageFromWebhook(payload: unknown) {
   const messageType = firstString(data.messageType, root.messageType, Object.keys(message)[0], text ? "text" : "unknown");
   const timestamp = firstNumber(data.messageTimestamp, root.messageTimestamp, data.timestamp, root.timestamp);
   const hasMedia = ["imageMessage", "documentMessage", "videoMessage", "audioMessage"].includes(messageType) || Boolean(mediaMessage.url);
+  const metaReferral = extractMetaReferral(root, data, message);
 
   if (!externalMessageId || !remoteJid) {
     return null;
@@ -127,7 +143,84 @@ export function extractIncomingMessageFromWebhook(payload: unknown) {
       caption: firstString(mediaMessage.caption) || null
     },
     timestamp,
+    metaReferral,
     fromMe,
     isGroup
   });
+}
+
+function extractMetaReferral(
+  root: Record<string, unknown>,
+  data: Record<string, unknown>,
+  message: Record<string, unknown>
+) {
+  const rootContext = asRecord(root.contextInfo);
+  const dataContext = asRecord(data.contextInfo);
+  const messageContext = asRecord(message.contextInfo);
+  const extendedContext = asRecord(asRecord(message.extendedTextMessage).contextInfo);
+  const referral = firstRecord(
+    data.referral,
+    root.referral,
+    dataContext.referral,
+    messageContext.referral,
+    extendedContext.referral
+  );
+  const externalAdReply = firstRecord(
+    dataContext.externalAdReply,
+    messageContext.externalAdReply,
+    extendedContext.externalAdReply,
+    rootContext.externalAdReply
+  );
+  const ctwaPayload = firstRecord(dataContext.ctwaPayload, messageContext.ctwaPayload, extendedContext.ctwaPayload, rootContext.ctwaPayload);
+  const source = firstString(
+    externalAdReply.entryPointConversionSource,
+    dataContext.entryPointConversionSource,
+    messageContext.entryPointConversionSource,
+    extendedContext.entryPointConversionSource,
+    rootContext.entryPointConversionSource
+  );
+  const ctwaClid = firstString(
+    externalAdReply.ctwaClid,
+    externalAdReply.ctwa_clid,
+    referral.ctwa_clid,
+    referral.ctwaClid,
+    ctwaPayload.ctwaClid,
+    ctwaPayload.ctwa_clid
+  );
+  const sourceId = firstString(externalAdReply.sourceId, externalAdReply.source_id, referral.source_id, referral.sourceId);
+  const sourceUrl = firstString(externalAdReply.sourceUrl, externalAdReply.source_url, referral.source_url, referral.sourceUrl);
+  const sourceType = firstString(externalAdReply.sourceType, externalAdReply.source_type, referral.source_type, referral.sourceType);
+  const title = firstString(externalAdReply.title, externalAdReply.headline, referral.headline);
+  const body = firstString(externalAdReply.body, referral.body);
+  const mediaType = firstString(externalAdReply.mediaType, externalAdReply.media_type, referral.media_type, referral.mediaType);
+  const thumbnailUrl = firstString(externalAdReply.thumbnailUrl, externalAdReply.thumbnail_url, referral.thumbnail_url, referral.image_url);
+  const ctwaSignals = firstString(dataContext.ctwaSignals, messageContext.ctwaSignals, extendedContext.ctwaSignals, rootContext.ctwaSignals);
+
+  if (!ctwaClid && !sourceId && !sourceUrl && !source && !ctwaSignals) {
+    return null;
+  }
+
+  return {
+    ctwaClid: ctwaClid || null,
+    sourceId: sourceId || null,
+    sourceUrl: sourceUrl || null,
+    sourceType: sourceType || null,
+    title: title || null,
+    body: body || null,
+    mediaType: mediaType || null,
+    thumbnailUrl: thumbnailUrl || null,
+    entryPointConversionSource: source || null,
+    ctwaSignals: ctwaSignals || null
+  };
+}
+
+function firstRecord(...values: unknown[]) {
+  for (const value of values) {
+    const record = asRecord(value);
+    if (Object.keys(record).length) {
+      return record;
+    }
+  }
+
+  return {};
 }

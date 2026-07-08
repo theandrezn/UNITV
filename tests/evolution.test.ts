@@ -56,6 +56,30 @@ describe("Evolution webhook helpers", () => {
     expect(extractIncomingMessageFromWebhook(payload)?.text).toBe("menu:payment:pix");
   });
 
+  it("extracts Meta click-to-WhatsApp attribution from Evolution contextInfo", () => {
+    const payload = structuredClone(fixture) as Record<string, any>;
+    payload.data.contextInfo = {
+      ctwaSignals: "all,all",
+      entryPointConversionSource: "ctwa_ad",
+      externalAdReply: {
+        ctwaClid: "ctwa-click-id",
+        sourceId: "120247137528920330",
+        sourceUrl: "https://fb.me/76XPxmNTl",
+        sourceType: "ad",
+        title: "Anuncio UNITV",
+        body: "Teste UNITV"
+      }
+    };
+
+    expect(extractIncomingMessageFromWebhook(payload)?.metaReferral).toEqual(expect.objectContaining({
+      ctwaClid: "ctwa-click-id",
+      sourceId: "120247137528920330",
+      sourceUrl: "https://fb.me/76XPxmNTl",
+      entryPointConversionSource: "ctwa_ad",
+      ctwaSignals: "all,all"
+    }));
+  });
+
   it("marks messages sent by myself for ignore", () => {
     const payload = structuredClone(fixture);
     payload.data.key.fromMe = true;

@@ -38,6 +38,10 @@ const baseOrder = {
   currency: "BRL",
   status: "pending_payment",
   code_id: null,
+  metadata: {
+    meta_ctwa_clid: "ctwa-click-id",
+    meta_ad_source_id: "120247137528920330"
+  },
   customers: { phone: "5511999998888" }
 };
 
@@ -136,7 +140,8 @@ describe("PaymentConfirmationService", () => {
       amountCents: 2500,
       currency: "BRL",
       customerPhone: "5511999998888",
-      planSlug: baseOrder.plan_id
+      planSlug: baseOrder.plan_id,
+      ctwaClid: "ctwa-click-id"
     });
     expect(result).toEqual({ status: "paid", orderId: baseOrder.id });
   });
