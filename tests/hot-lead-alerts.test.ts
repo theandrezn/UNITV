@@ -49,23 +49,34 @@ describe("HotLeadAlertService", () => {
     expect(harness.evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
 
-  it("allows a new alert when lead evolves from quente to muito_quente", async () => {
-    const harness = createHarness({ recentAlert: { id: "existing", lead_temperature: "quente" } });
+  it("dedupes different hot alert types for the same phone inside the configured window", async () => {
+    const harness = createHarness({ recentPhoneAlert: { id: "existing-phone-alert", alert_type: "plan_selected" } });
 
-    await harness.service.maybeNotifyHotLead(baseContext("quero pagar", {}));
+    const result = await harness.service.maybeNotifyHotLead(baseContext("pix", { selected_plan: "mensal" }));
 
-    expect(harness.alertsRepository.createAlert).toHaveBeenCalledWith(expect.objectContaining({
-      alert_type: "wants_to_pay",
-      lead_temperature: "muito_quente"
+    expect(result).toBeNull();
+    expect(harness.alertsRepository.createAlert).not.toHaveBeenCalled();
+    expect(harness.evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.agentEventLogService.safeCreateEvent).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: "hot_lead_alert_deduped",
+      metadata: expect.objectContaining({
+        reason: "recent_alert_same_phone",
+        existing_alert_type: "plan_selected",
+        new_alert_type: "pix_requested"
+      })
     }));
   });
 
   it("always alerts proof sent using the message id dedupe key", async () => {
-    const harness = createHarness({ recentAlert: { id: "existing", lead_temperature: "muito_quente" } });
+    const harness = createHarness({
+      recentAlert: { id: "existing", lead_temperature: "muito_quente" },
+      recentPhoneAlert: { id: "existing-phone-alert", alert_type: "pix_requested" }
+    });
 
     await harness.service.maybeNotifyHotLead(baseContext("paguei segue comprovante", {}, { hasMedia: true, externalMessageId: "proof-1" }));
 
     expect(harness.alertsRepository.findRecentAlert).not.toHaveBeenCalled();
+    expect(harness.alertsRepository.findRecentAlertByPhone).not.toHaveBeenCalled();
     expect(harness.alertsRepository.createAlert).toHaveBeenCalledWith(expect.objectContaining({
       alert_type: "proof_sent",
       dedupe_key: "conversation-id:proof_sent:proof-1"
@@ -97,9 +108,14 @@ describe("HotLeadAlertService", () => {
   });
 });
 
-function createHarness(options: { recentAlert?: Record<string, unknown> | null; sendFails?: boolean } = {}) {
+function createHarness(options: {
+  recentAlert?: Record<string, unknown> | null;
+  recentPhoneAlert?: Record<string, unknown> | null;
+  sendFails?: boolean;
+} = {}) {
   const alertsRepository = {
     findRecentAlert: vi.fn(async () => options.recentAlert || null),
+    findRecentAlertByPhone: vi.fn(async () => options.recentPhoneAlert || null),
     createAlert: vi.fn(async (data) => ({ id: "alert-id", send_attempts: 0, ...data })),
     markSent: vi.fn(async (id) => ({ id, sent_to_admin: true })),
     markFailed: vi.fn(async (id, error) => ({ id, sent_to_admin: false, last_send_error: error }))

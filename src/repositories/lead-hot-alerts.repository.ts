@@ -74,6 +74,20 @@ export class LeadHotAlertsRepository {
     return assertSupabaseSuccess(data, error) as Record<string, unknown> | null;
   }
 
+  async findRecentAlertByPhone(customerPhone: string, sinceIso: string) {
+    const { data, error } = await this.supabase
+      .from("lead_hot_alerts")
+      .select("*")
+      .eq("customer_phone", customerPhone)
+      .neq("alert_type", "proof_sent")
+      .gte("created_at", sinceIso)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    return assertSupabaseSuccess(data, error) as Record<string, unknown> | null;
+  }
+
   async markSent(id: string, adminMessageId?: string | null) {
     const { data, error } = await this.supabase
       .from("lead_hot_alerts")

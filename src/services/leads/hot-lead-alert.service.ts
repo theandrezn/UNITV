@@ -82,6 +82,32 @@ export class HotLeadAlertService {
 
       const shouldDedupe = signal.alert_type !== "proof_sent";
       if (shouldDedupe) {
+        const customerPhone = readPhone(context.customer.phone);
+        const recentByPhone = customerPhone
+          ? await this.alertsRepository.findRecentAlertByPhone(
+              customerPhone,
+              new Date(Date.now() - config.dedupeMinutes * 60 * 1000).toISOString()
+            )
+          : null;
+        if (recentByPhone) {
+          await this.agentEventLogService.safeCreateEvent({
+            conversation_id: context.conversation.id,
+            customer_phone: context.customer.phone || null,
+            event_type: "hot_lead_alert_deduped",
+            event_source: "chat_agent",
+            intent: context.intent || null,
+            stage: readStage(leadProfile, context.conversation.metadata),
+            metadata: {
+              reason: "recent_alert_same_phone",
+              existing_alert_id: recentByPhone.id,
+              existing_alert_type: recentByPhone.alert_type,
+              new_alert_type: signal.alert_type,
+              dedupe_minutes: config.dedupeMinutes
+            }
+          });
+          return null;
+        }
+
         const recent = await this.alertsRepository.findRecentAlert(
           context.conversation.id,
           signal.alert_type,
@@ -138,7 +164,12 @@ export class HotLeadAlertService {
       last_bot_message: excerptAuditText(maskAuditText(lastBotMessage), 300),
       next_best_action: signal.next_best_action,
       admin_message: adminMessage,
-      dedupe_key: buildDedupeKey(context.conversation.id, signal.alert_type, leadProfile, context.message.externalMessageId),
+      dedupe_key: buildDedupeKey(
+        context.conversation.id,
+        customerPhone,
+        signal.alert_type,
+        context.message.externalMessageId
+      ),
       metadata: {
         reason: signal.reason,
         priority: signal.priority,
@@ -199,13 +230,17 @@ export class HotLeadAlertService {
   }
 }
 
-function buildDedupeKey(conversationId: string, alertType: LeadHotAlertType, leadProfile: Record<string, unknown>, messageId?: string | null) {
+function buildDedupeKey(
+  conversationId: string,
+  customerPhone: string,
+  alertType: LeadHotAlertType,
+  messageId?: string | null
+) {
   if (alertType === "proof_sent" && messageId) {
     return `${conversationId}:${alertType}:${messageId}`;
   }
-  const stageOrPlan = readString(leadProfile.selected_plan || leadProfile.plano_interesse || leadProfile.stage || leadProfile.etapa_atual) || "unknown";
   const bucket = Math.floor(Date.now() / (30 * 60 * 1000));
-  return `${conversationId}:${alertType}:${stageOrPlan}:${bucket}`;
+  return `${customerPhone || conversationId}:hot_lead:${bucket}`;
 }
 
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {

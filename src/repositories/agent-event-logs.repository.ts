@@ -31,6 +31,7 @@ export type AgentEventType =
   | "handoff_started"
   | "handoff_resumed"
   | "hot_lead_detected"
+  | "hot_lead_alert_deduped"
   | "hot_lead_alert_sent"
   | "hot_lead_alert_failed";
 
