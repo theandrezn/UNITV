@@ -12,6 +12,7 @@ import {
   shouldUseLeadRecoverySequence,
   WhatsappFollowupService
 } from "@/services/followups/whatsapp-followup.service";
+import { decideFollowupDeterministically } from "@/services/followups/contextual-followup-decision.service";
 
 function createService(
   conversations: Array<Record<string, unknown>>,
@@ -432,7 +433,7 @@ describe("WhatsappFollowupService", () => {
     expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
     expect(salesResponseAIService.generateResponse).toHaveBeenCalledWith(
       expect.objectContaining({
-        fallbackReply: "Conseguiu abrir o app e chegar na tela de login?",
+        fallbackReply: "Conseguiu avancar na instalacao? Me fala em qual etapa parou.",
         intent: "download_check",
         message: expect.stringContaining("Use o historico completo")
       })
@@ -455,6 +456,38 @@ describe("WhatsappFollowupService", () => {
         last_bot_message_at: now.toISOString()
       })
     );
+  });
+
+  it("asks about downloading Downloader before asking about the UNITV login screen", () => {
+    const decision = decideFollowupDeterministically({
+      conversation_id: "conversation-id",
+      customer_id: "customer-id",
+      phone: "556581336536",
+      now: "2026-07-08T21:53:00.000Z",
+      metadata: { followup_key: "download" },
+      lead_profile: { device: "tablet" },
+      recent_messages: [
+        { role: "customer", content: "Tablet" },
+        { role: "assistant", content: "Otimo! Baixe na playstore o aplicativo chamado Downloader After News" }
+      ],
+      latest_customer_message: { role: "customer", content: "Tablet" },
+      latest_bot_message: { role: "assistant", content: "Otimo! Baixe na playstore o aplicativo chamado Downloader After News" },
+      latest_human_message: null,
+      last_speaker: "assistant",
+      last_customer_was_answered: true,
+      last_bot_question: null,
+      last_human_question: null,
+      open_order: null,
+      latest_order: null,
+      human_hold_active: false,
+      followup_key: "download",
+      followup_due_at: "2026-07-08T21:53:00.000Z",
+      last_followup_text_hash: null,
+      last_followup_context_hash: null
+    });
+
+    expect(decision.suggested_message).toBe("Conseguiu baixar o Downloader na Play Store?");
+    expect(decision.suggested_message).not.toContain("tela de login");
   });
 
   it("does not duplicate unanswered-customer follow-up for the same customer message", async () => {

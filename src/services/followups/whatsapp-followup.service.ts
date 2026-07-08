@@ -944,6 +944,7 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
 export function buildUnansweredCustomerFallbackText(metadata: Record<string, unknown>, latestCustomerMessage = "") {
   const key = String(metadata.followup_key || "");
   const stage = String(metadata.conversation_stage || readLeadProfile(metadata).stage || "");
+  const leadProfile = readLeadProfile(metadata);
   const normalized = latestCustomerMessage
     .trim()
     .toLowerCase()
@@ -951,6 +952,16 @@ export function buildUnansweredCustomerFallbackText(metadata: Record<string, unk
     .replace(/[\u0300-\u036f]/g, "");
 
   if (key === "download" || key === "install" || stage === "instalacao") {
+    const lastQuestion = normalizeFollowupText(String(leadProfile.last_bot_question || metadata.last_bot_question || ""));
+    if (/\b(downloader|aftvnews|after news|play store|playstore)\b/.test(lastQuestion)) {
+      return "Conseguiu baixar o Downloader na Play Store?";
+    }
+    if (/\b862585\b/.test(lastQuestion)) {
+      return "Conseguiu abrir o Downloader e colocar o codigo 862585?";
+    }
+    if (/\b(tela de login|abrir o app|login)\b/.test(lastQuestion)) {
+      return "Conseguiu abrir o app e chegar na tela de login?";
+    }
     if (/^(ok|sim|certo|ta|t[aá]|beleza|blz)$/.test(normalized)) {
       return "Conseguiu avancar?";
     }
@@ -970,6 +981,14 @@ export function buildUnansweredCustomerFallbackText(metadata: Record<string, unk
   }
 
   return "Quer que eu continue te ajudando por aqui?";
+}
+
+function normalizeFollowupText(value: unknown) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
 }
 
 function isDue(value: unknown, now: Date) {

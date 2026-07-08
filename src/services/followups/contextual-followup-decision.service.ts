@@ -202,12 +202,13 @@ export function decideFollowupDeterministically(context: FollowupContext): Follo
 
   if (followupKey === "download" || followupKey === "install") {
     const passwordContext = /\b(senha|criar uma senha|formato da senha)\b/.test(textWindow);
+    const message = buildInstallFollowupMessage(textWindow, passwordContext);
     return sendDecision({
       type: passwordContext ? "install_check" : "download_check",
       reason: "Cliente ainda nao confirmou conclusao da etapa de instalacao.",
       summary: passwordContext ? "Cliente estava criando senha no app." : "Cliente estava no fluxo de download/instalacao.",
       evidence: collectEvidence(context, passwordContext ? ["senha"] : ["baixar", "instalar", "app"]),
-      message: passwordContext ? "Conseguiu criar a senha e entrar certinho?" : "Conseguiu abrir o app e chegar na tela de login?",
+      message,
       stage: "install_support",
       key: followupKey,
       confidence: 0.86
@@ -344,6 +345,28 @@ function hasPendingPixOrder(context: FollowupContext) {
   const paymentMethod = String(order.payment_method || context.lead_profile.payment_method || "");
   const hasPixReference = Boolean(order.payment_reference || order.metadata || context.lead_profile.pix_code || context.lead_profile.pediu_pix);
   return ["draft", "pending_payment", "manual_review", "receipt_under_review"].includes(status) && (paymentMethod === "pix" || hasPixReference);
+}
+
+function buildInstallFollowupMessage(textWindow: string, passwordContext: boolean) {
+  if (passwordContext) {
+    return "Conseguiu criar a senha e entrar certinho?";
+  }
+
+  if (/\b(baix[ae]|instal[ae]|play store|playstore)\b.{0,80}\b(downloader|aftvnews|after news)\b/.test(textWindow) ||
+    /\b(downloader|aftvnews|after news)\b.{0,80}\b(play store|playstore|baix[ae]|instal[ae])\b/.test(textWindow)) {
+    return "Conseguiu baixar o Downloader na Play Store?";
+  }
+
+  if (/\b(codigo|c[oó]digo|digitar|colocar|use|usar)\b.{0,80}\b862585\b/.test(textWindow) ||
+    /\b862585\b.{0,80}\b(downloader|codigo|digitar|colocar)\b/.test(textWindow)) {
+    return "Conseguiu abrir o Downloader e colocar o codigo 862585?";
+  }
+
+  if (/\b(tela de login|abrir o app|criar conta|login)\b/.test(textWindow)) {
+    return "Conseguiu abrir o app e chegar na tela de login?";
+  }
+
+  return "Conseguiu avancar na instalacao? Me fala em qual etapa parou.";
 }
 
 function collectEvidence(context: FollowupContext, terms: string[]) {
