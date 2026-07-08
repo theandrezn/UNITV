@@ -1347,6 +1347,58 @@ describe("commercial WhatsApp agent", () => {
     expect(result.copyText).toBe("000201-pix-copy-paste");
   });
 
+  it("does not let sales AI promise Pix without executing Mercado Pago", async () => {
+    const salesResponseAIService = {
+      generateResponse: vi.fn(async () => "Perfeito, vou gerar o Pix de R$ 19,99 pra você agora.")
+    };
+    const { service, ordersService, mercadoPagoService } = createChatAgent({ salesResponseAIService });
+    ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce(null);
+    ordersService.createOrder.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260708-000020",
+      customer_id: "44444444-4444-4444-8444-444444444444",
+      plan_id: plan.id,
+      amount_cents: 1999,
+      currency: "BRL",
+      metadata: {
+        source: "whatsapp_agent",
+        special_promo_offer: "mensal_19_99_first_2_months",
+        special_promo_price_cents: 1999
+      },
+      plans: { name: plan.name, slug: plan.slug }
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "sim",
+      classification: { intent: "pix_payment", confidence: 0.96, summary: "Cliente quer pagar por Pix usando o contexto comercial atual.", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444", email: null },
+      conversation: {
+        id: "55555555-5555-4555-8555-555555555555",
+        metadata: {
+          lead_profile: {
+            selected_plan: "mensal",
+            plano_interesse: "mensal",
+            special_promo_followup_sent: true,
+            accepted_special_promo: true,
+            special_promo_offer: "mensal_19_99_first_2_months",
+            last_bot_question: "Vai ser no Pix?"
+          }
+        }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+    expect(ordersService.createOrder).toHaveBeenCalledWith(expect.objectContaining({ amount_cents: 1999 }));
+    expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith({
+      order: expect.objectContaining({ order_number: "UTV-20260708-000020", amount_cents: 1999 }),
+      plan: { name: plan.name, slug: plan.slug },
+      payer: { email: "pix-utv-20260708-000020@unitv.com.br" }
+    });
+    expect(result.reply).toContain("000201-pix-copy-paste");
+    expect(result.copyText).toBe("000201-pix-copy-paste");
+  });
+
   it("reuses an existing Pix charge instead of creating a duplicate", async () => {
     const { service, ordersService, mercadoPagoService } = createChatAgent();
     ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce({

@@ -143,8 +143,16 @@ export class ChatAgentService {
       return deterministicInstallationReply;
     }
 
-    if (intent === "pix_payment" && isSpecialPromoAccepted(leadProfile)) {
+    if (isPaymentDoneMessage(message)) {
+      return this.checkPaymentAfterCustomerConfirmation(input);
+    }
+
+    if (intent === "pix_payment" || isPixPaymentMessage(message)) {
       return this.generatePixPayment(input, knowledge);
+    }
+
+    if (intent === "card_payment") {
+      return this.generateCardPayment(input, knowledge);
     }
 
     if (shouldUseAIResponse({
@@ -297,18 +305,6 @@ export class ChatAgentService {
         menu: menu || undefined,
         sendTextBeforeMenu: Boolean(menu)
       };
-    }
-
-    if (isPaymentDoneMessage(message)) {
-      return this.checkPaymentAfterCustomerConfirmation(input);
-    }
-
-    if (intent === "pix_payment" || isPixPaymentMessage(message)) {
-      return this.generatePixPayment(input, knowledge);
-    }
-
-    if (intent === "card_payment") {
-      return this.generateCardPayment(input, knowledge);
     }
 
     if (intent === "ask_payment") {
