@@ -6,6 +6,7 @@ coverage/
 outputs/
 work/
 logs/
+data/training/
 supabase/.temp/
 .worktrees/
 

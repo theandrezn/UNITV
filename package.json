@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "training:export-paid": "tsx scripts/export-paid-training-data.ts",
     "obsidian:sync": "powershell -ExecutionPolicy Bypass -File scripts/sync-obsidian-knowledge.ps1",
     "obsidian:watch": "powershell -ExecutionPolicy Bypass -File scripts/watch-obsidian-knowledge.ps1",
     "db:seed": "supabase db execute --file supabase/seed.sql"
@@ -28,6 +29,7 @@
     "@types/react-dom": "^18.3.7",
     "eslint": "^9.39.4",
     "eslint-config-next": "^16.2.10",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.3",
     "vitest": "^4.1.9"
   },
