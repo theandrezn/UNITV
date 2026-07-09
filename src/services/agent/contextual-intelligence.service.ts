@@ -26,6 +26,11 @@ const commercialIntentSchema = z.enum([
 const commercialStageSchema = z.enum([
   "new",
   "qualified",
+  "first_time_check",
+  "trial_selection",
+  "device_qualification",
+  "download_instructions",
+  "awaiting_download_installation",
   "plan_selected",
   "checkout",
   "awaiting_payment",
@@ -36,6 +41,52 @@ const commercialStageSchema = z.enum([
   "human_support"
 ]);
 
+const contextualDetectedIntentSchema = z.enum([
+  "FREE_TRIAL_REQUEST",
+  "PLAN_PRICE_REQUEST",
+  "PLAN_SELECTION_MONTHLY",
+  "PLAN_SELECTION_QUARTERLY",
+  "PLAN_SELECTION_SEMIANNUAL",
+  "PLAN_SELECTION_YEARLY",
+  "DEVICE_ANDROID_PHONE",
+  "DEVICE_ANDROID_PHONE_NEEDS_CONFIRMATION",
+  "DEVICE_ANDROID_TV",
+  "DEVICE_TV_BOX",
+  "DEVICE_FIRE_STICK",
+  "DEVICE_UNSUPPORTED_OR_NEEDS_CHECK",
+  "PIX_REQUEST",
+  "PIX_PERMISSION_CONFIRMED",
+  "PAYMENT_INTENT",
+  "PAYMENT_PROOF_SENT",
+  "DOWNLOAD_HELP",
+  "DOWNLOAD_CONFIRMED",
+  "INSTALLATION_HELP",
+  "RECHARGE_REQUEST",
+  "HUMAN_NEEDED",
+  "UNKNOWN_BUT_CLARIFIABLE",
+  "UNKNOWN"
+]);
+
+const nextActionSchema = z.enum([
+  "ask_device_for_trial",
+  "confirm_android_phone",
+  "send_android_download",
+  "send_tvbox_download",
+  "send_firestick_guidance",
+  "ask_plan_preference",
+  "show_monthly_plan",
+  "show_requested_prices",
+  "send_pix",
+  "ask_payment_method",
+  "verify_payment",
+  "ask_download_problem",
+  "ask_installation_status",
+  "continue_recharge_flow",
+  "clarify_intent",
+  "human_handoff",
+  "no_safe_action"
+]);
+
 const planSchema = z.enum(["mensal", "trimestral", "semestral", "anual", "teste"]).nullable();
 const paymentMethodSchema = z.enum(["pix", "card"]).nullable();
 const nextExpectedReplySchema = z.enum([
@@ -44,12 +95,14 @@ const nextExpectedReplySchema = z.enum([
   "payment_method",
   "payment_proof",
   "download_confirmation",
+  "device",
   "install_confirmation"
 ]).nullable();
 const installStatusSchema = z.enum(["not_sent", "link_sent", "downloaded", "installed", "failed"]).nullable();
 
 export const contextualDecisionSchema = z.object({
   intent: commercialIntentSchema,
+  detected_intent: contextualDetectedIntentSchema,
   stage: commercialStageSchema,
   selected_plan: planSchema,
   payment_method: paymentMethodSchema,
@@ -57,7 +110,13 @@ export const contextualDecisionSchema = z.object({
   should_generate_pix: z.boolean(),
   should_send_download: z.boolean(),
   should_schedule_followup: z.boolean(),
+  should_reply: z.boolean(),
+  should_handoff: z.boolean(),
+  should_clarify: z.boolean(),
+  next_action: nextActionSchema,
   customer_message_meaning: z.string().min(1),
+  reason: z.string().min(1),
+  recommended_response: z.string(),
   next_expected_reply: nextExpectedReplySchema,
   install_status: installStatusSchema.optional().nullable(),
   confidence: z.number().min(0).max(1)
@@ -80,12 +139,18 @@ export type CommercialContext = {
 };
 
 const SYSTEM_PROMPT = [
-  "Voce e um extrator de contexto comercial UNITV.",
+  "Voce e o interpretador contextual do vendedor UNITV.",
   "Retorne somente JSON valido no schema solicitado.",
-  "Interprete historico, lead_profile, pedido aberto e ultima pergunta do bot.",
+  "Pergunta central: o que essa pessoa quis dizer considerando o que o bot acabou de perguntar?",
+  "Interprete historico, lead_profile, pedido aberto, ultima mensagem do bot e ultima pergunta do bot.",
   "Voce NAO executa acoes, NAO confirma pagamento, NAO cria Pix, NAO entrega codigo.",
   "Precos oficiais: mensal R$25, trimestral R$70, semestral R$120, anual R$200.",
-  "Se a mensagem curta depender da ultima pergunta, use o historico para inferir.",
+  "Se a mensagem curta depender da ultima pergunta, use o historico para inferir a intencao.",
+  "Exemplo: bot perguntou 'teste gratis ou planos?' e cliente respondeu 'Testes' => FREE_TRIAL_REQUEST, ask_device_for_trial.",
+  "Exemplo: bot perguntou aparelho e cliente respondeu 'celular' => DEVICE_ANDROID_PHONE_NEEDS_CONFIRMATION, confirm_android_phone.",
+  "Exemplo: bot perguntou 'Voce conseguiu baixar?' e cliente respondeu 'nao' => DOWNLOAD_HELP, ask_download_problem.",
+  "Nunca recomende saudacao inicial quando existe conversa ativa, ultima pergunta ou etapa comercial em andamento.",
+  "Nao mande humano para respostas simples de teste, aparelho, download, preco ou Pix.",
   "Se cliente escolheu plano e pede Pix, marque request_pix, should_generate_pix=true.",
   "Se nao houver plano selecionado para Pix, should_generate_pix=false.",
   "Se cliente disse que baixou/conseguiu, marque already_downloaded ou installed_success.",
@@ -133,10 +198,17 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
   const openOrder = context.open_order;
   const base = buildDecision({
     intent: "unknown",
+    detected_intent: "UNKNOWN",
     stage: normalizeStage(leadProfile.stage || leadProfile.etapa_atual),
     selected_plan: selectedPlan,
     payment_method: normalizePaymentMethod(leadProfile.payment_method),
     customer_message_meaning: "Mensagem ainda sem intencao comercial clara.",
+    reason: "Nao ha sinal deterministico suficiente sem usar mais contexto.",
+    next_action: "clarify_intent",
+    should_reply: true,
+    should_handoff: false,
+    should_clarify: true,
+    recommended_response: "Me confirma rapidinho: voce quer fazer teste gratis, ver os planos ou precisa de ajuda para instalar?",
     confidence: 0.45
   });
 
@@ -144,10 +216,14 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
     return buildDecision({
       ...base,
       intent: "receipt_sent",
+      detected_intent: "PAYMENT_PROOF_SENT",
       stage: "awaiting_payment",
       selected_plan: selectedPlan,
       payment_method: "pix",
       customer_message_meaning: "Cliente enviou ou mencionou comprovante; pagamento ainda depende de confirmacao do provedor.",
+      reason: "Comprovante exige validacao real de pagamento antes de qualquer codigo.",
+      next_action: "verify_payment",
+      recommended_response: "Recebi. Vou verificar com seguranca e aguardar a confirmacao real do pagamento antes de liberar qualquer acesso.",
       next_expected_reply: "payment_proof",
       confidence: 0.94
     });
@@ -157,10 +233,14 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
     return buildDecision({
       ...base,
       intent: "already_downloaded",
+      detected_intent: "DOWNLOAD_CONFIRMED",
       stage: "install_support",
       selected_plan: selectedPlan,
       install_status: "downloaded",
       customer_message_meaning: "Cliente informou que ja baixou o app.",
+      reason: "Cliente respondeu dentro do fluxo de download/instalacao.",
+      next_action: "ask_installation_status",
+      recommended_response: "Perfeito. Agora abre o aplicativo e me avisa se aparecer a tela de login/cadastro para seguirmos com a liberacao do teste.",
       next_expected_reply: "install_confirmation",
       confidence: 0.97
     });
@@ -170,10 +250,14 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
     return buildDecision({
       ...base,
       intent: "installed_success",
+      detected_intent: "DOWNLOAD_CONFIRMED",
       stage: "qualified",
       selected_plan: selectedPlan,
       install_status: "installed",
       customer_message_meaning: "Cliente informou que instalou com sucesso.",
+      reason: "Instalacao concluida deve avancar para ativacao/teste, nao reiniciar conversa.",
+      next_action: "ask_installation_status",
+      recommended_response: "Perfeito. Agora abre o aplicativo e me avisa se aparecer a tela de login/cadastro para seguirmos com a liberacao do teste.",
       next_expected_reply: "activation_or_renewal",
       confidence: 0.97
     });
@@ -183,13 +267,77 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
     return buildDecision({
       ...base,
       intent: "download_issue",
+      detected_intent: "DOWNLOAD_HELP",
       stage: "download_support",
       selected_plan: selectedPlan,
       install_status: "failed",
       should_schedule_followup: true,
       customer_message_meaning: "Cliente teve problema no download ou instalacao.",
+      reason: "Cliente informou explicitamente problema no download ou instalacao.",
+      next_action: "ask_download_problem",
+      recommended_response: "Tudo bem, me fala onde travou: no link, no Downloader ou na instalacao?",
       next_expected_reply: "download_confirmation",
       confidence: 0.95
+    });
+  }
+
+  if (isDownloadProblemMessage(normalized, lastQuestion)) {
+    return buildDecision({
+      ...base,
+      intent: "download_issue",
+      detected_intent: "DOWNLOAD_HELP",
+      stage: "download_support",
+      selected_plan: selectedPlan,
+      install_status: "failed",
+      should_schedule_followup: true,
+      customer_message_meaning: "Cliente teve problema no download ou instalacao.",
+      reason: "A ultima pergunta era sobre conseguir baixar/instalar, entao a resposta curta indica travamento no download.",
+      next_action: "ask_download_problem",
+      recommended_response: "Tudo bem, me fala onde travou: no link, no Downloader ou na instalacao?",
+      next_expected_reply: "download_confirmation",
+      confidence: 0.95
+    });
+  }
+
+  if (isTrialSelectionAnswer(normalized, lastQuestion)) {
+    return buildDecision({
+      ...base,
+      intent: "activate",
+      detected_intent: "FREE_TRIAL_REQUEST",
+      stage: "device_qualification",
+      selected_plan: null,
+      should_create_order: false,
+      should_generate_pix: false,
+      should_send_download: false,
+      should_schedule_followup: false,
+      customer_message_meaning: "Cliente escolheu fazer o teste gratis considerando a ultima pergunta do bot.",
+      reason: "A ultima pergunta oferecia teste gratis ou planos; a resposta curta deve avancar para aparelho do teste.",
+      next_action: "ask_device_for_trial",
+      recommended_response:
+        "Perfeito! Como e sua primeira vez, voce consegue fazer o teste gratis de 3 dias sim.\n\n" +
+        "Me fala so qual aparelho voce vai usar: celular Android, TV Box, Android TV/Google TV ou Fire Stick?",
+      next_expected_reply: "device",
+      confidence: 0.97
+    });
+  }
+
+  if (isAndroidPhoneNeedsConfirmation(normalized, lastQuestion)) {
+    return buildDecision({
+      ...base,
+      intent: "ask_download",
+      detected_intent: "DEVICE_ANDROID_PHONE_NEEDS_CONFIRMATION",
+      stage: "device_qualification",
+      selected_plan: null,
+      should_create_order: false,
+      should_generate_pix: false,
+      should_send_download: false,
+      should_schedule_followup: false,
+      customer_message_meaning: "Cliente informou celular, mas o agente precisa confirmar se e Android antes de enviar APK.",
+      reason: "Aparelho 'celular' sozinho nao garante compatibilidade, entao a proxima pergunta deve confirmar Android.",
+      next_action: "confirm_android_phone",
+      recommended_response: "So me confirma: esse celular e Android?",
+      next_expected_reply: "device",
+      confidence: 0.93
     });
   }
 
@@ -198,13 +346,19 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
     return buildDecision({
       ...base,
       intent: "activate",
-      stage: "qualified",
+      detected_intent: "FREE_TRIAL_REQUEST",
+      stage: "device_qualification",
       selected_plan: null,
       should_create_order: false,
       should_generate_pix: false,
-      should_send_download: true,
+      should_send_download: false,
       customer_message_meaning: "Cliente pediu teste gratis; deve confirmar o aparelho antes de liberar o teste.",
-      next_expected_reply: "download_confirmation",
+      reason: "Teste gratis exige descobrir aparelho antes de enviar download ou liberar teste.",
+      next_action: "ask_device_for_trial",
+      recommended_response:
+        "Perfeito! Como e sua primeira vez, voce consegue fazer o teste gratis de 3 dias sim.\n\n" +
+        "Me fala so qual aparelho voce vai usar: celular Android, TV Box, Android TV/Google TV ou Fire Stick?",
+      next_expected_reply: "device",
       confidence: 0.96
     });
   }
@@ -213,6 +367,7 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
     return buildDecision({
       ...base,
       intent: "choose_plan",
+      detected_intent: planToDetectedIntent(plan),
       stage: askedPixBefore ? "checkout" : "plan_selected",
       selected_plan: plan,
       payment_method: askedPixBefore ? "pix" : null,
@@ -221,6 +376,13 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
       customer_message_meaning: askedPixBefore
         ? "Cliente escolheu o plano depois de pedir Pix; deve seguir para pagamento."
         : "Cliente escolheu um plano.",
+      reason: askedPixBefore
+        ? "A ultima pergunta pediu plano para Pix, entao a escolha de plano autoriza seguir ao pagamento."
+        : "Cliente escolheu um plano comercial.",
+      next_action: askedPixBefore ? "send_pix" : "ask_payment_method",
+      recommended_response: askedPixBefore
+        ? "Perfeito. Vou gerar o Pix desse plano para voce."
+        : "Perfeito. Voce prefere pagar com Pix ou cartao?",
       next_expected_reply: askedPixBefore ? "payment_proof" : "payment_method",
       confidence: 0.96
     });
@@ -232,6 +394,9 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
     return buildDecision({
       ...base,
       intent: "request_pix",
+      detected_intent: /^(sim|s|ok|quero|manda|pode|pode ser|isso)$/.test(normalized)
+        ? "PIX_PERMISSION_CONFIRMED"
+        : "PIX_REQUEST",
       stage: selectedPlan || openOrder ? "checkout" : "qualified",
       selected_plan: selectedPlan,
       payment_method: "pix",
@@ -240,6 +405,14 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
       customer_message_meaning: selectedPlan || openOrder
         ? "Cliente quer pagar por Pix usando o contexto comercial atual."
         : "Cliente pediu Pix, mas ainda nao ha plano selecionado.",
+      reason: selectedPlan || openOrder
+        ? "Ha plano/pedido no contexto, entao Pix pode ser tratado pelo fluxo seguro."
+        : "Pix sem plano precisa voltar para escolha de plano antes de gerar cobranca.",
+      next_action: selectedPlan || openOrder ? "send_pix" : "ask_plan_preference",
+      should_clarify: !(selectedPlan || openOrder),
+      recommended_response: selectedPlan || openOrder
+        ? "Perfeito. Vou gerar o Pix do plano selecionado para voce."
+        : "Consigo sim. Qual plano voce quer ativar para eu gerar o Pix: mensal, trimestral, semestral ou anual?",
       next_expected_reply: selectedPlan || openOrder ? "payment_proof" : "plan_choice",
       confidence: 0.96
     });
@@ -298,14 +471,61 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
   return base;
 }
 
+function isTrialSelectionAnswer(normalized: string, lastQuestion: string) {
+  const askedTrialOrPlans = /\b(teste gratis|teste|3 dias|ver os planos|planos|mensal|trimestral|semestral|anual)\b/.test(lastQuestion) &&
+    /\b(prefere|quer|primeiro|comecar)\b/.test(lastQuestion);
+  const trialAnswer = /^(teste|testes|quero teste|teste gratis|gratis|gratuito|3 dias|sim teste|pode ser teste|primeiro o teste)$/.test(normalized) ||
+    /\b(quero|fazer|liberar|comecar)\b.{0,25}\b(teste|gratis|3 dias)\b/.test(normalized);
+
+  return askedTrialOrPlans && trialAnswer;
+}
+
+function isAndroidPhoneNeedsConfirmation(normalized: string, lastQuestion: string) {
+  const askedDevice = /\b(aparelho|celular android|tv box|android tv|google tv|fire stick|firestick|vai usar|baixar)\b/.test(lastQuestion);
+  return askedDevice && /^(celular|telefone|meu celular|no celular|smartphone)$/.test(normalized);
+}
+
+function isDownloadProblemMessage(normalized: string, lastQuestion: string) {
+  if (/\b(nao consegui|n consegui|nao deu|n deu|erro|nao abre|nao baixa|link nao funciona|codigo nao deu|codigo nao funcionou|bloqueou|travou)\b/.test(normalized)) {
+    return true;
+  }
+
+  const lastQuestionAskedDownload = /\b(conseguiu baixar|voce conseguiu baixar|baixou|download|instalou|instalacao)\b/.test(lastQuestion);
+  return lastQuestionAskedDownload && /^(nao|n|ainda nao|nao ainda|nada|nao consegui|n consegui)$/.test(normalized);
+}
+
+function planToDetectedIntent(plan: NonNullable<ContextualDecision["selected_plan"]>): ContextualDecision["detected_intent"] {
+  switch (plan) {
+    case "mensal":
+      return "PLAN_SELECTION_MONTHLY";
+    case "trimestral":
+      return "PLAN_SELECTION_QUARTERLY";
+    case "semestral":
+      return "PLAN_SELECTION_SEMIANNUAL";
+    case "anual":
+      return "PLAN_SELECTION_YEARLY";
+    case "teste":
+      return "FREE_TRIAL_REQUEST";
+  }
+
+  return "UNKNOWN";
+}
+
 function buildDecision(input: Partial<ContextualDecision> & Pick<ContextualDecision, "intent" | "stage" | "customer_message_meaning" | "confidence">): ContextualDecision {
   return {
+    detected_intent: "UNKNOWN",
     selected_plan: null,
     payment_method: null,
     should_create_order: false,
     should_generate_pix: false,
     should_send_download: false,
     should_schedule_followup: true,
+    should_reply: true,
+    should_handoff: false,
+    should_clarify: false,
+    next_action: "clarify_intent",
+    reason: "Decisao deterministica baseada na mensagem atual e no contexto recente.",
+    recommended_response: "",
     next_expected_reply: null,
     install_status: null,
     ...input
@@ -340,6 +560,11 @@ function normalizePaymentMethod(value: unknown): ContextualDecision["payment_met
 
 function normalizeStage(value: unknown): ContextualDecision["stage"] {
   const normalized = normalize(value);
+  if (normalized.includes("awaiting_download_installation") || normalized.includes("aguardando_download")) return "awaiting_download_installation";
+  if (normalized.includes("download_instructions") || normalized.includes("download_sent")) return "download_instructions";
+  if (normalized.includes("device_qualification") || normalized.includes("aparelho")) return "device_qualification";
+  if (normalized.includes("first_time_check") || normalized.includes("primeira_vez")) return "first_time_check";
+  if (normalized.includes("trial_selection") || normalized.includes("test_or_plan")) return "trial_selection";
   if (normalized.includes("pagamento") || normalized.includes("checkout")) return "checkout";
   if (normalized.includes("instal")) return "install_support";
   if (normalized.includes("download")) return "download_support";
@@ -354,6 +579,7 @@ function toJsonSchema() {
     additionalProperties: false,
     properties: {
       intent: { type: "string", enum: commercialIntentSchema.options },
+      detected_intent: { type: "string", enum: contextualDetectedIntentSchema.options },
       stage: { type: "string", enum: commercialStageSchema.options },
       selected_plan: { type: ["string", "null"], enum: ["mensal", "trimestral", "semestral", "anual", "teste", null] },
       payment_method: { type: ["string", "null"], enum: ["pix", "card", null] },
@@ -361,13 +587,20 @@ function toJsonSchema() {
       should_generate_pix: { type: "boolean" },
       should_send_download: { type: "boolean" },
       should_schedule_followup: { type: "boolean" },
+      should_reply: { type: "boolean" },
+      should_handoff: { type: "boolean" },
+      should_clarify: { type: "boolean" },
+      next_action: { type: "string", enum: nextActionSchema.options },
       customer_message_meaning: { type: "string" },
-      next_expected_reply: { type: ["string", "null"], enum: ["activation_or_renewal", "plan_choice", "payment_method", "payment_proof", "download_confirmation", "install_confirmation", null] },
+      reason: { type: "string" },
+      recommended_response: { type: "string" },
+      next_expected_reply: { type: ["string", "null"], enum: ["activation_or_renewal", "plan_choice", "payment_method", "payment_proof", "download_confirmation", "device", "install_confirmation", null] },
       install_status: { type: ["string", "null"], enum: ["not_sent", "link_sent", "downloaded", "installed", "failed", null] },
       confidence: { type: "number", minimum: 0, maximum: 1 }
     },
     required: [
       "intent",
+      "detected_intent",
       "stage",
       "selected_plan",
       "payment_method",
@@ -375,7 +608,13 @@ function toJsonSchema() {
       "should_generate_pix",
       "should_send_download",
       "should_schedule_followup",
+      "should_reply",
+      "should_handoff",
+      "should_clarify",
+      "next_action",
       "customer_message_meaning",
+      "reason",
+      "recommended_response",
       "next_expected_reply",
       "install_status",
       "confidence"

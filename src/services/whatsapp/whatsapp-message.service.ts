@@ -548,6 +548,12 @@ export class WhatsappMessageService {
       metadata: {
         webhookEventId,
         detected_intent: contextualDecision.intent,
+        contextual_detected_intent: contextualDecision.detected_intent,
+        next_action: contextualDecision.next_action,
+        should_reply: contextualDecision.should_reply,
+        should_handoff: contextualDecision.should_handoff,
+        should_clarify: contextualDecision.should_clarify,
+        reason: contextualDecision.reason,
         previous_stage: contextSnapshot.lead_profile.stage || contextSnapshot.lead_profile.etapa_atual || null,
         new_stage: contextualDecision.stage,
         selected_plan: contextualDecision.selected_plan,
@@ -618,6 +624,7 @@ export class WhatsappMessageService {
       conversation,
       webhookEventId,
       recentMessages,
+      contextualDecision,
       specialistExamples
     });
     await this.safeCreateAgentEvent({
@@ -1506,6 +1513,12 @@ function buildContextualLeadProfilePatch(decision: ContextualDecision) {
     commercial_stage: decision.stage,
     stage: decision.stage,
     last_customer_intent: decision.intent,
+    contextual_detected_intent: decision.detected_intent,
+    contextual_next_action: decision.next_action,
+    contextual_reason: decision.reason,
+    contextual_should_reply: decision.should_reply,
+    contextual_should_handoff: decision.should_handoff,
+    contextual_should_clarify: decision.should_clarify,
     next_expected_reply: decision.next_expected_reply,
     contextual_confidence: decision.confidence,
     contextual_meaning: decision.customer_message_meaning,
@@ -1668,6 +1681,18 @@ function applyContextualPolicy({
 }) {
   if (decision.confidence < 0.55) {
     return { classification, effectiveMessage };
+  }
+
+  if (decision.next_action === "ask_device_for_trial" || decision.detected_intent === "FREE_TRIAL_REQUEST") {
+    return {
+      effectiveMessage,
+      classification: {
+        intent: "free_trial",
+        confidence: decision.confidence,
+        summary: decision.customer_message_meaning,
+        suggested_reply: decision.recommended_response || ""
+      } satisfies IntentClassification
+    };
   }
 
   if (decision.intent === "request_pix" || decision.should_generate_pix) {

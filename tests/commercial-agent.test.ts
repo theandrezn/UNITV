@@ -306,11 +306,60 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(freeTrialDecision).toMatchObject({
+      detected_intent: "FREE_TRIAL_REQUEST",
+      stage: "device_qualification",
       selected_plan: null,
       should_create_order: false,
       should_generate_pix: false,
-      should_send_download: true,
-      next_expected_reply: "download_confirmation"
+      should_send_download: false,
+      next_action: "ask_device_for_trial",
+      next_expected_reply: "device"
+    });
+
+    const trialSelectionDecision = extractDeterministicDecision({
+      current_message: "Testes",
+      recent_messages: [],
+      lead_profile: { last_customer_intent: "first_time_user" },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: "Perfeito, entao e sua primeira vez. Voce prefere fazer o teste gratis de 3 dias primeiro ou quer ver os planos?",
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(trialSelectionDecision).toMatchObject({
+      intent: "activate",
+      detected_intent: "FREE_TRIAL_REQUEST",
+      next_action: "ask_device_for_trial",
+      stage: "device_qualification",
+      should_reply: true,
+      should_handoff: false,
+      next_expected_reply: "device"
+    });
+    expect(trialSelectionDecision.recommended_response).toContain("aparelho");
+
+    const phoneNeedsConfirmationDecision = extractDeterministicDecision({
+      current_message: "celular",
+      recent_messages: [],
+      lead_profile: { wants_test: true },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: "Me fala so qual aparelho voce vai usar: celular Android, TV Box, Android TV/Google TV ou Fire Stick?",
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(phoneNeedsConfirmationDecision).toMatchObject({
+      detected_intent: "DEVICE_ANDROID_PHONE_NEEDS_CONFIRMATION",
+      next_action: "confirm_android_phone",
+      stage: "device_qualification",
+      next_expected_reply: "device"
     });
 
     const downloadDecision = extractDeterministicDecision({
@@ -349,8 +398,31 @@ describe("commercial WhatsApp agent", () => {
 
     expect(failedDownloadDecision).toMatchObject({
       intent: "download_issue",
+      detected_intent: "DOWNLOAD_HELP",
+      next_action: "ask_download_problem",
       install_status: "failed",
       stage: "download_support"
+    });
+
+    const shortNoDownloadDecision = extractDeterministicDecision({
+      current_message: "nao",
+      recent_messages: [],
+      lead_profile: { install_status: "link_sent" },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: "Voce conseguiu baixar?",
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: "post_download_check_10min",
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(shortNoDownloadDecision).toMatchObject({
+      intent: "download_issue",
+      detected_intent: "DOWNLOAD_HELP",
+      next_action: "ask_download_problem",
+      recommended_response: "Tudo bem, me fala onde travou: no link, no Downloader ou na instalacao?"
     });
   });
 
@@ -1107,6 +1179,158 @@ describe("commercial WhatsApp agent", () => {
       stage: "device_qualification",
       last_customer_intent: "device_not_provided",
       next_expected_reply: "device"
+    });
+  });
+
+  it("uses contextual understanding to turn 'Testes' into the trial device question", async () => {
+    const { service } = createChatAgent();
+    const lastQuestion = "Perfeito, entao e sua primeira vez. Voce prefere fazer o teste gratis de 3 dias primeiro ou quer ver os planos?";
+    const contextualDecision = extractDeterministicDecision({
+      current_message: "Testes",
+      recent_messages: [],
+      lead_profile: { last_customer_intent: "first_time_user", last_bot_question: lastQuestion },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: lastQuestion,
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "Testes",
+      classification: { intent: "unknown", confidence: 0.4, summary: "resposta curta", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            commercial_stage: "trial_selection",
+            stage: "trial_selection",
+            first_time_user: true,
+            last_customer_intent: "first_time_user",
+            last_bot_question: lastQuestion
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: lastQuestion }
+      ],
+      contextualDecision,
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.responseRule).toBe("contextual_understanding_free_trial");
+    expect(result.reply).toContain("teste gratis de 3 dias");
+    expect(result.reply).toContain("qual aparelho");
+    expect(result.reply).not.toContain("Oi, tudo bem?");
+    expect(result.reply).not.toContain("Voce ja usa o aplicativo UNITV");
+    expect(result.leadProfilePatch).toMatchObject({
+      stage: "device_qualification",
+      wants_test: true,
+      last_customer_intent: "free_trial_request",
+      next_expected_reply: "device"
+    });
+  });
+
+  it("asks Android confirmation when the contextual answer is only celular", async () => {
+    const { service } = createChatAgent();
+    const lastQuestion = "Me fala so qual aparelho voce vai usar: celular Android, TV Box, Android TV/Google TV ou Fire Stick?";
+    const contextualDecision = extractDeterministicDecision({
+      current_message: "celular",
+      recent_messages: [],
+      lead_profile: { wants_test: true, last_bot_question: lastQuestion },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: lastQuestion,
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "celular",
+      classification: { intent: "unknown", confidence: 0.4, summary: "aparelho curto", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            stage: "device_qualification",
+            wants_test: true,
+            last_bot_question: lastQuestion
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: lastQuestion }
+      ],
+      contextualDecision,
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.responseRule).toBe("contextual_understanding_confirm_android_phone");
+    expect(result.reply).toBe("So me confirma: esse celular e Android?");
+    expect(result.reply).not.toContain("Oi, tudo bem?");
+    expect(result.leadProfilePatch).toMatchObject({
+      stage: "device_qualification",
+      last_customer_intent: "device_android_phone_needs_confirmation",
+      next_expected_reply: "device"
+    });
+  });
+
+  it("keeps download context when customer says no after download follow-up", async () => {
+    const { service } = createChatAgent();
+    const lastQuestion = "Voce conseguiu baixar?";
+    const contextualDecision = extractDeterministicDecision({
+      current_message: "nao",
+      recent_messages: [],
+      lead_profile: { stage: "awaiting_download_installation", install_status: "link_sent" },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: lastQuestion,
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: "post_download_check_10min",
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "nao",
+      classification: { intent: "unknown", confidence: 0.4, summary: "nao baixou", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            stage: "awaiting_download_installation",
+            install_status: "link_sent",
+            last_bot_question: lastQuestion
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: lastQuestion }
+      ],
+      contextualDecision,
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.responseRule).toBe("contextual_understanding_download_help");
+    expect(result.reply).toBe("Tudo bem, me fala onde travou: no link, no Downloader ou na instalacao?");
+    expect(result.reply).not.toContain("Oi, tudo bem?");
+    expect(result.leadProfilePatch).toMatchObject({
+      stage: "download_support",
+      install_status: "failed",
+      last_customer_intent: "download_issue"
     });
   });
 

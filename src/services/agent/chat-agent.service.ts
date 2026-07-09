@@ -1,5 +1,6 @@
 import "server-only";
 import type { IntentClassification } from "./intent-classifier.service";
+import type { ContextualDecision } from "./contextual-intelligence.service";
 import { sanitizeReply } from "@/lib/agent/reply-safety";
 import { AppSettingsService } from "@/services/app-settings.service";
 import { AgentActionsService } from "@/services/agent-actions.service";
@@ -52,6 +53,11 @@ const FIRST_TIME_ASK_DEVICE_FOR_TEST_REPLY =
   "Entendi, entao seria sua primeira vez usando o UNITV. Qual aparelho voce quer baixar para fazer seu teste de 3 dias? Pode ser celular Android, TV Box, Android TV/Google TV ou Fire Stick.";
 const ASK_DEVICE_AGAIN_WITH_OPTIONS_REPLY =
   "Sem problema. Voce quer testar em qual aparelho? Celular Android, TV Box, Android TV/Google TV ou Fire Stick?";
+const CONTEXTUAL_TRIAL_DEVICE_REPLY =
+  "Perfeito! Como e sua primeira vez, voce consegue fazer o teste gratis de 3 dias sim.\n\n" +
+  "Me fala so qual aparelho voce vai usar: celular Android, TV Box, Android TV/Google TV ou Fire Stick?";
+const ANDROID_PHONE_CONFIRMATION_REPLY = "So me confirma: esse celular e Android?";
+const DOWNLOAD_PROBLEM_CONTEXT_REPLY = "Tudo bem, me fala onde travou: no link, no Downloader ou na instalacao?";
 
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const SPECIAL_PROMO_MONTHLY_PRICE_CENTS = 1999;
@@ -63,6 +69,7 @@ type CommercialReplyInput = {
   conversation: { id: string; metadata?: Record<string, unknown> | null };
   webhookEventId: string;
   recentMessages?: Array<{ role?: string; content?: string | null }>;
+  contextualDecision?: ContextualDecision | null;
   specialistExamples?: Array<{
     customer_last_message?: string | null;
     bot_previous_message?: string | null;
@@ -147,6 +154,14 @@ export class ChatAgentService {
         ...activeDownloadReply,
         responseSource: "local_rule",
         responseRule: "active_download_flow"
+      };
+    }
+
+    const contextualUnderstandingReply = buildContextualUnderstandingReply(input.contextualDecision, conversationIntelligence);
+    if (contextualUnderstandingReply) {
+      return {
+        ...contextualUnderstandingReply,
+        responseSource: "local_rule"
       };
     }
 
@@ -1239,6 +1254,108 @@ function shouldBlockHumanHandoff(context: ConversationIntelligenceLayer) {
   }
 
   return { block: false, reason: null };
+}
+
+function buildContextualUnderstandingReply(
+  decision: ContextualDecision | null | undefined,
+  context: ConversationIntelligenceLayer
+): CommercialReplyResult | null {
+  if (!decision || !decision.should_reply || decision.should_handoff || decision.confidence < 0.55) {
+    return null;
+  }
+
+  const lastQuestion = normalizeContextMessage(context.lastBotQuestion || context.latestBotMessage || "");
+  const activeContext = Boolean(lastQuestion || context.stage || context.leadProfile.last_bot_question);
+  const safeResponse = String(decision.recommended_response || "").trim();
+
+  if (
+    decision.next_action === "ask_device_for_trial" &&
+    decision.detected_intent === "FREE_TRIAL_REQUEST" &&
+    (activeContext || decision.confidence >= 0.92)
+  ) {
+    return {
+      reply: safeResponse || CONTEXTUAL_TRIAL_DEVICE_REPLY,
+      responseRule: "contextual_understanding_free_trial",
+      leadProfilePatch: {
+        commercial_stage: "device_qualification",
+        stage: "device_qualification",
+        state: "awaiting_customer_response",
+        wants_test: true,
+        first_time_user: context.leadProfile.first_time_user ?? true,
+        last_customer_intent: "free_trial_request",
+        next_expected_reply: "device",
+        contextual_detected_intent: decision.detected_intent,
+        contextual_next_action: decision.next_action,
+        contextual_reason: decision.reason,
+        last_bot_question: "Me fala so qual aparelho voce vai usar: celular Android, TV Box, Android TV/Google TV ou Fire Stick?"
+      }
+    };
+  }
+
+  if (
+    decision.next_action === "confirm_android_phone" &&
+    decision.detected_intent === "DEVICE_ANDROID_PHONE_NEEDS_CONFIRMATION"
+  ) {
+    return {
+      reply: safeResponse || ANDROID_PHONE_CONFIRMATION_REPLY,
+      responseRule: "contextual_understanding_confirm_android_phone",
+      leadProfilePatch: {
+        commercial_stage: "device_qualification",
+        stage: "device_qualification",
+        state: "awaiting_customer_response",
+        wants_test: context.leadProfile.wants_test ?? true,
+        last_customer_intent: "device_android_phone_needs_confirmation",
+        next_expected_reply: "device",
+        contextual_detected_intent: decision.detected_intent,
+        contextual_next_action: decision.next_action,
+        contextual_reason: decision.reason,
+        last_bot_question: ANDROID_PHONE_CONFIRMATION_REPLY
+      }
+    };
+  }
+
+  if (decision.next_action === "ask_download_problem" && decision.detected_intent === "DOWNLOAD_HELP") {
+    return {
+      reply: safeResponse || DOWNLOAD_PROBLEM_CONTEXT_REPLY,
+      responseRule: "contextual_understanding_download_help",
+      leadProfilePatch: {
+        commercial_stage: "download_support",
+        stage: "download_support",
+        state: "awaiting_customer_response",
+        install_status: "failed",
+        download_status: "failed",
+        last_customer_intent: "download_issue",
+        next_expected_reply: "download_confirmation",
+        contextual_detected_intent: decision.detected_intent,
+        contextual_next_action: decision.next_action,
+        contextual_reason: decision.reason,
+        last_bot_question: DOWNLOAD_PROBLEM_CONTEXT_REPLY
+      }
+    };
+  }
+
+  if (decision.next_action === "ask_installation_status" && decision.detected_intent === "DOWNLOAD_CONFIRMED") {
+    return {
+      reply: safeResponse ||
+        "Perfeito. Agora abre o aplicativo e me avisa se aparecer a tela de login/cadastro para seguirmos com a liberacao do teste.",
+      responseRule: "contextual_understanding_download_confirmed",
+      leadProfilePatch: {
+        commercial_stage: "awaiting_download_installation",
+        stage: "awaiting_download_installation",
+        state: "awaiting_download_installation",
+        downloaded_app: true,
+        install_status: decision.install_status || "downloaded",
+        download_status: decision.install_status || "downloaded",
+        last_customer_intent: "download_confirmed",
+        next_expected_reply: "install_confirmation",
+        contextual_detected_intent: decision.detected_intent,
+        contextual_next_action: decision.next_action,
+        contextual_reason: decision.reason
+      }
+    };
+  }
+
+  return null;
 }
 
 function getExpectedDeviceAnswerReply(message: string, context: ConversationIntelligenceLayer): CommercialReplyResult | null {
