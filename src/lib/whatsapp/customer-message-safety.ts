@@ -64,8 +64,12 @@ export function validateResponseAgainstLeadProfile(
   const responseIntent = classifyCustomerFacingResponseIntent(response);
 
   if (
-    responseIntent === "saudacao_inicial" &&
-    (profile.saudacao_enviada === true || recentBotMessages.some((previous) => classifyCustomerFacingResponseIntent(previous) === "saudacao_inicial"))
+    (responseIntent === "saudacao_inicial" || isInitialGreetingResponse(normalized)) &&
+    (
+      profile.saudacao_enviada === true ||
+      isActiveDownloadOrTrialFlow(profile) ||
+      recentBotMessages.some((previous) => classifyCustomerFacingResponseIntent(previous) === "saudacao_inicial")
+    )
   ) {
     return { valid: false, reason: "repeats_welcome" };
   }
@@ -203,6 +207,26 @@ function areSimilar(current: string, previous: string) {
   }
 
   return overlap / Math.max(currentWords.size, previousWords.size) >= 0.82;
+}
+
+function isActiveDownloadOrTrialFlow(profile: Record<string, unknown>) {
+  const state = [
+    profile.stage,
+    profile.commercial_stage,
+    profile.state,
+    profile.next_expected_reply,
+    profile.install_status,
+    profile.download_status
+  ].map((value) => String(value || "").toLowerCase()).join(" ");
+
+  return (
+    /\b(test_offer|device_qualification|download_instructions|download_instructions_sent|awaiting_download_installation|awaiting_installation|awaiting_test_activation|download_confirmation|link_sent)\b/.test(state) ||
+    Boolean(profile.last_download_url_sent)
+  );
+}
+
+function isInitialGreetingResponse(normalized: string) {
+  return /\b(oi|ola|ol[aá])\b.{0,80}\b(voce ja usa|você já usa|primeira vez|seria sua primeira vez|faz o uso do app)\b/.test(normalized);
 }
 
 function isPrematurePurchaseAssumption(normalized: string) {

@@ -137,6 +137,15 @@ export class ChatAgentService {
       recentMessages: input.recentMessages,
       confidence: input.classification.confidence
     });
+    const activeDownloadReply = getActiveDownloadFlowReply(message, conversationIntelligence);
+    if (activeDownloadReply) {
+      return {
+        ...activeDownloadReply,
+        responseSource: "local_rule",
+        responseRule: "active_download_flow"
+      };
+    }
+
     const expectedDeviceReply = getExpectedDeviceAnswerReply(message, conversationIntelligence);
     if (expectedDeviceReply) {
       return {
@@ -1246,9 +1255,103 @@ function getExpectedDeviceAnswerReply(message: string, context: ConversationInte
       wants_test: context.leadProfile.wants_test ?? true,
       commercial_stage: "download_instructions",
       stage: "download_instructions",
+      state: "awaiting_download_installation",
+      install_status: "link_sent",
+      download_status: "link_sent",
       next_expected_reply: "download_confirmation"
     }
   };
+}
+
+function getActiveDownloadFlowReply(message: string, context: ConversationIntelligenceLayer): CommercialReplyResult | null {
+  if (!isDownloadFlowActive(context)) {
+    return null;
+  }
+
+  const normalized = normalizeContextMessage(message);
+  const basePatch = {
+    commercial_stage: "awaiting_download_installation",
+    stage: "awaiting_download_installation",
+    state: "awaiting_download_installation",
+    next_expected_reply: "install_confirmation",
+    last_customer_intent: "download_installation_followup"
+  };
+
+  if (isDownloadIssueAnswer(normalized)) {
+    return {
+      reply: "Entendi. Me fala o que apareceu ai: deu erro no link, nao iniciou o download ou o celular bloqueou a instalacao?",
+      leadProfilePatch: {
+        ...basePatch,
+        install_status: "failed",
+        download_status: "failed"
+      }
+    };
+  }
+
+  if (isDownloadedAnswer(normalized)) {
+    return {
+      reply: "Perfeito. Agora abre o aplicativo e me avisa se aparecer a tela de login/cadastro para seguirmos com a liberacao do teste.",
+      leadProfilePatch: {
+        ...basePatch,
+        downloaded_app: true,
+        install_status: "downloaded",
+        download_status: "downloaded",
+        next_expected_reply: "install_confirmation"
+      }
+    };
+  }
+
+  if (customerMentionsAndroidDevice(normalized)) {
+    return {
+      reply:
+        "Perfeito, entao esse link e o correto para seu celular Android.\n\n" +
+        "Pode baixar por ele e, quando terminar de instalar, me avisa por aqui que seguimos com a liberacao do teste.",
+      leadProfilePatch: {
+        ...basePatch,
+        device: "android_phone",
+        aparelho: "Celular Android",
+        device_compatible: true,
+        install_status: "link_sent",
+        download_status: "link_sent"
+      }
+    };
+  }
+
+  if (/^(ok|certo|beleza|blz|ta|t[aá]|vou baixar|vou tentar|pronto|sim|s)$/i.test(normalized)) {
+    return {
+      reply: "Perfeito. Pode baixar por esse link e, quando terminar de instalar, me avisa por aqui que seguimos com a liberacao do teste.",
+      leadProfilePatch: basePatch
+    };
+  }
+
+  return null;
+}
+
+function isDownloadFlowActive(context: ConversationIntelligenceLayer) {
+  const stage = normalizeContextMessage(context.stage || "");
+  const latestBotMessage = normalizeContextMessage(context.latestBotMessage || "");
+  const installStatus = normalizeContextMessage(String(context.leadProfile.install_status || context.leadProfile.download_status || ""));
+  return (
+    stage === "download_instructions" ||
+    stage === "download_instructions_sent" ||
+    stage === "awaiting_download_installation" ||
+    stage === "awaiting_installation" ||
+    installStatus === "link_sent" ||
+    Boolean(context.leadProfile.last_download_url_sent) ||
+    /\b(mediafire\.com|baixe por aqui|apk|tutorial:)\b/.test(latestBotMessage)
+  );
+}
+
+function customerMentionsAndroidDevice(normalized: string) {
+  return /\b(e android|eh android|android|celular android|meu celular)\b/.test(normalized);
+}
+
+function isDownloadedAnswer(normalized: string) {
+  return /\b(baixei|ja baixei|consegui baixar|download feito|instalei|ja instalei|pronto|consegui)\b/.test(normalized);
+}
+
+function isDownloadIssueAnswer(normalized: string) {
+  return /\b(nao consegui|n consegui|deu erro|erro|bloqueou|nao iniciou|nao baixou|link nao funciona|link n funciona)\b/.test(normalized);
 }
 
 function isDeviceQualificationQuestion(lastQuestion: string) {

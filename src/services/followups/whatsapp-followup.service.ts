@@ -1134,7 +1134,7 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
 
   if (key === "download" || key === "install") {
     if (/android_phone|celular/i.test(device)) {
-      return "Conseguiu baixar no celular Android? Se aparecer aviso de seguranca, me fala que eu te oriento.";
+      return "Voce conseguiu baixar?";
     }
     if (/tvbox_android|tv box/i.test(device)) {
       return "Conseguiu instalar na TV Box? Se travou, me diga se foi no link APK ou no Downloader.";

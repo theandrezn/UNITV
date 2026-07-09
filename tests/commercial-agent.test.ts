@@ -145,6 +145,10 @@ describe("commercial WhatsApp agent", () => {
     expect(validateResponseAgainstLeadProfile("Qual plano voce quer?", { selected_plan: "mensal" }).valid).toBe(false);
     expect(validateResponseAgainstLeadProfile("Se ja pagou, envie o comprovante.", { has_paid: false }).valid).toBe(false);
     expect(validateResponseAgainstLeadProfile(
+      "Oi, tudo bem? Você já usa o aplicativo UNITV ou seria sua primeira vez?",
+      { stage: "download_instructions", download_status: "link_sent", last_download_url_sent: "https://www.mediafire.com/app.apk" }
+    ).valid).toBe(false);
+    expect(validateResponseAgainstLeadProfile(
       "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.",
       { saudacao_enviada: true }
     ).valid).toBe(false);
@@ -1254,6 +1258,105 @@ describe("commercial WhatsApp agent", () => {
     expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
       expect.objectContaining({ action_name: "handoff_to_human" })
     );
+  });
+
+  it("keeps download context when customer confirms it is Android after the link was sent", async () => {
+    const { service, agentActionsService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "É Android",
+      classification: { intent: "greeting", confidence: 0.9, summary: "confirmacao", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            wants_test: true,
+            device: "android_phone",
+            stage: "download_instructions",
+            download_status: "link_sent",
+            install_status: "link_sent",
+            last_download_url_sent: "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file",
+            last_bot_question: "Seu celular é Android?"
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: "No celular Android funciona sim.\n\nBaixe por aqui:\n\nhttps://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file\n\nTutorial:\nhttps://www.youtube.com/watch?v=LBBAbs2-I0c\n\nSeu celular é Android?" }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.responseRule).toBe("active_download_flow");
+    expect(result.reply).toContain("esse link e o correto");
+    expect(result.reply).toContain("quando terminar de instalar");
+    expect(result.reply).not.toContain("Você já usa");
+    expect(result.reply).not.toContain("seria sua primeira vez");
+    expect(result.leadProfilePatch).toMatchObject({
+      stage: "awaiting_download_installation",
+      next_expected_reply: "install_confirmation"
+    });
+    expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
+    );
+  });
+
+  it("continues installation flow when customer says they downloaded the app", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Baixei",
+      classification: { intent: "unknown", confidence: 0.2, summary: "baixou", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            stage: "download_instructions",
+            download_status: "link_sent",
+            last_download_url_sent: "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file"
+          }
+        }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("Agora abre o aplicativo");
+    expect(result.reply).toContain("tela de login/cadastro");
+    expect(result.reply).not.toContain("Você já usa");
+    expect(result.leadProfilePatch).toMatchObject({
+      downloaded_app: true,
+      download_status: "downloaded"
+    });
+  });
+
+  it("asks what failed when customer cannot download after the link was sent", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Não consegui baixar",
+      classification: { intent: "unknown", confidence: 0.2, summary: "erro download", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            stage: "download_instructions",
+            download_status: "link_sent",
+            last_download_url_sent: "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file"
+          }
+        }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("deu erro no link");
+    expect(result.reply).toContain("celular bloqueou");
+    expect(result.reply).not.toContain("Você já usa");
+    expect(result.leadProfilePatch).toMatchObject({
+      download_status: "failed"
+    });
   });
 
   it("answers payment question without a selectable menu", async () => {
@@ -2741,6 +2844,74 @@ describe("commercial WhatsApp agent", () => {
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({ followup_due_at: expect.any(String) })
+    );
+  });
+
+  it("schedules download follow-up after Android link even when the incoming classification is greeting", async () => {
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      conversationsRepository as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        listMessagesByConversationId: vi.fn(async () => []),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      { classify: vi.fn(async () => ({ intent: "greeting", confidence: 1, summary: "confirmacao", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({
+        reply: "No celular Android funciona sim.\n\nBaixe por aqui:\n\nhttps://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file\n\nTutorial:\nhttps://www.youtube.com/watch?v=LBBAbs2-I0c\n\nSeu celular e Android?",
+        leadProfilePatch: {
+          device: "android_phone",
+          stage: "download_instructions",
+          download_status: "link_sent",
+          install_status: "link_sent",
+          last_download_url_sent: "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file"
+        }
+      })) } as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "android-link-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Celular Android",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_key: "download",
+        awaiting_customer_action: "confirm_download",
+        conversation_stage: "instalacao",
+        followup_due_at: expect.any(String)
+      })
+    );
+    expect(conversationsRepository.updateConversationMetadata).not.toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ followup_key: "welcome_activation" })
     );
   });
 

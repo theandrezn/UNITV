@@ -2137,6 +2137,7 @@ function inferFollowupKey(
   intent: string
 ) {
   const reply = output.reply.toLowerCase();
+  if (/mediafire\.com|baixe por aqui|download|baixar|apk|downloader/i.test(output.reply)) return "download";
   if (intent === "greeting") return "welcome_activation";
   if (output.copyText || output.media) return "pix";
   if (intent === "pix_payment") {

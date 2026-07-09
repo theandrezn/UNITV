@@ -107,10 +107,78 @@ describe("WhatsappFollowupService", () => {
     expect(downloadFollowup).toContain("Conseguiu instalar na TV Box");
     expect(downloadFollowup.trim().endsWith(".")).toBe(true);
     expect(buildFollowupText({ followup_key: "download", device: "android_tv_google_tv" })).toContain("Play Store");
-    expect(buildFollowupText({ followup_key: "download", device: "android_phone" })).toContain("celular Android");
+    expect(buildFollowupText({ followup_key: "download", device: "android_phone" })).toBe("Voce conseguiu baixar?");
     expect(buildFollowupText({ followup_key: "download", device: "firestick" })).toContain("862585");
     expect(buildFollowupText({ followup_key: "install", device: "unknown" })).toContain("Android ou Play Store?");
     expect(buildUnansweredCustomerFallbackText({ followup_key: "download", conversation_stage: "instalacao" }, "Ok")).toBe("Conseguiu avancar?");
+  });
+
+  it("sends Android download follow-up only after the 5 minute due time", async () => {
+    const conversation = {
+      id: "conversation-id",
+      customer_id: "customer-id",
+      customers: { id: "customer-id", phone: "5511999998888" },
+      metadata: {
+        followup_key: "download",
+        followup_due_at: "2026-07-09T14:05:00.000Z",
+        followup_count: 0,
+        last_followup_stage_id: "download:stage",
+        last_bot_message_at: "2026-07-09T14:00:00.000Z",
+        conversation_stage: "instalacao",
+        awaiting_customer_action: "confirm_download",
+        device: "android_phone",
+        lead_profile: {
+          device: "android_phone",
+          stage: "download_instructions",
+          download_status: "link_sent",
+          last_download_url_sent: "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file"
+        }
+      }
+    };
+    const { service, evolutionService } = createService([conversation], {
+      recentMessages: [
+        { role: "assistant", content: "Baixe por aqui: https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file" }
+      ],
+      aiReply: "Voce conseguiu baixar?"
+    });
+
+    expect(await service.processDueFollowups(new Date("2026-07-09T14:04:59.000Z"))).toMatchObject({ sent: 0 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+
+    expect(await service.processDueFollowups(new Date("2026-07-09T14:05:00.000Z"))).toMatchObject({ checked: 1, sent: 1 });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "Voce conseguiu baixar?"
+    });
+  });
+
+  it("does not send download follow-up when customer replied before the due time", async () => {
+    const { service, evolutionService } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888" },
+        metadata: {
+          followup_key: "download",
+          followup_due_at: "2026-07-09T14:05:00.000Z",
+          followup_count: 0,
+          last_followup_stage_id: "download:stage",
+          last_bot_message_at: "2026-07-09T14:00:00.000Z",
+          last_customer_message_at: "2026-07-09T14:03:00.000Z",
+          conversation_stage: "instalacao",
+          awaiting_customer_action: "confirm_download",
+          device: "android_phone",
+          lead_profile: {
+            device: "android_phone",
+            stage: "download_instructions",
+            download_status: "link_sent"
+          }
+        }
+      }
+    ]);
+
+    expect(await service.processDueFollowups(new Date("2026-07-09T14:05:00.000Z"))).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
 
   it("uses renewal wording after values when the customer wants recarga", () => {
