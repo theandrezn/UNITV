@@ -48,6 +48,10 @@ const FIRST_TIME_ACTIVATION_QUESTION =
   "Perfeito, entao e sua primeira vez. Voce prefere fazer o teste gratis de 3 dias primeiro ou quer ver os planos?";
 const FIRST_TIME_CLARIFICATION_QUESTION =
   "Sem problema. Como e sua primeira vez, posso te orientar pelo teste gratis de 3 dias ou te mostrar os planos. Voce prefere comecar pelo teste?";
+const FIRST_TIME_ASK_DEVICE_FOR_TEST_REPLY =
+  "Entendi, entao seria sua primeira vez usando o UNITV. Qual aparelho voce quer baixar para fazer seu teste de 3 dias? Pode ser celular Android, TV Box, Android TV/Google TV ou Fire Stick.";
+const ASK_DEVICE_AGAIN_WITH_OPTIONS_REPLY =
+  "Sem problema. Voce quer testar em qual aparelho? Celular Android, TV Box, Android TV/Google TV ou Fire Stick?";
 
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const SPECIAL_PROMO_MONTHLY_PRICE_CENTS = 1999;
@@ -1370,6 +1374,11 @@ function isLowRiskOpeningMessage(normalized: string) {
 }
 
 function buildLowRiskRecoveryReply(context: ConversationIntelligenceLayer) {
+  const shortAnswerResolution = resolveShortAnswerWithLastBotQuestion(context);
+  if (shortAnswerResolution) {
+    return shortAnswerResolution.reply;
+  }
+
   const normalized = normalizeContextMessage(context.latestCustomerMessage);
   const lastQuestion = normalizeContextMessage(context.lastBotQuestion || "");
 
@@ -1409,6 +1418,11 @@ function buildLowRiskRecoveryReply(context: ConversationIntelligenceLayer) {
 }
 
 function buildLowRiskRecoveryPatch(context: ConversationIntelligenceLayer) {
+  const shortAnswerResolution = resolveShortAnswerWithLastBotQuestion(context);
+  if (shortAnswerResolution) {
+    return shortAnswerResolution.leadProfilePatch;
+  }
+
   const normalized = normalizeContextMessage(context.latestCustomerMessage);
   const lastQuestion = normalizeContextMessage(context.lastBotQuestion || "");
   if (isFirstTimeActivationAnswer(normalized) && isInitialUseQuestion(lastQuestion)) {
@@ -1468,6 +1482,53 @@ function buildLowRiskRecoveryPatch(context: ConversationIntelligenceLayer) {
     next_expected_reply: "activation_or_renewal",
     last_bot_question: INITIAL_UNITV_REPLY
   };
+}
+
+function resolveShortAnswerWithLastBotQuestion(context: ConversationIntelligenceLayer): {
+  reply: string;
+  leadProfilePatch: Record<string, unknown>;
+} | null {
+  const normalized = normalizeContextMessage(context.latestCustomerMessage);
+  const lastQuestion = normalizeContextMessage(context.lastBotQuestion || context.latestBotMessage || "");
+  const isShortFirstTimeNo = /^(nao|n|nunca|nunca usei|nao usei|nao uso|ainda nao|primeira vez)$/.test(normalized);
+  const askedFirstTimeOrTrial =
+    /\b(ja usou|ja usa|uso do app|faz o uso|primeira vez|3 dias gratis|teste gratis|liberar 3 dias|libero 3 dias)\b/.test(lastQuestion);
+  const askedDeviceForTest =
+    isDeviceQualificationQuestion(lastQuestion) ||
+    /\b(qual aparelho|aparelho voce quer testar|aparelho quer testar|baixar|download)\b/.test(lastQuestion);
+
+  if (isShortFirstTimeNo && askedFirstTimeOrTrial) {
+    return {
+      reply: FIRST_TIME_ASK_DEVICE_FOR_TEST_REPLY,
+      leadProfilePatch: {
+        commercial_stage: "device_qualification",
+        stage: "device_qualification",
+        state: "awaiting_customer_response",
+        wants_test: true,
+        first_time_user: true,
+        last_customer_intent: "first_time_user",
+        next_expected_reply: "device",
+        last_bot_question: "Qual aparelho voce quer baixar para fazer seu teste de 3 dias: celular Android, TV Box, Android TV/Google TV ou Fire Stick?"
+      }
+    };
+  }
+
+  if (isShortFirstTimeNo && askedDeviceForTest) {
+    return {
+      reply: ASK_DEVICE_AGAIN_WITH_OPTIONS_REPLY,
+      leadProfilePatch: {
+        commercial_stage: "device_qualification",
+        stage: "device_qualification",
+        state: "awaiting_customer_response",
+        wants_test: context.leadProfile.wants_test ?? true,
+        last_customer_intent: "device_not_provided",
+        next_expected_reply: "device",
+        last_bot_question: "Voce quer testar em qual aparelho? Celular Android, TV Box, Android TV/Google TV ou Fire Stick?"
+      }
+    };
+  }
+
+  return null;
 }
 
 function isInitialUseQuestion(lastQuestion: string) {

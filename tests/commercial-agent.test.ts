@@ -1032,6 +1032,84 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("Voce ja faz o uso do app");
   });
 
+  it("interprets a short no after first-time and test question as first-time user without restarting greeting", async () => {
+    const { service } = createChatAgent();
+
+    const lastQuestion = "Voce ja usou o UNITV? Se nao, posso liberar 3 dias gratis. Qual aparelho voce quer testar?";
+    const result = await service.generateCommercialReply({
+      message: "Não",
+      classification: { intent: "greeting", confidence: 0.9, summary: "resposta curta", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            saudacao_enviada: true,
+            commercial_stage: "first_time_check",
+            stage: "first_time_check",
+            last_bot_question: lastQuestion
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: lastQuestion }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.reply).toBe(
+      "Entendi, entao seria sua primeira vez usando o UNITV. Qual aparelho voce quer baixar para fazer seu teste de 3 dias? Pode ser celular Android, TV Box, Android TV/Google TV ou Fire Stick."
+    );
+    expect(result.reply).not.toContain("Oi, tudo bem?");
+    expect(result.reply).not.toContain("Voce ja usa o aplicativo UNITV");
+    expect(result.leadProfilePatch).toMatchObject({
+      commercial_stage: "device_qualification",
+      stage: "device_qualification",
+      first_time_user: true,
+      wants_test: true,
+      last_customer_intent: "first_time_user",
+      next_expected_reply: "device"
+    });
+  });
+
+  it("asks for device clarification when the customer says no after a device question", async () => {
+    const { service } = createChatAgent();
+
+    const lastQuestion = "Qual aparelho voce quer testar?";
+    const result = await service.generateCommercialReply({
+      message: "Não",
+      classification: { intent: "greeting", confidence: 0.9, summary: "resposta curta", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            commercial_stage: "device_qualification",
+            stage: "device_qualification",
+            wants_test: true,
+            last_bot_question: lastQuestion
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: lastQuestion }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.reply).toBe("Sem problema. Voce quer testar em qual aparelho? Celular Android, TV Box, Android TV/Google TV ou Fire Stick?");
+    expect(result.reply).not.toContain("Oi, tudo bem?");
+    expect(result.reply).not.toContain("Voce ja usa o aplicativo UNITV");
+    expect(result.leadProfilePatch).toMatchObject({
+      commercial_stage: "device_qualification",
+      stage: "device_qualification",
+      last_customer_intent: "device_not_provided",
+      next_expected_reply: "device"
+    });
+  });
+
   it("clarifies a question mark after first-time qualification instead of restarting the greeting", async () => {
     const { service } = createChatAgent();
 
