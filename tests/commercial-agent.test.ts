@@ -1148,6 +1148,114 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
+  it("does not hand off when low confidence happens while waiting for the device answer", async () => {
+    const { service, agentActionsService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "?",
+      classification: { intent: "unknown", confidence: 0.2, summary: "mensagem curta", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            wants_test: true,
+            stage: "device_qualification",
+            next_expected_reply: "device",
+            last_bot_question: "Voce vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?"
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: "Voce vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?" }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.responseRule).toBe("blocked_low_risk_handoff_awaiting_customer");
+    expect(result.reply).toContain("aparelho");
+    expect(result.leadProfilePatch).toMatchObject({
+      stage: "device_qualification",
+      state: "awaiting_customer_response"
+    });
+    expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
+    );
+  });
+
+  it("sends Android download when the customer answers the expected device question", async () => {
+    const { service, agentActionsService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Celular Android",
+      classification: { intent: "unknown", confidence: 0.2, summary: "aparelho", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            wants_test: true,
+            stage: "device_qualification",
+            next_expected_reply: "device",
+            last_bot_question: "Voce vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?"
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: "Voce vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?" }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.responseRule).toBe("expected_device_answer");
+    expect(result.reply).toContain("UniTV_mobile_3.21.6.apk");
+    expect(result.reply).toContain("Tutorial:");
+    expect(result.leadProfilePatch).toMatchObject({
+      device: "android_phone",
+      stage: "download_instructions",
+      next_expected_reply: "download_confirmation"
+    });
+    expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
+    );
+  });
+
+  it("recovers low-confidence 'oferece?' in a free-trial flow without human handoff", async () => {
+    const { service, agentActionsService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Oferece?",
+      classification: { intent: "unknown", confidence: 0.2, summary: "mensagem curta", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            wants_test: true,
+            stage: "device_qualification",
+            next_expected_reply: "device",
+            last_bot_question: "Voce vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?"
+          }
+        }
+      },
+      recentMessages: [
+        { role: "customer", content: "Teste" },
+        { role: "assistant", content: "Voce vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?" }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.responseRule).toBe("blocked_low_risk_handoff_awaiting_customer");
+    expect(result.reply).toContain("teste");
+    expect(result.reply).toContain("3 dias");
+    expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
+    );
+  });
+
   it("answers payment question without a selectable menu", async () => {
     const { service } = createChatAgent();
 

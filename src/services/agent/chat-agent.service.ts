@@ -137,6 +137,15 @@ export class ChatAgentService {
       recentMessages: input.recentMessages,
       confidence: input.classification.confidence
     });
+    const expectedDeviceReply = getExpectedDeviceAnswerReply(message, conversationIntelligence);
+    if (expectedDeviceReply) {
+      return {
+        ...expectedDeviceReply,
+        responseSource: "local_rule",
+        responseRule: "expected_device_answer"
+      };
+    }
+
     const contextualReply = getContextualCommercialReply(message, leadProfile);
     const contextualAiReply = await this.generateContextualCommercialAIReply(input, message, intent, leadProfile, contextualReply?.reply || null);
     if (contextualAiReply) {
@@ -219,12 +228,18 @@ export class ChatAgentService {
       }
     }
 
-    if (input.classification.confidence < 0.45 && conversationIntelligence.risk === "low") {
+    const humanHandoffGuard = shouldBlockHumanHandoff(conversationIntelligence);
+    if (input.classification.confidence < 0.45 && (conversationIntelligence.risk === "low" || humanHandoffGuard.block)) {
       return {
         reply: buildLowRiskRecoveryReply(conversationIntelligence),
         responseSource: "local_rule",
-        responseRule: "conversation_intelligence_low_risk_recovery",
-        leadProfilePatch: buildLowRiskRecoveryPatch(conversationIntelligence)
+        responseRule: humanHandoffGuard.block
+          ? "blocked_low_risk_handoff_awaiting_customer"
+          : "conversation_intelligence_low_risk_recovery",
+        leadProfilePatch: {
+          ...buildLowRiskRecoveryPatch(conversationIntelligence),
+          ...(humanHandoffGuard.block ? { handoff_blocked_reason: humanHandoffGuard.reason } : {})
+        }
       };
     }
 
@@ -1171,6 +1186,79 @@ function detectConversationRisk(intent: string, message: string, leadProfile: Re
   return "high";
 }
 
+function shouldBlockHumanHandoff(context: ConversationIntelligenceLayer) {
+  const lastQuestion = normalizeContextMessage(context.lastBotQuestion || "");
+  const stage = normalizeContextMessage(context.stage || "");
+  const lowRiskStages = [
+    "welcome",
+    "welcome_activation",
+    "test_offer",
+    "first_time_qualification",
+    "device_qualification",
+    "download_instructions",
+    "download_support",
+    "installation_tutorial",
+    "install_support",
+    "plan_discovery",
+    "price_discovery",
+    "qualified"
+  ];
+  const lastBotMessageWasQuestion =
+    Boolean(context.latestBotMessage?.includes("?")) ||
+    isDeviceQualificationQuestion(lastQuestion) ||
+    /\b(primeira vez|uso do app|faz o uso|plano especifico|quantas telas|pix ou cartao)\b/.test(lastQuestion);
+  const customerIsExpectedToAnswer =
+    String(context.leadProfile.pendingCustomerResponse || "") === "true" ||
+    String(context.leadProfile.pending_customer_response || "") === "true" ||
+    String(context.leadProfile.state || "") === "awaiting_customer_response" ||
+    String(context.leadProfile.next_expected_reply || "").trim().length > 0 ||
+    Boolean(context.leadProfile.last_bot_question);
+  const normalLowRiskFlow =
+    lowRiskStages.includes(stage) ||
+    isDeviceQualificationQuestion(lastQuestion) ||
+    /\b(teste|download|instalacao|instalar|valor|preco|plano|recarga)\b/.test(stage);
+
+  if (normalLowRiskFlow && (lastBotMessageWasQuestion || customerIsExpectedToAnswer)) {
+    return {
+      block: true,
+      reason: "awaiting_customer_response_in_low_risk_flow"
+    };
+  }
+
+  return { block: false, reason: null };
+}
+
+function getExpectedDeviceAnswerReply(message: string, context: ConversationIntelligenceLayer): CommercialReplyResult | null {
+  const lastQuestion = normalizeContextMessage(context.lastBotQuestion || "");
+  if (!isDeviceQualificationQuestion(lastQuestion) || !isUnitvInstallationRequest(message)) {
+    return null;
+  }
+
+  const installationReply = getInstallationReply(message);
+  if (!installationReply || installationReply.requiresHuman) {
+    return null;
+  }
+
+  return {
+    ...installationReply,
+    leadProfilePatch: {
+      ...(installationReply.leadProfilePatch || {}),
+      wants_test: context.leadProfile.wants_test ?? true,
+      commercial_stage: "download_instructions",
+      stage: "download_instructions",
+      next_expected_reply: "download_confirmation"
+    }
+  };
+}
+
+function isDeviceQualificationQuestion(lastQuestion: string) {
+  return /\b(aparelho|celular android|tv box|tvbox|android tv|google tv|fire stick|firestick|instalar onde|vai usar)\b/.test(lastQuestion);
+}
+
+function isShortOfferAvailabilityQuestion(normalized: string) {
+  return /^(oferece|oferecem|oferece isso|voces oferecem|vcs oferecem|tem|tem sim|tem como)[!?.,\s]*$/.test(normalized);
+}
+
 function isLowRiskOpeningMessage(normalized: string) {
   return (
     /^(oi|ola|olá|olq|opa|bom dia|boa tarde|boa noite|oie|oii+|oiii+)[!?.,\s]*$/.test(normalized) ||
@@ -1206,6 +1294,14 @@ function buildLowRiskRecoveryReply(context: ConversationIntelligenceLayer) {
     return "Claro. Pra eu liberar seu teste grátis de 3 dias, me diz só em qual aparelho você vai usar: celular Android, TV Box, Android TV, Google TV ou Fire Stick?";
   }
 
+  if (isShortOfferAvailabilityQuestion(normalized) && /\b(teste|gratis|gratuito|aparelho|celular android|tv box|android tv|fire stick|firestick)\b/.test(lastQuestion)) {
+    return "Tem sim. O teste grÃ¡tis Ã© de 3 dias. Me confirma sÃ³ o aparelho: celular Android, TV Box Android, Android TV ou Fire Stick?";
+  }
+
+  if (isDeviceQualificationQuestion(lastQuestion)) {
+    return "Sem problema. SÃ³ me confirma o aparelho que vocÃª vai usar: celular Android, TV Box Android, Android TV ou Fire Stick?";
+  }
+
   return INITIAL_UNITV_REPLY;
 }
 
@@ -1238,6 +1334,27 @@ function buildLowRiskRecoveryPatch(context: ConversationIntelligenceLayer) {
       last_customer_intent: "ask_price",
       next_expected_reply: "plan_choice",
       last_bot_question: BROAD_PRICE_QUALIFICATION_QUESTION
+    };
+  }
+
+  if (isShortOfferAvailabilityQuestion(normalized) && /\b(teste|gratis|gratuito|aparelho|celular android|tv box|android tv|fire stick|firestick)\b/.test(lastQuestion)) {
+    return {
+      commercial_stage: "device_qualification",
+      stage: "device_qualification",
+      last_customer_intent: "free_trial_availability_question",
+      next_expected_reply: "device",
+      last_bot_question: "Qual aparelho voce quer usar para testar: celular Android, TV Box Android, Android TV ou Fire Stick?"
+    };
+  }
+
+  if (isDeviceQualificationQuestion(lastQuestion)) {
+    return {
+      commercial_stage: "device_qualification",
+      stage: "device_qualification",
+      last_customer_intent: context.detectedIntent,
+      next_expected_reply: "device",
+      state: "awaiting_customer_response",
+      last_bot_question: "Qual aparelho voce quer usar para testar: celular Android, TV Box Android, Android TV ou Fire Stick?"
     };
   }
 
