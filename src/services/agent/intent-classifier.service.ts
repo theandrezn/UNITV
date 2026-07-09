@@ -165,6 +165,10 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     return fixedClassification("greeting", "SaudaÃ§Ã£o simples.");
   }
 
+  if (/\b(posso ter mais informacoes|mais informacoes|informacoes sobre isso|informacao sobre isso|saiba mais|saber mais)\b/.test(text)) {
+    return fixedClassification("greeting", "SaudaÃ§Ã£o simples.");
+  }
+
   if (/\b(humano|atendente|especialista|vendedor|consultor|pessoa|responsavel|responsÃ¡vel)\b/.test(text)) {
     return fixedClassification("human_help", "Cliente pediu atendimento humano.");
   }

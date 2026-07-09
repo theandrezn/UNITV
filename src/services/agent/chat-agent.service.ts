@@ -1106,6 +1106,10 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
     /\b(ja baixei|baixei|download feito|fiz o download|ja instalei|instalei)\b/.test(normalized) ||
     (/^(sim|s|ja|ok|feito|consegui)$/.test(normalized) && /\b(baixou|download|instalou)\b/.test(lastBotQuestion));
 
+  if (leadProfile.saudacao_enviada !== true && isInitialAdInformationRequest(normalized)) {
+    return buildTrafficRechargeWelcomeReply();
+  }
+
   if (leadProfile.saudacao_enviada === true && /^(oi|ola|olá|bom dia|boa tarde|boa noite|tudo bem)\b/.test(normalized)) {
     return {
       reply: "Oi, estou aqui 👍 Você quer seguir com recarga, ativação ou teste grátis?"
@@ -1254,6 +1258,10 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
   }
 
   return null;
+}
+
+function isInitialAdInformationRequest(normalized: string) {
+  return /\b(posso ter mais informacoes|mais informacoes|informacoes sobre isso|informacao sobre isso|saiba mais|saber mais)\b/.test(normalized);
 }
 
 function buildTrafficRechargeWelcomeReply(): CommercialReplyResult {

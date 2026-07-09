@@ -639,6 +639,29 @@ describe("commercial WhatsApp agent", () => {
     });
   });
 
+  it("answers ad information request locally when contextual AI is unavailable", async () => {
+    const { service, salesResponseAIService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Olá! Posso ter mais informações sobre isso?",
+      classification: { intent: "greeting", confidence: 0.95, summary: "saudacao de anuncio", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(salesResponseAIService.generateResponse).toHaveBeenCalled();
+    expect(result.reply).toContain("Seja bem-vindo ao melhor aplicativo de filmes e canais");
+    expect(result.reply).toContain("Voce ja faz o uso do app? Ou e a primeira vez?");
+    expect(result.responseSource).toBe("local_rule");
+    expect(result.responseRule).toBe("contextual_reply");
+    expect(result.leadProfilePatch).toMatchObject({
+      traffic_source_opener: true,
+      stage: "welcome_activation",
+      next_expected_reply: "activation_or_renewal"
+    });
+  });
+
   it.each(["buy_plan", "ask_price", "unknown", "greeting"] as const)(
     "keeps the traffic-source recharge opener as welcome before plan flow when intent is %s",
     async (intent) => {
