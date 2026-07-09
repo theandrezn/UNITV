@@ -659,7 +659,13 @@ export class WhatsappMessageService {
         webhookEventId,
         rule: commercialReply.responseRule || "deterministic_reply",
         confidence: classification.confidence,
-        specialist_examples_count: specialistExamples.length
+        specialist_examples_count: specialistExamples.length,
+        brain_stage: conversationBrainDecision.stage,
+        brain_context_active: conversationBrainDecision.contextActive,
+        brain_response_rule: conversationBrainDecision.responseRule,
+        brain_allows_initial_greeting: conversationBrainDecision.allowInitialGreeting,
+        brain_allows_human_handoff: conversationBrainDecision.allowHumanHandoff,
+        brain_allows_followup: conversationBrainDecision.allowFollowup
       }
     });
     if (commercialReply.leadProfilePatch) {

@@ -152,4 +152,38 @@ describe("ConversationBrainService", () => {
       humanRepliedAfterBaseMessage: false
     })).toMatchObject({ allowed: true, reason: "conversation_brain_followup_allowed" });
   });
+
+  it.each([
+    ["Baixei", "Voce conseguiu baixar?", "awaiting_download_installation", "conversation_brain_download_confirmed"],
+    ["Instalei", "Voce conseguiu instalar?", "awaiting_download_installation", "conversation_brain_download_confirmed"],
+    ["Nao consegui baixar", "Voce conseguiu baixar?", "awaiting_download_installation", "conversation_brain_download_help"],
+    ["Nao", "Voce conseguiu baixar?", "awaiting_download_installation", "conversation_brain_download_help"],
+    ["Pronto", "Voce conseguiu instalar?", "awaiting_download_installation", "conversation_brain_download_confirmed"],
+    ["Oi", "Voce prefere fazer o teste gratis de 3 dias primeiro ou quer ver os planos?", "trial_selection", "conversation_brain_blocks_greeting_restart"],
+    ["Celular", "Qual aparelho voce quer usar: celular Android, TV Box, Android TV/Google TV ou Fire Stick?", "device_qualification", "conversation_brain_confirm_android_phone"]
+  ])("keeps the expected journey for short answer %s", (message, lastQuestion, stage, expectedRule) => {
+    const decision = decide({
+      current_message: message,
+      last_bot_question: lastQuestion,
+      recent_messages: [{ role: "assistant", content: lastQuestion }],
+      lead_profile: {
+        stage,
+        last_bot_question: lastQuestion,
+        wants_test: true,
+        ...(stage === "awaiting_download_installation" ? { install_status: "link_sent" } : {})
+      }
+    }, message === "Oi" ? "greeting" : "unknown");
+
+    expect(decision.responseRule).toBe(expectedRule);
+    expect(decision.allowInitialGreeting).toBe(false);
+    expect(decision.allowHumanHandoff).toBe(false);
+  });
+
+  it("keeps initial greeting available only when no conversation context exists", () => {
+    const decision = decide({ current_message: "Ola! Posso ter mais informacoes sobre isso?" }, "greeting");
+
+    expect(decision.contextActive).toBe(false);
+    expect(decision.allowInitialGreeting).toBe(true);
+    expect(decision.directReply).toBeNull();
+  });
 });

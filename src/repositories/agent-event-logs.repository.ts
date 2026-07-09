@@ -87,4 +87,15 @@ export class AgentEventLogsRepository {
 
     return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
   }
+
+  async listEventsByConversationId(conversationId: string, limit = 100) {
+    const { data, error } = await this.supabase
+      .from("agent_event_logs")
+      .select("id, created_at, event_type, event_source, intent, stage, device, plan_interest, metadata")
+      .eq("conversation_id", conversationId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+  }
 }
