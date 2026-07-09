@@ -27,6 +27,7 @@ import {
   type CommercialContext,
   type ContextualDecision
 } from "@/services/agent/contextual-intelligence.service";
+import { ConversationBrainService } from "@/services/agent/conversation-brain.service";
 import {
   detectUnitvDevice,
   isUnitvInstallationRequest,
@@ -62,7 +63,8 @@ export class WhatsappMessageService {
     private readonly specialistInterventionAnalysis = new SpecialistInterventionAnalysisService(),
     private readonly agentEventLogService?: AgentEventLogService,
     private readonly hotLeadAlertService?: HotLeadAlertService,
-    private readonly contextualIntelligenceService = new ContextualIntelligenceService()
+    private readonly contextualIntelligenceService = new ContextualIntelligenceService(),
+    private readonly conversationBrainService = new ConversationBrainService()
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -519,6 +521,12 @@ export class WhatsappMessageService {
       context: contextSnapshot,
       useStrongModel: shouldUseStrongContextModel(message.text, contextSnapshot)
     });
+    const conversationBrainDecision = this.conversationBrainService.decide({
+      context: contextSnapshot,
+      contextualDecision,
+      classificationIntent: classification.intent,
+      directHumanRequest
+    });
     const contextualPatch = buildContextualLeadProfilePatch(contextualDecision);
     if (Object.keys(contextualPatch).length) {
       const currentLeadProfile = readLeadProfile(conversation.metadata);
@@ -542,7 +550,7 @@ export class WhatsappMessageService {
     effectiveMessage = policy.effectiveMessage;
     await this.auditService.createAuditLog({
       actor_type: "ai_agent",
-      action: "contextual_commercial_decision",
+      action: "conversation_brain_decision",
       entity_type: "conversations",
       entity_id: conversation.id,
       metadata: {
@@ -563,7 +571,15 @@ export class WhatsappMessageService {
         confidence: contextualDecision.confidence,
         human_hold_active: contextSnapshot.human_hold_active,
         followup_key: contextSnapshot.followup_key,
-        followup_due_at: contextSnapshot.followup_due_at
+        followup_due_at: contextSnapshot.followup_due_at,
+        brain_stage: conversationBrainDecision.stage,
+        brain_context_active: conversationBrainDecision.contextActive,
+        brain_response_rule: conversationBrainDecision.responseRule,
+        brain_direct_reply: Boolean(conversationBrainDecision.directReply),
+        brain_allows_initial_greeting: conversationBrainDecision.allowInitialGreeting,
+        brain_allows_human_handoff: conversationBrainDecision.allowHumanHandoff,
+        brain_allows_followup: conversationBrainDecision.allowFollowup,
+        brain_evidence: conversationBrainDecision.evidence
       }
     });
     const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata, message.text, recentMessages);
@@ -625,6 +641,7 @@ export class WhatsappMessageService {
       webhookEventId,
       recentMessages,
       contextualDecision,
+      conversationBrainDecision,
       specialistExamples
     });
     await this.safeCreateAgentEvent({

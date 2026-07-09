@@ -1,6 +1,7 @@
 import "server-only";
 import type { IntentClassification } from "./intent-classifier.service";
 import type { ContextualDecision } from "./contextual-intelligence.service";
+import type { ConversationBrainDecision } from "./conversation-brain.service";
 import { sanitizeReply } from "@/lib/agent/reply-safety";
 import { AppSettingsService } from "@/services/app-settings.service";
 import { AgentActionsService } from "@/services/agent-actions.service";
@@ -70,6 +71,7 @@ type CommercialReplyInput = {
   webhookEventId: string;
   recentMessages?: Array<{ role?: string; content?: string | null }>;
   contextualDecision?: ContextualDecision | null;
+  conversationBrainDecision?: ConversationBrainDecision | null;
   specialistExamples?: Array<{
     customer_last_message?: string | null;
     bot_previous_message?: string | null;
@@ -132,12 +134,30 @@ export class ChatAgentService {
       return { reply: "" };
     }
 
+    const conversationBrainDecision = input.conversationBrainDecision;
+    if (conversationBrainDecision && !conversationBrainDecision.shouldReply) {
+      return {
+        reply: "",
+        responseSource: "local_rule",
+        responseRule: conversationBrainDecision.responseRule,
+        leadProfilePatch: conversationBrainDecision.leadProfilePatch
+      };
+    }
+    if (conversationBrainDecision?.directReply) {
+      return {
+        reply: conversationBrainDecision.directReply,
+        responseSource: "local_rule",
+        responseRule: conversationBrainDecision.responseRule,
+        leadProfilePatch: conversationBrainDecision.leadProfilePatch
+      };
+    }
+
     const knowledge = await this.knowledgeService.searchKnowledge(message);
     const intent = input.classification.intent === "support" ? "technical_support" : input.classification.intent;
     const allowMenu = shouldUseMenu(message);
     const leadProfile = readLeadProfile(input.conversation.metadata);
 
-    if (isTrafficRechargeOpener(message)) {
+    if (isTrafficRechargeOpener(message) && conversationBrainDecision?.allowInitialGreeting !== false) {
       return buildTrafficRechargeWelcomeReply();
     }
 
@@ -257,16 +277,21 @@ export class ChatAgentService {
     }
 
     const humanHandoffGuard = shouldBlockHumanHandoff(conversationIntelligence);
-    if (input.classification.confidence < 0.45 && (conversationIntelligence.risk === "low" || humanHandoffGuard.block)) {
+    const blockHumanHandoff = conversationBrainDecision?.allowHumanHandoff === false || humanHandoffGuard.block;
+    if (input.classification.confidence < 0.45 && (conversationIntelligence.risk === "low" || blockHumanHandoff)) {
       return {
         reply: buildLowRiskRecoveryReply(conversationIntelligence),
         responseSource: "local_rule",
-        responseRule: humanHandoffGuard.block
+        responseRule: blockHumanHandoff
           ? "blocked_low_risk_handoff_awaiting_customer"
           : "conversation_intelligence_low_risk_recovery",
         leadProfilePatch: {
           ...buildLowRiskRecoveryPatch(conversationIntelligence),
-          ...(humanHandoffGuard.block ? { handoff_blocked_reason: humanHandoffGuard.reason } : {})
+          ...(blockHumanHandoff ? {
+            handoff_blocked_reason: conversationBrainDecision?.allowHumanHandoff === false
+              ? "conversation_brain_active_context"
+              : humanHandoffGuard.reason
+          } : {})
         }
       };
     }
@@ -275,7 +300,7 @@ export class ChatAgentService {
       return this.handoffToHuman(input, "low_confidence", knowledge);
     }
 
-    if (intent === "human_help") {
+    if (intent === "human_help" && conversationBrainDecision?.allowHumanHandoff !== false) {
       const installationSupportReply = getInstallationReply(message);
       if (installationSupportReply?.requiresHuman) {
         return installationSupportReply;

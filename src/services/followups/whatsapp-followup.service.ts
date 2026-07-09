@@ -7,6 +7,7 @@ import { AuditService } from "@/services/audit.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 import { SalesResponseAIService } from "@/services/agent/sales-response-ai.service";
 import { OrdersService } from "@/services/orders.service";
+import { validateFollowupWithConversationBrain } from "@/services/agent/conversation-brain.service";
 import {
   buildFollowupContextHash,
   ContextualFollowupDecisionService,
@@ -624,6 +625,19 @@ function validateFollowupPolicy(context: FollowupContext, decision: FollowupDeci
 
   if (context.human_hold_active) {
     return { shouldSend: false, message: null, dedupeKey, reason: "human_hold_active", duplicateBlocked: false };
+  }
+
+  const baseMessageAt = context.metadata.last_bot_download_message_at || context.metadata.last_bot_message_at;
+  const brainFollowupValidation = validateFollowupWithConversationBrain({
+    stage: String(context.lead_profile.stage || context.lead_profile.commercial_stage || context.metadata.conversation_stage || ""),
+    followupKey: decision.new_followup_key || context.followup_key,
+    humanHoldActive: context.human_hold_active,
+    lastBotMessage: context.latest_bot_message?.content,
+    customerRepliedAfterBaseMessage: isAfter(context.latest_customer_message?.created_at || context.metadata.last_customer_message_at, baseMessageAt),
+    humanRepliedAfterBaseMessage: isAfter(context.latest_human_message?.created_at || context.metadata.last_specialist_message_at, baseMessageAt)
+  });
+  if (!brainFollowupValidation.allowed) {
+    return { shouldSend: false, message: null, dedupeKey, reason: brainFollowupValidation.reason, duplicateBlocked: false };
   }
 
   if ((decision.new_followup_key || context.followup_key) === "post_download_check_10min") {
