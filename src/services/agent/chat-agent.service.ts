@@ -990,14 +990,15 @@ export class ChatAgentService {
     input: CommercialReplyInput,
     reason: string,
     knowledge: Array<{ category?: string; content?: string }> = [],
-    reply = "Vou encaminhar para atendimento humano para te ajudar melhor. Enquanto isso, pode me mandar mais detalhes por aqui."
+    reply = "Vou encaminhar para atendimento humano para te ajudar melhor. Enquanto isso, pode me mandar mais detalhes por aqui.",
+    details: Record<string, unknown> = {}
   ): Promise<CommercialReplyResult> {
     await this.agentActionsService.createAgentAction({
       conversation_id: input.conversation.id,
       customer_id: input.customer.id,
       action_name: "handoff_to_human",
       status: "requested",
-      input_payload: { reason, message: input.message, knowledge_categories: knowledge.map((article) => article.category) },
+      input_payload: { reason, message: input.message, knowledge_categories: knowledge.map((article) => article.category), ...details },
       output_payload: {},
       requires_human_approval: true
     });
@@ -1007,7 +1008,7 @@ export class ChatAgentService {
       action: "handoff_to_human",
       entity_type: "conversations",
       entity_id: input.conversation.id,
-      metadata: { reason, webhookEventId: input.webhookEventId }
+      metadata: { reason, webhookEventId: input.webhookEventId, ...details }
     });
 
     return {
@@ -1065,16 +1066,31 @@ export class ChatAgentService {
     reason: string,
     knowledge: Array<{ category?: string; content?: string }> = []
   ): Promise<CommercialReplyResult> {
-    const result = await this.handoffToHuman(input, reason, knowledge, "");
+    const leadProfile = readLeadProfile(input.conversation.metadata);
+    const risk = detectConversationRisk(input.classification.intent, input.message, leadProfile);
+    const stage = firstStringValue(leadProfile.stage, leadProfile.commercial_stage, leadProfile.etapa_atual);
+    const details = {
+      detected_intent: input.classification.intent,
+      confidence: input.classification.confidence,
+      risk,
+      stage,
+      recovery_attempted: true,
+      recovery_result: "blocked_or_empty",
+      block_reason: reason
+    };
+    const result = await this.handoffToHuman(input, reason, knowledge, "", details);
     return {
       ...result,
       responseSource: "local_rule",
       responseRule: reason,
       notifyOwner: true,
       ownerNotificationText:
-        "Atendimento automatico pausado: a IA contextual nao retornou uma resposta segura e o sistema bloqueou fallback/template.\n\n" +
+        "Atendimento automatico pausado apos falha em resposta segura.\n\n" +
         `Cliente: ${input.customer.id}\n` +
-        `Mensagem: ${input.message}`
+        `Mensagem: ${input.message}\n` +
+        `Intencao: ${String(details.detected_intent)}\n` +
+        `Risco: ${String(details.risk)}\n` +
+        `Motivo: ${reason}`
     };
   }
 }
