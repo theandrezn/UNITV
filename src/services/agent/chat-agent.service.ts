@@ -26,8 +26,7 @@ import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocati
 import { validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
 
 export const INITIAL_UNITV_REPLY =
-  "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\n" +
-  "Você quer ver os valores, fazer o teste grátis ou precisa de ajuda para instalar?";
+  "Oi, tudo bem? Você já usa o aplicativo UNITV ou seria sua primeira vez?";
 
 const LOW_CONFIDENCE_REPLY =
   "Claro, eu te ajudo.\n\nMe confirma uma coisa: você quer comprar um plano, renovar um acesso ou precisa de ajuda com instalação?";
@@ -127,13 +126,17 @@ export class ChatAgentService {
       return buildTrafficRechargeWelcomeReply();
     }
 
+    const conversationIntelligence = buildConversationIntelligenceLayer({
+      message,
+      intent,
+      leadProfile,
+      recentMessages: input.recentMessages,
+      confidence: input.classification.confidence
+    });
     const contextualReply = getContextualCommercialReply(message, leadProfile);
     const contextualAiReply = await this.generateContextualCommercialAIReply(input, message, intent, leadProfile, contextualReply?.reply || null);
     if (contextualAiReply) {
       return contextualAiReply;
-    }
-    if (!contextualReply && shouldBlockConversationalTemplateFallback(intent) && intent !== "ask_price" && intent !== "free_trial") {
-      return this.silentHandoffToHuman(input, "contextual_ai_reply_unavailable", knowledge);
     }
 
     if (leadProfile.downloaded_app === true && intent === "technical_support" && isInstallationMessage(message)) {
@@ -210,6 +213,15 @@ export class ChatAgentService {
           sendTextBeforeMenu: allowMenu
         };
       }
+    }
+
+    if (input.classification.confidence < 0.45 && conversationIntelligence.risk === "low") {
+      return {
+        reply: buildLowRiskRecoveryReply(conversationIntelligence),
+        responseSource: "local_rule",
+        responseRule: "conversation_intelligence_low_risk_recovery",
+        leadProfilePatch: buildLowRiskRecoveryPatch(conversationIntelligence)
+      };
     }
 
     if (input.classification.confidence < 0.45) {
@@ -324,7 +336,7 @@ export class ChatAgentService {
 
     if (intent === "receipt_sent") {
       return {
-        reply: "Perfeito. Pode me enviar a foto ou o PDF do comprovante aqui para eu encaminhar para validação?",
+        reply: "Recebi. Vou verificar com segurança e aguardar a confirmação real do pagamento antes de liberar qualquer acesso.",
         menu: allowMenu ? CONTINUATION_MENU : undefined,
         sendTextBeforeMenu: allowMenu
       };
@@ -452,7 +464,14 @@ export class ChatAgentService {
     }
 
     if (intent === "greeting") {
-      return { reply: INITIAL_UNITV_REPLY, menu: allowMenu ? MAIN_MENU : undefined, sendTextBeforeMenu: allowMenu };
+      return {
+        reply: buildLowRiskRecoveryReply(conversationIntelligence),
+        menu: allowMenu ? MAIN_MENU : undefined,
+        sendTextBeforeMenu: allowMenu,
+        responseSource: "local_rule",
+        responseRule: "conversation_intelligence_greeting",
+        leadProfilePatch: buildLowRiskRecoveryPatch(conversationIntelligence)
+      };
     }
 
     return { reply: this.generateReply(input) };
@@ -1065,6 +1084,129 @@ function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
   return profile && typeof profile === "object" && !Array.isArray(profile) ? profile as Record<string, unknown> : {};
 }
 
+type ConversationIntelligenceLayer = {
+  latestCustomerMessage: string;
+  detectedIntent: string;
+  risk: "low" | "high";
+  leadProfile: Record<string, unknown>;
+  latestBotMessage: string | null;
+  lastBotQuestion: string | null;
+  stage: string | null;
+  confidence: number;
+};
+
+function buildConversationIntelligenceLayer(input: {
+  message: string;
+  intent: string;
+  leadProfile: Record<string, unknown>;
+  recentMessages?: Array<{ role?: string; content?: string | null }>;
+  confidence: number;
+}): ConversationIntelligenceLayer {
+  const latestBotMessage = [...(input.recentMessages || [])]
+    .reverse()
+    .find((item) => item.role === "assistant" || item.role === "human_agent");
+  const lastBotQuestion = typeof input.leadProfile.last_bot_question === "string"
+    ? input.leadProfile.last_bot_question
+    : extractLastQuestionFromText(latestBotMessage?.content || "");
+  const stage = firstStringValue(
+    input.leadProfile.stage,
+    input.leadProfile.commercial_stage,
+    input.leadProfile.etapa_atual
+  );
+
+  return {
+    latestCustomerMessage: input.message,
+    detectedIntent: input.intent,
+    risk: detectConversationRisk(input.intent, input.message, input.leadProfile),
+    leadProfile: input.leadProfile,
+    latestBotMessage: typeof latestBotMessage?.content === "string" ? latestBotMessage.content : null,
+    lastBotQuestion,
+    stage,
+    confidence: input.confidence
+  };
+}
+
+function detectConversationRisk(intent: string, message: string, leadProfile: Record<string, unknown>): "low" | "high" {
+  const normalized = normalizeContextMessage(message);
+  if (
+    isSensitiveExecutionIntent(intent) ||
+    intent === "receipt_sent" ||
+    intent === "activation_help" ||
+    /\b(comprovante|paguei|ja paguei|pix copia|qr code|codigo|código|libera o acesso|liberar acesso)\b/.test(normalized)
+  ) {
+    return "high";
+  }
+
+  if (
+    ["greeting", "ask_price", "free_trial", "renew_plan", "buy_plan", "technical_support", "ask_payment", "unknown"].includes(intent) &&
+    (
+      isLowRiskOpeningMessage(normalized) ||
+      /\b(valor|preco|preço|plano|planos|recarga|renovar|teste|instalar|download|aparelho|telas?)\b/.test(normalized) ||
+      Boolean(leadProfile.last_bot_question)
+    )
+  ) {
+    return "low";
+  }
+
+  return "high";
+}
+
+function isLowRiskOpeningMessage(normalized: string) {
+  return (
+    /^(oi|ola|olá|olq|opa|bom dia|boa tarde|boa noite|oie|oii+|oiii+)[!?.,\s]*$/.test(normalized) ||
+    /\b(tenho interesse|me interessei|quero saber|quero conhecer|saber mais|saiba mais|mais informacoes|informacoes sobre isso|posso ter mais informacoes)\b/.test(normalized)
+  );
+}
+
+function buildLowRiskRecoveryReply(context: ConversationIntelligenceLayer) {
+  const normalized = normalizeContextMessage(context.latestCustomerMessage);
+  const lastQuestion = normalizeContextMessage(context.lastBotQuestion || "");
+
+  if (/^(sim|s|isso|ok|pode|pode ser)$/.test(normalized) && /\b(ja usa|primeira vez|uso do app)\b/.test(lastQuestion)) {
+    return "Perfeito. É para recarga de um acesso que você já tem ou seria sua primeira ativação?";
+  }
+
+  if (/\b(valor|preco|preço|quanto|planos?)\b/.test(normalized)) {
+    return BROAD_PRICE_QUALIFICATION_QUESTION;
+  }
+
+  if (/\b(recarga|renovar|recarregar)\b/.test(normalized)) {
+    return RENEWAL_CONTEXT_QUESTION;
+  }
+
+  if (/\b(teste|gratis|gratuito)\b/.test(normalized)) {
+    return "Claro. Pra eu liberar seu teste grátis de 3 dias, me diz só em qual aparelho você vai usar: celular Android, TV Box, Android TV, Google TV ou Fire Stick?";
+  }
+
+  return INITIAL_UNITV_REPLY;
+}
+
+function buildLowRiskRecoveryPatch(context: ConversationIntelligenceLayer) {
+  const normalized = normalizeContextMessage(context.latestCustomerMessage);
+  if (/\b(valor|preco|preço|quanto|planos?)\b/.test(normalized)) {
+    return {
+      commercial_stage: "qualified",
+      stage: "qualified",
+      last_customer_intent: "ask_price",
+      next_expected_reply: "plan_choice",
+      last_bot_question: BROAD_PRICE_QUALIFICATION_QUESTION
+    };
+  }
+
+  return {
+    commercial_stage: "welcome_activation",
+    stage: "welcome_activation",
+    last_customer_intent: context.detectedIntent,
+    next_expected_reply: "activation_or_renewal",
+    last_bot_question: INITIAL_UNITV_REPLY
+  };
+}
+
+function extractLastQuestionFromText(text: string) {
+  const questions = String(text || "").match(/[^?]+\?/g);
+  return questions?.at(-1)?.trim() || null;
+}
+
 function buildMetaAttributionOrderMetadata(metadata: Record<string, unknown> | null | undefined) {
   const leadProfile = readLeadProfile(metadata);
   const referral = isRecord(metadata?.meta_referral) ? metadata.meta_referral : {};
@@ -1463,10 +1605,6 @@ function getCommercialPlanLabel(plan: { name?: unknown; slug?: unknown; duration
   if (key.includes("semestral") || key.includes("6_meses") || durationDays === 180) return "semestral";
   if (key.includes("anual") || durationDays === 365) return "anual";
   return String(plan.name || "plano").trim().toLowerCase() || "plano";
-}
-
-function shouldBlockConversationalTemplateFallback(intent: string) {
-  return Boolean(process.env.OPENAI_API_KEY) && !isSensitiveExecutionIntent(intent);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -758,10 +758,9 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("Meu nome é André");
-    expect(result.reply).toContain("Você quer ver os valores");
-    expect(result.reply).toContain("fazer o teste grátis");
-    expect(result.reply).toContain("precisa de ajuda para instalar?");
+    expect(result.reply).toContain("Oi, tudo bem?");
+    expect(result.reply).toContain("Você já usa o aplicativo UNITV");
+    expect(result.reply).toContain("seria sua primeira vez?");
     expect(result.reply.trim().endsWith("?")).toBe(true);
     expect(result.menu).toBeUndefined();
     expect(result.sendTextBeforeMenu).toBe(false);
@@ -784,10 +783,89 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("Meu nome é André");
-    expect(result.reply).toContain("Você quer ver os valores");
+    expect(result.reply).toContain("Você já usa o aplicativo UNITV");
+    expect(result.reply).toContain("seria sua primeira vez?");
     expect(result.reply.trim().endsWith("?")).toBe(true);
     expect(result.menu).toBeUndefined();
+  });
+
+  it.each(["Oi", "Olá", "Bom dia", "Tenho interesse"] as const)(
+    "does not pause low-risk opener when contextual AI returns empty: %s",
+    async (message) => {
+      vi.stubEnv("OPENAI_API_KEY", "test-key");
+      const { service, agentActionsService } = createChatAgent({
+        salesResponseAIService: {
+          generateResponse: vi.fn(async () => null)
+        }
+      });
+
+      const result = await service.generateCommercialReply({
+        message,
+        classification: { intent: "greeting", confidence: 0.95, summary: "baixo risco", suggested_reply: "" },
+        customer: { id: "customer-id" },
+        conversation: { id: "conversation-id" },
+        webhookEventId: "webhook-id"
+      });
+
+      expect(result.requiresHuman).not.toBe(true);
+      expect(result.reply).toContain("Você já usa o aplicativo UNITV");
+      expect(result.responseRule).toBe("conversation_intelligence_greeting");
+      expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+        expect.objectContaining({ action_name: "handoff_to_human" })
+      );
+    }
+  );
+
+  it("keeps price question low-risk when contextual AI returns empty", async () => {
+    vi.stubEnv("OPENAI_API_KEY", "test-key");
+    const { service, agentActionsService } = createChatAgent({
+      salesResponseAIService: {
+        generateResponse: vi.fn(async () => null)
+      }
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "Qual valor?",
+      classification: { intent: "ask_price", confidence: 0.95, summary: "valor", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.reply).toContain("Voce tem interesse em algum plano especifico");
+    expect(result.reply).toContain("mensal, trimestral, semestral ou anual");
+    expect(result.reply).not.toContain("R$ 25");
+    expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
+    );
+  });
+
+  it("continues from the previous greeting when the customer answers sim", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "sim",
+      classification: { intent: "unknown", confidence: 0.2, summary: "resposta curta", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            last_bot_question: "Você já usa o aplicativo UNITV ou seria sua primeira vez?"
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: "Oi, tudo bem? Você já usa o aplicativo UNITV ou seria sua primeira vez?" }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.reply).toContain("recarga");
+    expect(result.reply).toContain("primeira ativação");
+    expect(result.reply).not.toContain("Seja bem-vindo");
   });
 
   it("answers an ad recharge lead as Andre without sending a menu", async () => {
