@@ -224,6 +224,26 @@ export class WhatsappFollowupService {
         });
         continue;
       }
+      if (isOnlyQuestionMark(followupText)) {
+        skipped++;
+        await this.conversationsRepository.updateConversationMetadata(
+          conversation.id,
+          buildCancelledFollowupMetadata(metadata, context, decision, "unsafe_question_mark_followup", now)
+        );
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "whatsapp_followup_skipped",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: {
+            reason: "unsafe_question_mark_followup",
+            followup_key: metadata.followup_key,
+            stageId,
+            decision_reason: decision.reason
+          }
+        });
+        continue;
+      }
       const followupTextHash = hashText(followupText);
       const sendResult = await this.evolutionService.sendTextMessage({ phone, text: followupText });
       const leadProfile = readLeadProfile(metadata);
@@ -397,6 +417,9 @@ export class WhatsappFollowupService {
         "Escreva uma unica mensagem curta, natural e contextual.",
         "Nao copie texto pronto nem repita mensagem recente.",
         "Use o historico completo para decidir o proximo passo.",
+        input.decision.followup_type === "pre_sale_recharge_later"
+          ? "Este e um follow-up de pre-venda: o cliente disse que faria depois. Peca permissao para mandar a chave Pix, com baixa pressao, sem reiniciar saudacao, sem tabela completa e sem inventar nome."
+          : "",
         "Nao invente Pix, preco, codigo, pagamento confirmado ou compatibilidade."
       ].join("\n"),
       intent: input.decision.followup_type,
@@ -599,6 +622,10 @@ function isSafeContextualFallback(context: FollowupContext, decision: FollowupDe
     followupType === "trial_check" ||
     /recuperacao_de_lead|unanswered_bot|followup_contextual/i.test(reason)
   );
+}
+
+function isOnlyQuestionMark(value: string) {
+  return /^[?\s!.,]*$/.test(value.trim());
 }
 
 function buildCancelledFollowupMetadata(
@@ -923,6 +950,13 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
 
   if (key === "payment_choice") {
     return "Voce prefere seguir pelo Pix ou pelo cartao?";
+  }
+
+  if (key === "pre_sale_recharge_later_4h") {
+    const profile = readLeadProfile(metadata);
+    const firstName = readFirstName(profile.nome);
+    const prefix = firstName ? `Boa tarde, ${firstName}.` : "Boa tarde.";
+    return `${prefix} Posso te mandar a chave Pix pra deixar sua recarga pronta?`;
   }
 
   if (key === "download" || key === "install") {

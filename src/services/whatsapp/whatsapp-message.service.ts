@@ -37,6 +37,8 @@ const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
 const CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const RESPONSE_INTENT_LOCK_MS = 30 * 60 * 1000;
+const PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY = "pre_sale_recharge_later_4h";
+const PRE_SALE_RECHARGE_LATER_DELAY_MS = 4 * 60 * 60 * 1000;
 
 type ProcessIncomingMessageInput = {
   webhookEventId: string;
@@ -558,6 +560,56 @@ export class WhatsappMessageService {
       }
     });
     const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata, message.text, recentMessages);
+    const preSaleFollowupState = buildPreSaleRechargeLaterFollowupState({
+      text: message.text,
+      metadata: conversation.metadata,
+      recentMessages,
+      now: new Date(customerMessageAt),
+      customerName: message.contactName || customer.name || null,
+      customerMessageAt
+    });
+    if (preSaleFollowupState) {
+      const nextMetadata = mergePreSaleRechargeLaterFollowupState(conversation.metadata, preSaleFollowupState);
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
+      conversation.metadata = nextMetadata;
+      await this.auditService.createAuditLog({
+        actor_type: "ai_agent",
+        action: "[PreSaleFollowup] Detected recharge later intent",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: {
+          webhookEventId,
+          followup_key: PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY,
+          followup_due_at: preSaleFollowupState.followup_due_at,
+          detected_intent: "wants_to_recharge_later"
+        }
+      });
+      await this.auditService.createAuditLog({
+        actor_type: "ai_agent",
+        action: "[PreSaleFollowup] Scheduled 4h followup",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: {
+          webhookEventId,
+          followup_key: PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY,
+          followup_due_at: preSaleFollowupState.followup_due_at
+        }
+      });
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: "followup_scheduled",
+        event_source: "pre_sale_followup",
+        intent: "wants_to_recharge_later",
+        stage: "pre_sale_recharge_intent",
+        message_id: message.externalMessageId,
+        metadata: {
+          webhookEventId,
+          followup_key: PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY,
+          followup_due_at: preSaleFollowupState.followup_due_at
+        }
+      });
+    }
     const commercialReply = await this.chatAgent.generateCommercialReply({
       message: effectiveMessage,
       classification,
@@ -836,6 +888,7 @@ export class WhatsappMessageService {
 
     const now = new Date();
     const followupState = buildFollowupState({ reply: safeReply, classification, menu, copyText, followUpMessages: safeFollowUpMessages, media }, conversation.metadata, now);
+    const finalFollowupState = preservePendingPreSaleFollowupState(followupState, conversation.metadata);
     const currentLeadProfile = readLeadProfile(conversation.metadata);
     const lastBotQuestion = extractLastQuestion(safeReply);
     const responseIntent = classifyCustomerFacingResponseIntent(safeReply);
@@ -849,7 +902,7 @@ export class WhatsappMessageService {
         ...operationalMarkers,
         updated_at: now.toISOString()
       },
-      ...followupState
+      ...finalFollowupState
     };
     await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
     await this.conversationsRepository.touchConversation(conversation.id, now.toISOString());
@@ -1121,6 +1174,12 @@ export class WhatsappMessageService {
 
       const repository = this.specialistTrainingExamplesRepository || new SpecialistTrainingExamplesRepository();
       const quickLearning = buildQuickSpecialistLearningSignals(message.text, botWasOverridden);
+      const tags = buildSpecialistLearningTags({
+        customerLastMessage: customerLastText,
+        botPreviousMessage: botPreviousText,
+        specialistMessage: message.text,
+        analysis
+      });
       await repository.createExample({
         conversation_id: conversation.id,
         customer_id: customer.id,
@@ -1154,7 +1213,17 @@ export class WhatsappMessageService {
           human_style: quickLearning.humanStyle,
           max_reply_sentences: quickLearning.maxReplySentences,
           specialist_message_words: quickLearning.wordCount,
-          specialist_message_is_short: quickLearning.isShort
+          specialist_message_is_short: quickLearning.isShort,
+          tags,
+          review_status: "pending_review",
+          suggestedFutureBehavior: analysis.next_best_action,
+          learnedPattern: analysis.learned_pattern,
+          specialistAction: analysis.inferred_specialist_action,
+          customerStage: analysis.inferred_stage,
+          customerIntent: analysis.inferred_intent,
+          customerLastMessage: maskedCustomerMessage,
+          botPreviousMistake: maskedBotMessage,
+          specialistMessage: maskedSpecialistMessage
         }
       });
       return { analysis, summary: analysis.summary, botResponseWasOverridden: botWasOverridden };
@@ -1723,6 +1792,167 @@ function buildFollowupState(
   };
 }
 
+function preservePendingPreSaleFollowupState(
+  generatedState: Record<string, unknown>,
+  metadata: Record<string, unknown> | null | undefined
+) {
+  if (
+    generatedState.followup_key ||
+    metadata?.followup_key !== PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY ||
+    typeof metadata.followup_due_at !== "string"
+  ) {
+    return generatedState;
+  }
+
+  return {
+    ...generatedState,
+    followup_key: PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY,
+    followup_due_at: metadata.followup_due_at,
+    followup_sent_at: null,
+    followup_sent_stage_id: null,
+    followup_count: Number(metadata.followup_count || 0),
+    last_followup_stage_id: metadata.last_followup_stage_id || `${PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY}:${Date.now()}`,
+    awaiting_customer_action: "pix_permission",
+    conversation_stage: "pre_sale_recharge_intent",
+    customer_stage: "pre_sale_recharge_intent",
+    payment_intent_status: "later",
+    last_detected_intent: "wants_to_recharge_later"
+  };
+}
+
+function buildPreSaleRechargeLaterFollowupState(input: {
+  text: string;
+  metadata: Record<string, unknown> | null | undefined;
+  recentMessages: Array<{ role?: string; content?: string | null }>;
+  now: Date;
+  customerName?: string | null;
+  customerMessageAt: string;
+}) {
+  const leadProfile = readLeadProfile(input.metadata);
+  const textWindow = normalizeFreeText(
+    [...input.recentMessages.map((message) => message.content || ""), input.text].join("\n")
+  );
+  const normalized = normalizeFreeText(input.text);
+  if (!isRechargeLaterIntent(normalized) || !hasRealPreSaleRechargeInterest(textWindow, leadProfile)) {
+    return null;
+  }
+
+  const dueAt = new Date(input.now.getTime() + PRE_SALE_RECHARGE_LATER_DELAY_MS).toISOString();
+  const captured = extractPreSaleContext(textWindow, leadProfile, input.customerName);
+  return {
+    followup_key: PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY,
+    followup_due_at: dueAt,
+    followup_sent_at: null,
+    followup_sent_stage_id: null,
+    followup_count: 0,
+    last_followup_stage_id: `${PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY}:${input.now.getTime()}`,
+    awaiting_customer_action: "pix_permission",
+    conversation_stage: "pre_sale_recharge_intent",
+    customer_stage: "pre_sale_recharge_intent",
+    payment_intent_status: "later",
+    last_detected_intent: "wants_to_recharge_later",
+    pre_sale_followup_scheduled_at: input.now.toISOString(),
+    pre_sale_followup_base_customer_message_at: input.customerMessageAt,
+    pre_sale_followup_reason: "customer_wants_recharge_later",
+    pre_sale_followup_context: {
+      customer_last_message: input.text,
+      plan: captured.plan || null,
+      screens: captured.screens || null,
+      negotiated_price_cents: captured.negotiatedPriceCents || null,
+      quoted_price_cents: captured.quotedPriceCents || null
+    },
+    lead_profile: {
+      ...leadProfile,
+      nome: captured.name || leadProfile.nome || null,
+      selected_plan: captured.plan || leadProfile.selected_plan || leadProfile.plano_interesse || null,
+      plano_interesse: captured.plan || leadProfile.plano_interesse || null,
+      requested_screens: captured.screens || leadProfile.requested_screens || null,
+      negotiated_price_cents: captured.negotiatedPriceCents || leadProfile.negotiated_price_cents || null,
+      quoted_price_cents: captured.quotedPriceCents || leadProfile.quoted_price_cents || null,
+      wants_recharge: true,
+      nivel_interesse: "muito_quente",
+      customer_stage: "pre_sale_recharge_intent",
+      commercial_stage: "pre_sale_recharge_intent",
+      stage: "pre_sale_recharge_intent",
+      payment_intent_status: "later",
+      last_detected_intent: "wants_to_recharge_later",
+      last_customer_answer: input.text,
+      next_best_action: "follow_up_4h_pedir_permissao_pix",
+      proxima_acao: "voltar em 4h pedindo permissao para enviar Pix",
+      updated_at: input.now.toISOString()
+    }
+  };
+}
+
+function mergePreSaleRechargeLaterFollowupState(
+  metadata: Record<string, unknown> | null | undefined,
+  state: Record<string, unknown>
+) {
+  const currentLeadProfile = readLeadProfile(metadata);
+  const stateLeadProfile = readLeadProfile(state);
+  return {
+    ...(metadata || {}),
+    ...state,
+    lead_profile: {
+      ...currentLeadProfile,
+      ...stateLeadProfile
+    }
+  };
+}
+
+function isRechargeLaterIntent(normalized: string) {
+  return (
+    /\b(mais tarde|depois|daqui a pouco|logo mais|quando eu chegar)\b.{0,50}\b(faco|fazer|pago|pagar|recarga|recarrego|recarregar|fecho|fechar|realizo|realizar)\b/.test(normalized) ||
+    /\b(vou|vou querer|quero)\b.{0,35}\b(fazer|pagar|realizar|fechar|recarregar)\b.{0,50}\b(mais tarde|depois|daqui a pouco|logo mais|quando eu chegar)\b/.test(normalized) ||
+    /\b(vou realizar a recarga|vou fazer a recarga|vou fechar depois|beleza.*mais tarde.*pago)\b/.test(normalized)
+  );
+}
+
+function hasRealPreSaleRechargeInterest(textWindow: string, leadProfile: Record<string, unknown>) {
+  return Boolean(
+    leadProfile.selected_plan ||
+    leadProfile.plano_interesse ||
+    leadProfile.wants_recharge ||
+    leadProfile.asked_price ||
+    leadProfile.asked_screens ||
+    leadProfile.negotiated_price_cents ||
+    /\b(valor|preco|quanto|30 dias|mensal|recarga|recarregar|telas?|pix|plano)\b/.test(textWindow)
+  );
+}
+
+function extractPreSaleContext(textWindow: string, leadProfile: Record<string, unknown>, customerName?: string | null) {
+  return {
+    name: readFirstName(customerName || leadProfile.nome),
+    plan: leadProfile.selected_plan || leadProfile.plano_interesse || (/\b(30 dias|mensal|mes)\b/.test(textWindow) ? "mensal" : null),
+    screens: Number(leadProfile.requested_screens || leadProfile.telas || extractScreensCount(textWindow)) || null,
+    negotiatedPriceCents: Number(leadProfile.negotiated_price_cents || extractPriceCents(textWindow, /(\d{1,3})(?:[,.](\d{1,2}))?\s*(?:por\s*)?(?:3|tres|duas|2)?\s*telas?/)) || null,
+    quotedPriceCents: Number(leadProfile.quoted_price_cents || extractPriceCents(textWindow, /(?:r\$\s*)?(\d{1,3})(?:[,.](\d{1,2}))?/)) || null
+  };
+}
+
+function extractScreensCount(text: string) {
+  const numeric = text.match(/\b(\d{1,2})\s*telas?\b/);
+  if (numeric) return Number(numeric[1]);
+  if (/\bduas\s+telas?\b/.test(text)) return 2;
+  if (/\btres\s+telas?\b/.test(text)) return 3;
+  if (/\buma\s+tela\b/.test(text)) return 1;
+  return null;
+}
+
+function extractPriceCents(text: string, pattern: RegExp) {
+  const match = text.match(pattern);
+  if (!match) return null;
+  const reais = Number(match[1]);
+  const centavos = match[2] ? Number(match[2].padEnd(2, "0").slice(0, 2)) : 0;
+  if (!Number.isFinite(reais)) return null;
+  return reais * 100 + (Number.isFinite(centavos) ? centavos : 0);
+}
+
+function readFirstName(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value.trim().split(/\s+/)[0]?.replace(/[^\p{L}'-]/gu, "") || "";
+}
+
 function buildManualOutboundFollowupState(
   text: string,
   metadata: Record<string, unknown> | null | undefined,
@@ -1779,6 +2009,19 @@ function buildManualOutboundLeadProfilePatch(text: string, messageAt: string) {
     patch.stage = "plan_selected";
     patch.next_expected_reply = "payment_method";
     patch.followup_reason = "manual_plan_offer_sent";
+  }
+
+  if (/\b(condicao especial|condi[cç]ao especial|adquirir novos clientes|fechar pra voce|17[,.]90|17[,.]9|3 telas|tres telas)\b/.test(normalized)) {
+    patch.commercial_stage = "pre_sale_recharge_intent";
+    patch.stage = "pre_sale_recharge_intent";
+    patch.inferred_specialist_action = "ofereceu_condicao_especial_baixa_pressao";
+    patch.learned_pattern = "cliente_faz_depois_pedir_permissao_pix_4h";
+    patch.next_best_action = "aguardar_cliente_ou_followup_pedindo_permissao_pix";
+    patch.followup_reason = "manual_pre_sale_negotiation";
+    patch.special_promo_followup_sent = true;
+    patch.special_promo_offer = "manual_pre_sale_special_offer";
+    patch.negotiated_price_cents = extractPriceCents(normalized, /(\d{1,3})(?:[,.](\d{1,2}))?/) || patch.negotiated_price_cents;
+    patch.requested_screens = extractScreensCount(normalized) || patch.requested_screens;
   }
 
   if (/\b(pix|copia e cola|qr code|chave)\b/.test(normalized)) {
@@ -2162,6 +2405,34 @@ function mergeStyleNotes(...notes: Array<string | null | undefined>) {
     .filter(Boolean)
     .filter((note, index, list) => list.indexOf(note) === index)
     .join(" ");
+}
+
+function buildSpecialistLearningTags(input: {
+  customerLastMessage: string | null;
+  botPreviousMessage: string | null;
+  specialistMessage: string;
+  analysis: { inferred_intent?: string; learned_pattern?: string; inferred_specialist_action?: string };
+}) {
+  const text = normalizeFreeText([
+    input.customerLastMessage || "",
+    input.botPreviousMessage || "",
+    input.specialistMessage || "",
+    input.analysis.inferred_intent || "",
+    input.analysis.learned_pattern || "",
+    input.analysis.inferred_specialist_action || ""
+  ].join(" "));
+  const tags = new Set<string>();
+
+  if (/\b(pre.?sale|pre venda|pre_venda|mais tarde|depois|faco|fa[cç]o|pago|recarga)\b/.test(text)) tags.add("PRE_SALE");
+  if (/\b(mais tarde|depois|faco|fa[cç]o|vou fazer|vou pagar|recharge_later|recarga_later)\b/.test(text)) tags.add("RECHARGE_LATER");
+  if (/\b(pix|pagamento|pagar|pago|payment)\b/.test(text)) tags.add("PAYMENT_INTENT");
+  if (/\b(posso.*pix|mandar.*pix|chave pix|pix_permission)\b/.test(text)) tags.add("PIX_PERMISSION");
+  if (/\b(condicao especial|condi[cç]ao especial|17[,.]90|negoci|novos clientes)\b/.test(text)) tags.add("HUMAN_NEGOTIATION");
+  if (/\b(caro|15|desconto|barato|condicao|condi[cç]ao)\b/.test(text)) tags.add("PRICE_OBJECTION");
+  if (/\b(condicao especial|promo|17[,.]90|oferta)\b/.test(text)) tags.add("SPECIAL_OFFER");
+  if (/\b(repetiu|saudacao|seja bem vindo|ja usa|primeira vez)\b/.test(text)) tags.add("DO_NOT_REPEAT_GREETING");
+
+  return [...tags];
 }
 
 function inferCustomerAgentEvents(text: string, intent: string, leadProfilePatch: Record<string, unknown>) {

@@ -1273,6 +1273,26 @@ function isFirstTimeProgressQuestion(lastQuestion: string, leadProfile: Record<s
   );
 }
 
+function isRechargeLaterReply(normalized: string) {
+  return (
+    /\b(mais tarde|depois|daqui a pouco|logo mais|quando eu chegar)\b.{0,50}\b(faco|fazer|pago|pagar|recarga|recarrego|recarregar|fecho|fechar|realizo|realizar)\b/.test(normalized) ||
+    /\b(vou|quero)\b.{0,35}\b(fazer|pagar|realizar|fechar|recarregar)\b.{0,50}\b(mais tarde|depois|daqui a pouco|logo mais|quando eu chegar)\b/.test(normalized)
+  );
+}
+
+function isWarmRechargeContext(leadProfile: Record<string, unknown>) {
+  return Boolean(
+    leadProfile.selected_plan ||
+    leadProfile.plano_interesse ||
+    leadProfile.wants_recharge ||
+    leadProfile.asked_price ||
+    leadProfile.asked_screens ||
+    leadProfile.payment_intent_status === "later" ||
+    leadProfile.stage === "pre_sale_recharge_intent" ||
+    leadProfile.customer_stage === "pre_sale_recharge_intent"
+  );
+}
+
 function extractLastQuestionFromText(text: string) {
   const questions = String(text || "").match(/[^?]+\?/g);
   return questions?.at(-1)?.trim() || null;
@@ -1332,6 +1352,21 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
   if (/\b(nao paguei|ainda nao paguei|nao fiz o pagamento|nem paguei|n paguei)\b/.test(normalized)) {
     return {
       reply: "Sem problema. Voc\u00ea quer seguir com o mensal de R$ 25 ou prefere fazer o teste gr\u00e1tis de 3 dias primeiro?"
+    };
+  }
+
+  if (isRechargeLaterReply(normalized) && isWarmRechargeContext(leadProfile)) {
+    return {
+      reply: "Combinado. Vou deixar anotado por aqui e, mais tarde, confirmo com voce se posso te mandar a chave Pix.",
+      leadProfilePatch: {
+        commercial_stage: "pre_sale_recharge_intent",
+        stage: "pre_sale_recharge_intent",
+        payment_intent_status: "later",
+        last_customer_intent: "wants_to_recharge_later",
+        next_expected_reply: "pix_permission_later",
+        next_best_action: "follow_up_4h_pedir_permissao_pix",
+        last_bot_question: "Posso te mandar a chave Pix mais tarde?"
+      }
     };
   }
 

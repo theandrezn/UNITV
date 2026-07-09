@@ -98,6 +98,9 @@ export function inferSpecialistInterventionLocally(input: AnalyzeSpecialistInter
   const monthly = /\bmensal\b/.test(customer);
   const tvbox = /tv box|android tv/.test(customer);
   const alreadyUsed = /ja usei|ja conheco|ja tenho/.test(customer);
+  const rechargeLater = /\b(mais tarde|depois|daqui a pouco|quando eu chegar)\b/.test(customer) &&
+    /\b(faco|fazer|pago|pagar|recarga|fecho|fechar)\b/.test(customer);
+  const specialOffer = /\b(condicao especial|adquirir novos clientes|fechar pra voce|17[,.]90|17[,.]9|3 telas|tres telas)\b/.test(specialist);
   const repeatedQuestion = downloaded && /ja baixou|voce baixou|baixou\?/.test(bot);
   const improperReceipt = notPaid && /comprovante|se ja pagou/.test(bot);
 
@@ -108,7 +111,14 @@ export function inferSpecialistInterventionLocally(input: AnalyzeSpecialistInter
   let pattern = "reconhecer_contexto_e_avancar";
   let nextBestAction = "continuar_conversa_com_pergunta_unica";
 
-  if (downloaded) {
+  if (rechargeLater || specialOffer) {
+    intent = "pre_venda_recarga";
+    stage = "pre_sale_recharge_intent";
+    action = specialOffer ? "ofereceu_condicao_especial_baixa_pressao" : "manteve_venda_aberta";
+    why = "cliente_quente_faria_depois";
+    pattern = "cliente_faz_depois_pedir_permissao_pix_4h";
+    nextBestAction = "agendar_followup_4h_pedir_permissao_pix";
+  } else if (downloaded) {
     intent = "ativacao";
     stage = "ativacao";
     action = "confirmou_proximo_passo";

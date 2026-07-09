@@ -63,6 +63,21 @@ describe("specialist operational learning", () => {
     expect(result.learned_pattern).toBe(pattern);
   });
 
+  it("learns the recharge-later pre-sale pattern from Andre's negotiation", () => {
+    const result = inferSpecialistInterventionLocally({
+      customerLastMessage: "Mais tarde eu faco",
+      botPreviousMessage: "Posso mandar o Pix?",
+      specialistMessage: "Fabio, nos estamos com bastante interesse em adquirir novos clientes, consigo fechar pra voce o plano por 17,90 por 3 Telas, o que voce acha?",
+      conversationExcerpt: "",
+      leadProfile: {}
+    });
+
+    expect(result.inferred_intent).toBe("pre_venda_recarga");
+    expect(result.why_specialist_intervened).toBe("cliente_quente_faria_depois");
+    expect(result.learned_pattern).toBe("cliente_faz_depois_pedir_permissao_pix_4h");
+    expect(result.next_best_action).toBe("agendar_followup_4h_pedir_permissao_pix");
+  });
+
   it("stores an analyzed manual message and updates the learned lead profile", async () => {
     const updateConversationMetadata = vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata }));
     const createExample = vi.fn(async (data) => data);
@@ -146,6 +161,88 @@ describe("specialist operational learning", () => {
         learned_from_specialist: true,
         learned_pattern: "cliente_ja_baixou_ir_para_ativacao",
         next_best_action: "cliente_escolher_teste_ou_plano"
+      })
+    }));
+  });
+
+  it("stores Andre's low-pressure pre-sale negotiation as a reviewable operational example", async () => {
+    const updateConversationMetadata = vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata }));
+    const createExample = vi.fn(async (data) => data);
+    const analyzeSpecialistIntervention = vi.fn(async () => ({
+      inferred_intent: "pre_venda_recarga",
+      inferred_stage: "pre_sale_recharge_intent",
+      inferred_objection: "preco",
+      inferred_customer_state: "cliente_quente_faria_depois",
+      inferred_specialist_action: "ofereceu_condicao_especial_baixa_pressao",
+      why_specialist_intervened: "cliente_quente_faria_depois",
+      style_notes: "Chamou pelo nome, ofereceu condicao especial e manteve baixa pressao.",
+      summary: "Especialista manteve venda aberta.",
+      next_best_action: "agendar_followup_4h_pedir_permissao_pix",
+      learned_pattern: "cliente_faz_depois_pedir_permissao_pix_4h"
+    }));
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", phone: "5511999998888" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({
+          id: "conversation-id",
+          metadata: { lead_profile: { selected_plan: "mensal", requested_screens: 2 } }
+        })),
+        createConversation: vi.fn(),
+        updateConversationMetadata,
+        touchConversation: vi.fn(async () => ({}))
+      } as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+        listMessagesByConversationId: vi.fn(async () => [
+          { role: "customer", content: "Mais tarde eu faco", created_at: "2026-07-09T15:35:00.000Z" },
+          { role: "assistant", content: "?", created_at: "2026-07-09T15:35:30.000Z" }
+        ])
+      } as never,
+      { classify: vi.fn() } as never,
+      { generateCommercialReply: vi.fn() } as never,
+      { sendTextMessage: vi.fn() } as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { createExample } as never,
+      { analyzeSpecialistIntervention } as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "manual-pre-sale-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Fabio",
+        text: "Fabio, nos estamos com bastante interesse em adquirir novos clientes, consigo fechar pra voce o plano por 17,90 por 3 Telas, o que voce acha?",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1783611360,
+        fromMe: true,
+        isGroup: false
+      }
+    });
+
+    expect(createExample).toHaveBeenCalledWith(expect.objectContaining({
+      inferred_intent: "pre_venda_recarga",
+      inferred_stage: "pre_sale_recharge_intent",
+      inferred_specialist_action: "ofereceu_condicao_especial_baixa_pressao",
+      metadata: expect.objectContaining({
+        review_status: "pending_review",
+        learnedPattern: "cliente_faz_depois_pedir_permissao_pix_4h",
+        tags: expect.arrayContaining(["PRE_SALE", "RECHARGE_LATER", "HUMAN_NEGOTIATION", "SPECIAL_OFFER"])
+      })
+    }));
+    expect(updateConversationMetadata).toHaveBeenCalledWith("conversation-id", expect.objectContaining({
+      lead_profile: expect.objectContaining({
+        learned_pattern: "cliente_faz_depois_pedir_permissao_pix_4h",
+        next_best_action: "agendar_followup_4h_pedir_permissao_pix"
       })
     }));
   });

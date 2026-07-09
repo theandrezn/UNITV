@@ -400,6 +400,137 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
+  it("schedules a 4h pre-sale follow-up when a hot recharge lead says they will do it later", async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", name: "Fabio", phone: "5511999998888" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({
+          id: "conversation-id",
+          customer_id: "customer-id",
+          metadata: {
+            lead_profile: {
+              nome: "Fabio",
+              selected_plan: "mensal",
+              asked_price: true,
+              requested_screens: 2
+            },
+            last_bot_message_at: "2026-07-09T15:23:00.000Z"
+          }
+        })),
+        createConversation: vi.fn(),
+        updateConversationMetadata: vi.fn(async (_id, metadata) => {
+          updates.push(metadata);
+          return { id: _id, metadata };
+        }),
+        touchConversation: vi.fn(async () => ({}))
+      } as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+        listMessagesByConversationId: vi.fn(async () => [
+          { role: "customer", content: "Valor de 30 dias", created_at: "2026-07-09T15:22:00.000Z" },
+          { role: "assistant", content: "O mensal esta saindo a R$ 25. Voce ja faz a recarga?", created_at: "2026-07-09T15:23:00.000Z" },
+          { role: "customer", content: "15", created_at: "2026-07-09T15:32:00.000Z" },
+          { role: "customer", content: "E duas telas", created_at: "2026-07-09T15:34:00.000Z" }
+        ])
+      } as never,
+      { classify: vi.fn(async () => ({ intent: "unknown", confidence: 0.8, summary: "vai fazer depois", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({ reply: "Perfeito, deixo anotado por aqui." })) } as never,
+      { sendTextMessage: vi.fn(async () => ({ sent: true })) } as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { createExample: vi.fn() } as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "later-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Fabio",
+        text: "Mais tarde eu faço",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: Date.parse("2026-07-09T15:35:00.000Z") / 1000,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    const finalMetadata = updates.at(-1) || {};
+    expect(finalMetadata).toMatchObject({
+      followup_key: "pre_sale_recharge_later_4h",
+      followup_due_at: "2026-07-09T19:35:00.000Z",
+      customer_stage: "pre_sale_recharge_intent",
+      payment_intent_status: "later",
+      last_detected_intent: "wants_to_recharge_later"
+    });
+    expect(finalMetadata.lead_profile).toMatchObject({
+      nome: "Fabio",
+      selected_plan: "mensal",
+      requested_screens: 2,
+      last_detected_intent: "wants_to_recharge_later",
+      next_best_action: "follow_up_4h_pedir_permissao_pix"
+    });
+  });
+
+  it("does not schedule the 4h pre-sale follow-up for a cold 'mais tarde eu vejo' message", async () => {
+    const updates: Array<Record<string, unknown>> = [];
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", phone: "5511999998888" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", customer_id: "customer-id", metadata: { lead_profile: {} } })),
+        createConversation: vi.fn(),
+        updateConversationMetadata: vi.fn(async (_id, metadata) => {
+          updates.push(metadata);
+          return { id: _id, metadata };
+        }),
+        touchConversation: vi.fn(async () => ({}))
+      } as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+        listMessagesByConversationId: vi.fn(async () => [])
+      } as never,
+      { classify: vi.fn(async () => ({ intent: "unknown", confidence: 0.8, summary: "frio", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({ reply: "Tudo bem, fico por aqui." })) } as never,
+      { sendTextMessage: vi.fn(async () => ({ sent: true })) } as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { createExample: vi.fn() } as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "cold-later-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Mais tarde eu vejo",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: Date.parse("2026-07-09T15:35:00.000Z") / 1000,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(updates.at(-1)).toMatchObject({ followup_key: null, followup_due_at: null });
+  });
+
   it("asks plan preference before showing prices for a broad price question", async () => {
     const { service, plansService } = createChatAgent();
 
@@ -924,6 +1055,42 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toContain("Como e sua primeira vez");
     expect(result.reply).toContain("comecar pelo teste");
     expect(result.reply).not.toContain("Voce ja faz o uso do app");
+  });
+
+  it("keeps pre-sale recharge context when the customer says they will do it later", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Mais tarde eu faco",
+      classification: { intent: "unknown", confidence: 0.8, summary: "vai fazer depois", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            selected_plan: "mensal",
+            asked_price: true,
+            requested_screens: 2
+          }
+        }
+      },
+      recentMessages: [
+        { role: "customer", content: "Valor de 30 dias" },
+        { role: "assistant", content: "O mensal esta saindo a R$ 25." },
+        { role: "customer", content: "E duas telas" }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.reply).toContain("Vou deixar anotado");
+    expect(result.reply).toContain("chave Pix");
+    expect(result.reply).not.toContain("Voce ja faz o uso do app");
+    expect(result.leadProfilePatch).toMatchObject({
+      stage: "pre_sale_recharge_intent",
+      payment_intent_status: "later",
+      last_customer_intent: "wants_to_recharge_later"
+    });
   });
 
   it("answers an ad recharge lead as Andre without sending a menu", async () => {

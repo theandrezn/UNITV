@@ -124,6 +124,222 @@ describe("WhatsappFollowupService", () => {
     expect(renewalFollowup).not.toContain("comprovante");
   });
 
+  it("sends a contextual Pix permission follow-up for pre-sale recharge later with a known name", async () => {
+    const { service, evolutionService } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888", name: "Fabio Cliente" },
+          metadata: {
+            followup_key: "pre_sale_recharge_later_4h",
+            followup_due_at: "2026-07-09T19:35:00.000Z",
+            pre_sale_followup_scheduled_at: "2026-07-09T15:35:00.000Z",
+            last_followup_stage_id: "pre_sale_recharge_later_4h:1783611300000",
+            conversation_stage: "pre_sale_recharge_intent",
+            last_bot_message_at: "2026-07-09T15:36:00.000Z",
+            last_customer_message_at: "2026-07-09T15:35:00.000Z",
+            lead_profile: {
+              nome: "Fabio",
+              selected_plan: "mensal",
+              requested_screens: 2,
+              payment_intent_status: "later"
+            }
+          }
+        }
+      ],
+      {
+        aiReply: null,
+        recentMessages: [
+          { id: "m1", role: "customer", content: "Valor de 30 dias", created_at: "2026-07-09T15:22:00.000Z" },
+          { id: "m2", role: "assistant", content: "O mensal esta saindo a R$ 25.", created_at: "2026-07-09T15:23:00.000Z" },
+          { id: "m3", role: "customer", content: "Mais tarde eu faco", created_at: "2026-07-09T15:35:00.000Z" },
+          { id: "m4", role: "assistant", content: "Perfeito, deixo anotado por aqui.", created_at: "2026-07-09T15:36:00.000Z" }
+        ]
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-09T19:35:00.000Z"));
+
+    expect(result.sent).toBe(1);
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: expect.stringContaining("Fabio")
+    });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: expect.stringContaining("chave Pix")
+    });
+    expect(String((evolutionService.sendTextMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].text)).not.toContain("Voce ja usa");
+  });
+
+  it("does not invent a name in pre-sale recharge later follow-up", async () => {
+    const { service, evolutionService } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888", name: null },
+          metadata: {
+            followup_key: "pre_sale_recharge_later_4h",
+            followup_due_at: "2026-07-09T19:35:00.000Z",
+            pre_sale_followup_scheduled_at: "2026-07-09T15:35:00.000Z",
+            last_bot_message_at: "2026-07-09T15:36:00.000Z",
+            last_customer_message_at: "2026-07-09T15:35:00.000Z",
+            lead_profile: { selected_plan: "mensal" }
+          }
+        }
+      ],
+      {
+        aiReply: null,
+        recentMessages: [
+          { role: "customer", content: "Mais tarde eu faco", created_at: "2026-07-09T15:35:00.000Z" },
+          { role: "assistant", content: "Perfeito.", created_at: "2026-07-09T15:36:00.000Z" }
+        ]
+      }
+    );
+
+    await service.processDueFollowups(new Date("2026-07-09T19:35:00.000Z"));
+
+    const text = String((evolutionService.sendTextMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].text);
+    expect(text).toContain("Boa tarde.");
+    expect(text).not.toContain("Fabio");
+    expect(text).not.toContain("Cliente");
+  });
+
+  it("cancels pre-sale recharge later follow-up when payment is already approved", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "pre_sale_recharge_later_4h",
+            followup_due_at: "2026-07-09T19:35:00.000Z",
+            pre_sale_followup_scheduled_at: "2026-07-09T15:35:00.000Z",
+            last_bot_message_at: "2026-07-09T15:36:00.000Z",
+            last_customer_message_at: "2026-07-09T15:35:00.000Z"
+          }
+        }
+      ],
+      { latestOrder: { id: "order-id", status: "paid" } }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-09T19:35:00.000Z"));
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ followup_cancel_reason: "[PreSaleFollowup] Skipped because payment already approved" })
+    );
+  });
+
+  it("cancels pre-sale recharge later follow-up when Pix was already sent", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "pre_sale_recharge_later_4h",
+            followup_due_at: "2026-07-09T19:35:00.000Z",
+            pre_sale_followup_scheduled_at: "2026-07-09T15:35:00.000Z",
+            last_bot_message_at: "2026-07-09T15:36:00.000Z",
+            last_customer_message_at: "2026-07-09T15:35:00.000Z",
+            lead_profile: { pediu_pix: true }
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { role: "assistant", content: "Segue a chave Pix.", created_at: "2026-07-09T16:00:00.000Z" }
+        ]
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-09T19:35:00.000Z"));
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ followup_cancel_reason: "[PreSaleFollowup] Skipped because Pix was already sent or payment context changed" })
+    );
+  });
+
+  it("cancels pre-sale recharge later follow-up when Andre intervened after scheduling", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "pre_sale_recharge_later_4h",
+            followup_due_at: "2026-07-09T19:35:00.000Z",
+            pre_sale_followup_scheduled_at: "2026-07-09T15:35:00.000Z",
+            last_bot_message_at: "2026-07-09T15:36:00.000Z",
+            last_customer_message_at: "2026-07-09T15:35:00.000Z",
+            last_specialist_message_at: "2026-07-09T15:40:00.000Z"
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { role: "customer", content: "Mais tarde eu faco", created_at: "2026-07-09T15:35:00.000Z" },
+          { role: "human_agent", content: "Vou deixar seu contato salvo aqui.", created_at: "2026-07-09T15:40:00.000Z" }
+        ]
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-09T19:35:00.000Z"));
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ followup_cancel_reason: "[PreSaleFollowup] Skipped because human intervened" })
+    );
+  });
+
+  it("cancels pre-sale recharge later follow-up when customer replied after scheduling", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "pre_sale_recharge_later_4h",
+            followup_due_at: "2026-07-09T19:35:00.000Z",
+            pre_sale_followup_scheduled_at: "2026-07-09T15:35:00.000Z",
+            last_bot_message_at: "2026-07-09T15:36:00.000Z",
+            last_customer_message_at: "2026-07-09T16:00:00.000Z"
+          }
+        }
+      ],
+      {
+        recentMessages: [
+          { role: "customer", content: "Mais tarde eu faco", created_at: "2026-07-09T15:35:00.000Z" },
+          { role: "assistant", content: "Perfeito.", created_at: "2026-07-09T15:36:00.000Z" },
+          { role: "customer", content: "Vou ver com minha esposa", created_at: "2026-07-09T16:00:00.000Z" }
+        ]
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-09T19:35:00.000Z"));
+
+    expect(result.sent).toBe(0);
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ followup_cancel_reason: "[PreSaleFollowup] Skipped because customer replied after schedule" })
+    );
+  });
+
   it("sends a due follow-up once for the current stage", async () => {
     const now = new Date("2026-07-06T12:00:00.000Z");
     const { service, evolutionService, messagesRepository, conversationsRepository } = createService([

@@ -13,6 +13,7 @@ const followupDecisionSchema = z.object({
     "trial_check",
     "download_check",
     "install_check",
+    "pre_sale_recharge_later",
     "reseller_check",
     "support_check"
   ]),
@@ -71,6 +72,7 @@ const SYSTEM_PROMPT = [
   "Se humano esta conduzindo ou cliente disse que avisaria se tivesse problema, cancele ou reprograme.",
   "Se for revenda, nao use fluxo de cliente final.",
   "Se pagamento estiver pago/confirmado, nao cobre Pix.",
+  "Se for pre-venda em que o cliente disse que faria depois, lembre o combinado e peça permissao para enviar Pix; nao reinicie a saudacao nem liste planos.",
   "Mensagens devem ser curtas, humanas e com no maximo uma pergunta."
 ].join("\n");
 
@@ -186,8 +188,48 @@ export function decideFollowupDeterministically(context: FollowupContext): Follo
     );
   }
 
+  if (followupKey === "pre_sale_recharge_later_4h" && (latestOrderStatus === "paid" || latestOrderStatus === "confirmed" || profile.codigo_enviado === true)) {
+    return cancelDecision("[PreSaleFollowup] Skipped because payment already approved", "Nao deve pedir Pix apos pagamento aprovado ou codigo enviado.", ["payment_status=paid/confirmed"], "paid", 0.99);
+  }
+
   if (latestOrderStatus === "paid" || latestOrderStatus === "confirmed" || profile.codigo_enviado === true) {
     return cancelDecision("Pagamento ja foi confirmado ou codigo ja foi enviado.", "Nao deve cobrar Pix apos pagamento confirmado.", ["payment_status=paid/confirmed"], "paid", 0.99);
+  }
+
+  if (followupKey === "pre_sale_recharge_later_4h") {
+    const preSaleChange = getPreSaleContextChangeAfterSchedule(context);
+    if (preSaleChange) {
+      return cancelDecision(
+        preSaleChange === "human"
+          ? "[PreSaleFollowup] Skipped because human intervened"
+          : "[PreSaleFollowup] Skipped because customer replied after schedule",
+        "Cliente ou especialista falou depois do agendamento; worker deve reler contexto e nao atropelar.",
+        collectEvidence(context, ["mais tarde", "depois", "pix", "pronto", "vou deixar"]),
+        "pre_sale_recharge_intent",
+        0.98
+      );
+    }
+
+    if (hasPixOrPaymentInstructionContext(context)) {
+      return cancelDecision(
+        "[PreSaleFollowup] Skipped because Pix was already sent or payment context changed",
+        "Historico ja contem Pix, pedido pendente ou instrucao de pagamento.",
+        collectEvidence(context, ["pix", "chave", "qr code", "copia e cola"]),
+        "awaiting_payment",
+        0.98
+      );
+    }
+
+    return sendDecision({
+      type: "pre_sale_recharge_later",
+      reason: "[PreSaleFollowup] Generated contextual Pix permission message",
+      summary: "Cliente demonstrou interesse real em recarga/plano e disse que faria mais tarde.",
+      evidence: collectEvidence(context, ["mais tarde", "depois", "valor", "30 dias", "telas", "recarga"]),
+      message: buildPreSaleRechargeLaterMessage(context),
+      stage: "pre_sale_recharge_intent",
+      key: "pre_sale_recharge_later_4h",
+      confidence: 0.94
+    });
   }
 
   if (followupKey === "pix" || followupKey === "payment_choice" || followupKey === "payment_check") {
@@ -413,11 +455,71 @@ function buildTrialRecoveryMessage(context: FollowupContext, recoveryStep: numbe
     : "Ultima tentativa por aqui hoje: quer que eu deixe o teste de 3 dias encaminhado pra voce?";
 }
 
+function buildPreSaleRechargeLaterMessage(context: FollowupContext) {
+  const firstName = readFirstName(context.lead_profile.nome || context.latest_customer_message?.metadata?.pushName);
+  const greeting = getBrazilianDayPeriodGreeting(context.now);
+  const hasSpecialOffer = Boolean(context.lead_profile.special_promo_offer || context.lead_profile.negotiated_price_cents);
+  const prefix = firstName ? `${greeting}, ${firstName}.` : `${greeting}.`;
+
+  if (hasSpecialOffer) {
+    return `${prefix} Ainda consigo manter aquela condicao especial pra voce. Posso te mandar a chave Pix?`;
+  }
+
+  return `${prefix} Posso te mandar a chave Pix pra deixar sua recarga pronta?`;
+}
+
+function getPreSaleContextChangeAfterSchedule(context: FollowupContext): "customer" | "human" | null {
+  const scheduledAt = dateValue(context.metadata.pre_sale_followup_scheduled_at);
+  if (!scheduledAt) {
+    return null;
+  }
+
+  const customerAt = dateValue(context.latest_customer_message?.created_at);
+  const humanAt = dateValue(context.latest_human_message?.created_at || context.metadata.last_specialist_message_at);
+  if (humanAt && humanAt > scheduledAt + 1000) return "human";
+  if (customerAt && customerAt > scheduledAt + 1000) return "customer";
+  return null;
+}
+
+function hasPixOrPaymentInstructionContext(context: FollowupContext) {
+  const profile = context.lead_profile || {};
+  const text = normalize(context.recent_messages.map((message) => message.content || "").join("\n"));
+  const orderStatus = String(context.open_order?.status || context.latest_order?.status || "");
+  return Boolean(
+    profile.pediu_pix ||
+    profile.pix_code ||
+    profile.payment_method === "pix" ||
+    /\b(chave pix|pix copia|copia e cola|qr code|pagamento gerado|ja te mandei o pix)\b/.test(text) ||
+    (["draft", "pending_payment", "manual_review", "receipt_under_review"].includes(orderStatus) && String(context.open_order?.payment_method || profile.payment_method || "") === "pix")
+  );
+}
+
+function getBrazilianDayPeriodGreeting(now: string) {
+  const date = new Date(now);
+  if (Number.isNaN(date.getTime())) {
+    return "Boa tarde";
+  }
+  const hour = Number(new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    hour12: false
+  }).format(date));
+  if (hour < 12) return "Bom dia";
+  if (hour < 18) return "Boa tarde";
+  return "Boa noite";
+}
+
 function readFirstName(value: unknown) {
   if (typeof value !== "string") {
     return "";
   }
   return value.trim().split(/\s+/)[0]?.replace(/[^\p{L}'-]/gu, "") || "";
+}
+
+function dateValue(value: unknown) {
+  if (typeof value !== "string") return 0;
+  const date = new Date(value).getTime();
+  return Number.isNaN(date) ? 0 : date;
 }
 
 function distantTrialDue(now: string) {
@@ -439,7 +541,7 @@ function toJsonSchema() {
     additionalProperties: false,
     properties: {
       should_send_followup: { type: "boolean" },
-      followup_type: { type: "string", enum: ["none", "values_check", "plan_choice", "payment_check", "trial_check", "download_check", "install_check", "reseller_check", "support_check"] },
+      followup_type: { type: "string", enum: ["none", "values_check", "plan_choice", "payment_check", "trial_check", "download_check", "install_check", "pre_sale_recharge_later", "reseller_check", "support_check"] },
       reason: { type: "string" },
       conversation_summary: { type: "string" },
       evidence: { type: "array", items: { type: "string" } },
