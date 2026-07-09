@@ -249,12 +249,16 @@ export function decideFollowupDeterministically(context: FollowupContext): Follo
     });
   }
 
-  if (followupKey === "download" || followupKey === "install") {
+  if (followupKey === "download" || followupKey === "install" || followupKey === "post_download_check_10min") {
     const passwordContext = /\b(senha|criar uma senha|formato da senha)\b/.test(textWindow);
-    const message = buildInstallFollowupMessage(textWindow, passwordContext);
+    const message = followupKey === "post_download_check_10min"
+      ? buildPostDownloadFollowupMessage(context)
+      : buildInstallFollowupMessage(textWindow, passwordContext);
     return sendDecision({
       type: passwordContext ? "install_check" : "download_check",
-      reason: "Cliente ainda nao confirmou conclusao da etapa de instalacao.",
+      reason: followupKey === "post_download_check_10min"
+        ? "Cliente recebeu instrucoes de download e ainda nao confirmou se conseguiu baixar."
+        : "Cliente ainda nao confirmou conclusao da etapa de instalacao.",
       summary: passwordContext ? "Cliente estava criando senha no app." : "Cliente estava no fluxo de download/instalacao.",
       evidence: collectEvidence(context, passwordContext ? ["senha"] : ["baixar", "instalar", "app"]),
       message,
@@ -293,6 +297,13 @@ export function decideFollowupDeterministically(context: FollowupContext): Follo
   }
 
   return cancelDecision("Contexto insuficiente para follow-up automatico.", "Sem proxima acao automatica segura.", [], null, 0.78);
+}
+
+function buildPostDownloadFollowupMessage(context: FollowupContext) {
+  const device = normalize(String(context.lead_profile.device || context.metadata.device || context.lead_profile.aparelho || context.metadata.device_detected || ""));
+  if (/\b(android_phone|celular|telefone)\b/.test(device)) return "Voce conseguiu baixar no celular Android?";
+  if (/\b(tvbox_android|tv box|tvbox)\b/.test(device)) return "Voce conseguiu baixar na TV Box?";
+  return "Voce conseguiu baixar?";
 }
 
 function sendDecision(input: {

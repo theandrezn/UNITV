@@ -103,27 +103,30 @@ describe("WhatsappFollowupService", () => {
     expect(buildFollowupText({ followup_key: "welcome_activation" })).toBe(
       "Voce prefere fazer o teste gratis ou quer ativar o mensal?"
     );
-    const downloadFollowup = buildFollowupText({ followup_key: "download", device: "TV Box / Android TV" });
-    expect(downloadFollowup).toContain("Conseguiu instalar na TV Box");
-    expect(downloadFollowup.trim().endsWith(".")).toBe(true);
+    const downloadFollowup = buildFollowupText({ followup_key: "post_download_check_10min", device: "TV Box / Android TV" });
+    expect(downloadFollowup).toBe("Voce conseguiu baixar na TV Box?");
+    expect(downloadFollowup.trim().endsWith("?")).toBe(true);
     expect(buildFollowupText({ followup_key: "download", device: "android_tv_google_tv" })).toContain("Play Store");
-    expect(buildFollowupText({ followup_key: "download", device: "android_phone" })).toBe("Voce conseguiu baixar?");
+    expect(buildFollowupText({ followup_key: "post_download_check_10min", device: "android_phone" })).toBe("Voce conseguiu baixar no celular Android?");
+    expect(buildFollowupText({ followup_key: "post_download_check_10min", device: "unknown" })).toBe("Voce conseguiu baixar?");
     expect(buildFollowupText({ followup_key: "download", device: "firestick" })).toContain("862585");
     expect(buildFollowupText({ followup_key: "install", device: "unknown" })).toContain("Android ou Play Store?");
     expect(buildUnansweredCustomerFallbackText({ followup_key: "download", conversation_stage: "instalacao" }, "Ok")).toBe("Conseguiu avancar?");
   });
 
-  it("sends Android download follow-up only after the 5 minute due time", async () => {
+  it("sends Android download follow-up only after the 10 minute due time", async () => {
     const conversation = {
       id: "conversation-id",
       customer_id: "customer-id",
       customers: { id: "customer-id", phone: "5511999998888" },
       metadata: {
-        followup_key: "download",
-        followup_due_at: "2026-07-09T14:05:00.000Z",
+        followup_key: "post_download_check_10min",
+        followup_type: "post_download_check_10min",
+        followup_due_at: "2026-07-09T14:10:00.000Z",
         followup_count: 0,
-        last_followup_stage_id: "download:stage",
+        last_followup_stage_id: "post_download_check_10min:stage",
         last_bot_message_at: "2026-07-09T14:00:00.000Z",
+        last_bot_download_message_at: "2026-07-09T14:00:00.000Z",
         conversation_stage: "instalacao",
         awaiting_customer_action: "confirm_download",
         device: "android_phone",
@@ -139,16 +142,16 @@ describe("WhatsappFollowupService", () => {
       recentMessages: [
         { role: "assistant", content: "Baixe por aqui: https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file" }
       ],
-      aiReply: "Voce conseguiu baixar?"
+      aiReply: "Voce conseguiu baixar no celular Android?"
     });
 
-    expect(await service.processDueFollowups(new Date("2026-07-09T14:04:59.000Z"))).toMatchObject({ sent: 0 });
+    expect(await service.processDueFollowups(new Date("2026-07-09T14:09:59.000Z"))).toMatchObject({ sent: 0 });
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
 
-    expect(await service.processDueFollowups(new Date("2026-07-09T14:05:00.000Z"))).toMatchObject({ checked: 1, sent: 1 });
+    expect(await service.processDueFollowups(new Date("2026-07-09T14:10:00.000Z"))).toMatchObject({ checked: 1, sent: 1 });
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
-      text: "Voce conseguiu baixar?"
+      text: "Voce conseguiu baixar no celular Android?"
     });
   });
 
@@ -159,11 +162,12 @@ describe("WhatsappFollowupService", () => {
         customer_id: "customer-id",
         customers: { id: "customer-id", phone: "5511999998888" },
         metadata: {
-          followup_key: "download",
-          followup_due_at: "2026-07-09T14:05:00.000Z",
+          followup_key: "post_download_check_10min",
+          followup_due_at: "2026-07-09T14:10:00.000Z",
           followup_count: 0,
-          last_followup_stage_id: "download:stage",
+          last_followup_stage_id: "post_download_check_10min:stage",
           last_bot_message_at: "2026-07-09T14:00:00.000Z",
+          last_bot_download_message_at: "2026-07-09T14:00:00.000Z",
           last_customer_message_at: "2026-07-09T14:03:00.000Z",
           conversation_stage: "instalacao",
           awaiting_customer_action: "confirm_download",
@@ -177,8 +181,100 @@ describe("WhatsappFollowupService", () => {
       }
     ]);
 
-    expect(await service.processDueFollowups(new Date("2026-07-09T14:05:00.000Z"))).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(await service.processDueFollowups(new Date("2026-07-09T14:10:00.000Z"))).toEqual({ checked: 1, sent: 0, skipped: 1 });
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not send post-download follow-up when a human replied after the download", async () => {
+    const { service, evolutionService } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888" },
+        metadata: {
+          followup_key: "post_download_check_10min",
+          followup_due_at: "2026-07-09T14:10:00.000Z",
+          followup_count: 0,
+          last_followup_stage_id: "post_download_check_10min:stage",
+          last_bot_message_at: "2026-07-09T14:00:00.000Z",
+          last_bot_download_message_at: "2026-07-09T14:00:00.000Z",
+          last_specialist_message_at: "2026-07-09T14:04:00.000Z",
+          conversation_stage: "instalacao",
+          device: "android_phone",
+          lead_profile: { device: "android_phone", stage: "download_instructions", download_status: "link_sent" }
+        }
+      }
+    ], {
+      recentMessages: [
+        { role: "assistant", content: "Baixe por aqui: https://www.mediafire.com/app.apk", created_at: "2026-07-09T14:00:00.000Z" },
+        { role: "human_agent", content: "Vou te ajudar por aqui", created_at: "2026-07-09T14:04:00.000Z" }
+      ]
+    });
+
+    expect(await service.processDueFollowups(new Date("2026-07-09T14:10:00.000Z"))).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not send post-download follow-up after payment or Pix stage", async () => {
+    const { service, evolutionService } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888" },
+        metadata: {
+          followup_key: "post_download_check_10min",
+          followup_due_at: "2026-07-09T14:10:00.000Z",
+          followup_count: 0,
+          last_followup_stage_id: "post_download_check_10min:stage",
+          last_bot_message_at: "2026-07-09T14:00:00.000Z",
+          last_bot_download_message_at: "2026-07-09T14:00:00.000Z",
+          conversation_stage: "pagamento_pix",
+          device: "android_phone",
+          lead_profile: { device: "android_phone", stage: "pagamento_pix", download_status: "link_sent" }
+        }
+      }
+    ], {
+      recentMessages: [
+        { role: "assistant", content: "Baixe por aqui: https://www.mediafire.com/app.apk", created_at: "2026-07-09T14:00:00.000Z" }
+      ]
+    });
+
+    expect(await service.processDueFollowups(new Date("2026-07-09T14:10:00.000Z"))).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("personalizes post-download follow-up for TV Box and keeps unknown generic", async () => {
+    const { service, evolutionService } = createService([
+      {
+        id: "tvbox-conversation",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "5511999998888" },
+        metadata: {
+          followup_key: "post_download_check_10min",
+          followup_due_at: "2026-07-09T14:10:00.000Z",
+          followup_count: 0,
+          last_followup_stage_id: "post_download_check_10min:tvbox",
+          last_bot_message_at: "2026-07-09T14:00:00.000Z",
+          last_bot_download_message_at: "2026-07-09T14:00:00.000Z",
+          conversation_stage: "instalacao",
+          device: "tvbox_android",
+          lead_profile: { device: "tvbox_android", stage: "download_instructions", download_status: "link_sent" }
+        }
+      }
+    ], {
+      recentMessages: [
+        { role: "assistant", content: "APK TV Box: https://www.mediafire.com/app.apk", created_at: "2026-07-09T14:00:00.000Z" }
+      ],
+      aiReply: "Voce conseguiu baixar na TV Box?"
+    });
+
+    expect(await service.processDueFollowups(new Date("2026-07-09T14:10:00.000Z"))).toMatchObject({ sent: 1 });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "Voce conseguiu baixar na TV Box?"
+    });
+
+    expect(buildFollowupText({ followup_key: "post_download_check_10min" })).toBe("Voce conseguiu baixar?");
   });
 
   it("uses renewal wording after values when the customer wants recarga", () => {

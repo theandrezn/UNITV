@@ -36,6 +36,7 @@ import {
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
 const CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
+const POST_DOWNLOAD_FOLLOWUP_DELAY_MS = 10 * 60 * 1000;
 const RESPONSE_INTENT_LOCK_MS = 30 * 60 * 1000;
 const PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY = "pre_sale_recharge_later_4h";
 const PRE_SALE_RECHARGE_LATER_DELAY_MS = 4 * 60 * 60 * 1000;
@@ -1773,16 +1774,48 @@ function buildFollowupState(
     };
   }
 
+  if (
+    key === "post_download_check_10min" &&
+    metadata?.followup_key === "post_download_check_10min" &&
+    typeof metadata.followup_due_at === "string"
+  ) {
+    return {
+      followup_key: "post_download_check_10min",
+      followup_due_at: metadata.followup_due_at,
+      followup_sent_at: metadata.followup_sent_at || null,
+      followup_sent_stage_id: metadata.followup_sent_stage_id || null,
+      followup_count: Number(metadata.followup_count || 0),
+      last_followup_stage_id: metadata.last_followup_stage_id || `post_download_check_10min:${now.getTime()}`,
+      awaiting_customer_action: metadata.awaiting_customer_action || "confirm_download",
+      conversation_stage: metadata.conversation_stage || "instalacao",
+      followup_type: "post_download_check_10min",
+      context_stage: metadata.context_stage || "download_sent",
+      created_reason: metadata.created_reason || "download instructions sent",
+      last_bot_download_message_at: metadata.last_bot_download_message_at || now.toISOString(),
+      plan_interest: metadata.plan_interest || null,
+      device: metadata.device || (metadata.lead_profile && typeof metadata.lead_profile === "object"
+        ? (metadata.lead_profile as Record<string, unknown>).device || (metadata.lead_profile as Record<string, unknown>).aparelho || null
+        : null)
+    };
+  }
+
   const stageId = `${intent || "conversation"}:${key}:${now.getTime()}`;
+  const isPostDownload = key === "post_download_check_10min";
   return {
     followup_key: key,
-    followup_due_at: new Date(now.getTime() + CUSTOMER_FOLLOWUP_DELAY_MS).toISOString(),
+    followup_due_at: new Date(now.getTime() + (isPostDownload ? POST_DOWNLOAD_FOLLOWUP_DELAY_MS : CUSTOMER_FOLLOWUP_DELAY_MS)).toISOString(),
     followup_sent_at: null,
     followup_sent_stage_id: null,
     followup_count: 0,
     last_followup_stage_id: stageId,
     awaiting_customer_action: inferAwaitingAction(key),
     conversation_stage: inferConversationStage(intent, key),
+    ...(isPostDownload ? {
+      followup_type: "post_download_check_10min",
+      context_stage: "download_sent",
+      created_reason: "download instructions sent",
+      last_bot_download_message_at: now.toISOString()
+    } : {}),
     plan_interest: metadata?.lead_profile && typeof metadata.lead_profile === "object"
       ? (metadata.lead_profile as Record<string, unknown>).plano_interesse || metadata.plan_interest || null
       : metadata?.plan_interest || null,
@@ -2137,7 +2170,9 @@ function inferFollowupKey(
   intent: string
 ) {
   const reply = output.reply.toLowerCase();
-  if (/mediafire\.com|baixe por aqui|download|baixar|apk|downloader/i.test(output.reply)) return "download";
+  if (/mediafire\.com|baixe por aqui|download|baixar|apk|downloader|tutorial|youtube\.com|voce prefere instalar pelo link ou pelo downloader|você prefere instalar pelo link ou pelo downloader/i.test(output.reply)) {
+    return "post_download_check_10min";
+  }
   if (intent === "greeting") return "welcome_activation";
   if (output.copyText || output.media) return "pix";
   if (intent === "pix_payment") {
@@ -2170,6 +2205,7 @@ function inferAwaitingAction(key: string) {
     plan_choice: "choose_plan",
     payment_choice: "choose_payment_method",
     download: "confirm_download",
+    post_download_check_10min: "confirm_download",
     install: "install_app",
     test: "confirm_test",
     pix: "send_proof",
@@ -2186,7 +2222,7 @@ function inferConversationStage(intent: string, key: string) {
   if (key === "payment_choice") return "pagamento";
   if (key === "welcome_activation") return "boas_vindas";
   if (key === "proof") return "aguardando_comprovante";
-  if (key === "download" || key === "install") return "instalacao";
+  if (key === "download" || key === "install" || key === "post_download_check_10min") return "instalacao";
   if (key === "test") return "teste";
   if (key === "values" || key === "plan_choice") return "valores";
   if (intent === "human_help") return "humano";

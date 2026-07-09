@@ -183,14 +183,19 @@ export class WhatsappFollowupService {
         entity_id: conversation.id,
         metadata: {
           should_send_followup: policy.shouldSend,
-          followup_type: decision.followup_type,
+          followup_type: metadata.followup_type || decision.followup_type,
+          scheduled_for: metadata.followup_due_at || null,
+          device_detected: metadata.device || context.lead_profile.device || context.lead_profile.aparelho || null,
           reason: policy.reason || decision.reason,
+          cancelled_reason: policy.shouldSend ? null : policy.reason || decision.reason,
           evidence: decision.evidence,
           cancel_reason: policy.shouldSend ? null : policy.reason || decision.reason,
           dedupe_key: policy.dedupeKey,
           duplicate_blocked: policy.duplicateBlocked,
           previous_followup_key: metadata.followup_key,
           new_followup_key: decision.new_followup_key,
+          last_customer_message_at: context.latest_customer_message?.created_at || metadata.last_customer_message_at || null,
+          last_bot_download_message_at: metadata.last_bot_download_message_at || null,
           last_customer_message_id: context.latest_customer_message?.id || context.latest_customer_message?.external_message_id || null,
           last_human_message_at: context.latest_human_message?.created_at || metadata.last_specialist_message_at || null,
           human_hold_active: context.human_hold_active,
@@ -621,6 +626,13 @@ function validateFollowupPolicy(context: FollowupContext, decision: FollowupDeci
     return { shouldSend: false, message: null, dedupeKey, reason: "human_hold_active", duplicateBlocked: false };
   }
 
+  if ((decision.new_followup_key || context.followup_key) === "post_download_check_10min") {
+    const postDownloadValidation = validatePostDownloadFollowupContext(context);
+    if (!postDownloadValidation.valid) {
+      return { shouldSend: false, message: null, dedupeKey, reason: postDownloadValidation.reason, duplicateBlocked: false };
+    }
+  }
+
   if (inProcessDedupeKeys.has(dedupeKey) || context.metadata.followup_dedupe_key === dedupeKey) {
     return { shouldSend: false, message: null, dedupeKey, reason: "duplicate_dedupe_key", duplicateBlocked: true };
   }
@@ -654,6 +666,37 @@ function validateFollowupPolicy(context: FollowupContext, decision: FollowupDeci
   }
 
   return { shouldSend: true, message, dedupeKey, reason: null, duplicateBlocked: false };
+}
+
+function validatePostDownloadFollowupContext(context: FollowupContext) {
+  const latestBotText = normalizeFollowupText(context.latest_bot_message?.content || "");
+  const stage = normalizeFollowupText([
+    context.metadata.conversation_stage,
+    context.lead_profile.stage,
+    context.lead_profile.commercial_stage,
+    context.lead_profile.payment_status,
+    context.open_order?.status,
+    context.latest_order?.status
+  ].join(" "));
+  const lastBotDownloadAt = context.metadata.last_bot_download_message_at || context.metadata.last_bot_message_at;
+
+  if (!/\b(mediafire|apk|download|baixar|baixe|downloader|862585|tutorial|youtube|instalar|instalacao)\b/.test(latestBotText)) {
+    return { valid: false, reason: "last_bot_message_not_download" };
+  }
+
+  if (isAfter(context.latest_customer_message?.created_at || context.metadata.last_customer_message_at, lastBotDownloadAt)) {
+    return { valid: false, reason: "customer_replied_after_download" };
+  }
+
+  if (isAfter(context.latest_human_message?.created_at || context.metadata.last_specialist_message_at, lastBotDownloadAt)) {
+    return { valid: false, reason: "human_replied_after_download" };
+  }
+
+  if (/(^|[\s_-])(pagamento|payment|pix|aguardando_pix|paid|approved|approved_by_human|codigo|ativacao|human_support|humano|sale_closed|venda)(?=$|[\s_-])/.test(stage)) {
+    return { valid: false, reason: "stage_changed_after_download" };
+  }
+
+  return { valid: true, reason: null };
 }
 
 export function validateFollowupAgainstConversationContext(context: FollowupContext, scheduledFollowup: FollowupDecision): {
@@ -1132,12 +1175,22 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
     return `${prefix} Posso te mandar a chave Pix pra deixar sua recarga pronta?`;
   }
 
-  if (key === "download" || key === "install") {
+  if (key === "post_download_check_10min") {
     if (/android_phone|celular/i.test(device)) {
-      return "Voce conseguiu baixar?";
+      return "Voce conseguiu baixar no celular Android?";
     }
     if (/tvbox_android|tv box/i.test(device)) {
-      return "Conseguiu instalar na TV Box? Se travou, me diga se foi no link APK ou no Downloader.";
+      return "Voce conseguiu baixar na TV Box?";
+    }
+    return "Voce conseguiu baixar?";
+  }
+
+  if (key === "download" || key === "install") {
+    if (/android_phone|celular/i.test(device)) {
+      return "Voce conseguiu baixar no celular Android?";
+    }
+    if (/tvbox_android|tv box/i.test(device)) {
+      return "Voce conseguiu baixar na TV Box?";
     }
     if (/android_tv_google_tv|android tv|google tv/i.test(device)) {
       return "Conseguiu encontrar o Downloader na Play Store da TV?";
@@ -1181,7 +1234,7 @@ export function buildUnansweredCustomerFallbackText(metadata: Record<string, unk
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
-  if (key === "download" || key === "install" || stage === "instalacao") {
+  if (key === "download" || key === "install" || key === "post_download_check_10min" || stage === "instalacao") {
     const lastQuestion = normalizeFollowupText(String(leadProfile.last_bot_question || metadata.last_bot_question || ""));
     if (/\b(downloader|aftvnews|after news|play store|playstore)\b/.test(lastQuestion)) {
       return "Conseguiu baixar o Downloader na Play Store?";
@@ -1284,6 +1337,10 @@ function getUnansweredCustomerFollowup(metadata: Record<string, unknown>, now: D
 
 function getUnansweredBotFollowup(metadata: Record<string, unknown>, now: Date) {
   if (!hasFollowupIntent(metadata)) {
+    return null;
+  }
+
+  if (metadata.followup_key === "post_download_check_10min") {
     return null;
   }
 

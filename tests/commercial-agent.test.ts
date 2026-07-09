@@ -2903,7 +2903,8 @@ describe("commercial WhatsApp agent", () => {
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        followup_key: "download",
+        followup_key: "post_download_check_10min",
+        followup_type: "post_download_check_10min",
         awaiting_customer_action: "confirm_download",
         conversation_stage: "instalacao",
         followup_due_at: expect.any(String)
@@ -2912,6 +2913,79 @@ describe("commercial WhatsApp agent", () => {
     expect(conversationsRepository.updateConversationMetadata).not.toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({ followup_key: "welcome_activation" })
+    );
+  });
+
+  it("does not duplicate an active post-download follow-up when another download message is sent", async () => {
+    const existingDueAt = "2026-07-09T14:10:00.000Z";
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({
+        id: "conversation-id",
+        metadata: {
+          followup_key: "post_download_check_10min",
+          followup_type: "post_download_check_10min",
+          followup_due_at: existingDueAt,
+          followup_count: 0,
+          last_followup_stage_id: "post_download_check_10min:existing",
+          awaiting_customer_action: "confirm_download",
+          conversation_stage: "instalacao",
+          last_bot_download_message_at: "2026-07-09T14:00:00.000Z",
+          lead_profile: { device: "android_phone", stage: "download_instructions" }
+        }
+      })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      conversationsRepository as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        listMessagesByConversationId: vi.fn(async () => []),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      { classify: vi.fn(async () => ({ intent: "technical_support", confidence: 1, summary: "download", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({
+        reply: "Baixe por aqui:\nhttps://www.mediafire.com/app.apk\n\nVoce prefere instalar pelo link ou pelo Downloader?",
+        leadProfilePatch: { device: "android_phone", stage: "download_instructions", download_status: "link_sent" }
+      })) } as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "android-link-duplicate-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Baixe por aqui:\nhttps://www.mediafire.com/app.apk\n\nVoce prefere instalar pelo link ou pelo Downloader?",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: true,
+        isGroup: false
+      }
+    });
+
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_key: "post_download_check_10min",
+        followup_due_at: existingDueAt,
+        last_followup_stage_id: "post_download_check_10min:existing",
+        followup_count: 0,
+        awaiting_customer_action: "confirm_download"
+      })
     );
   });
 
@@ -2975,9 +3049,11 @@ describe("commercial WhatsApp agent", () => {
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        followup_key: "download",
+        followup_key: "post_download_check_10min",
+        followup_type: "post_download_check_10min",
         awaiting_customer_action: "confirm_download",
         last_bot_message_at: expect.any(String),
+        last_bot_download_message_at: expect.any(String),
         requires_human: true,
         lead_profile: expect.objectContaining({
           last_bot_question: "Seu celular é Android?"
