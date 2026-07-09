@@ -30,6 +30,7 @@ describe("IntentClassifierService", () => {
     ["Olá! Posso ter mais informações sobre isso?", "greeting"],
     ["Tenho interesse", "greeting"],
     ["quero fazer teste gratis", "free_trial"],
+    ["Oferece ?", "free_trial"],
     ["Quanto", "ask_price"],
     ["quanto custa o mensal?", "ask_price"],
     ["quero comprar um codigo", "buy_plan"],

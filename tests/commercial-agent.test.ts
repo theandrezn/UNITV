@@ -1117,6 +1117,37 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("Comprar agora");
   });
 
+  it("answers short 'oferece?' as free-trial context without human handoff", async () => {
+    const { service, agentActionsService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Oferece ?",
+      classification: { intent: "free_trial", confidence: 0.95, summary: "pergunta se oferece teste", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            wants_test: true,
+            last_customer_answer: "Teste"
+          }
+        }
+      },
+      recentMessages: [
+        { role: "customer", content: "Teste" },
+        { role: "assistant", content: "Claro. O teste gratis e de 3 dias." }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.reply).toContain("teste");
+    expect(result.reply).toContain("3 dias");
+    expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
+    );
+  });
+
   it("answers payment question without a selectable menu", async () => {
     const { service } = createChatAgent();
 

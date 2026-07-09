@@ -181,6 +181,10 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     return fixedClassification("free_trial", "Cliente pediu teste grÃ¡tis.");
   }
 
+  if (/^(oferece|oferecem|oferece isso|voces oferecem|voc[eÃª]s oferecem)[!?.,\s]*$/.test(text)) {
+    return fixedClassification("free_trial", "Cliente perguntou se o teste/oferta esta disponivel.");
+  }
+
   if (/\b(quantas telas|2 telas|duas telas|telas?)\b/.test(text)) {
     return fixedClassification("unknown", "Cliente perguntou sobre telas.");
   }
