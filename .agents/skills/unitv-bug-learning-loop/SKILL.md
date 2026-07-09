@@ -1,6 +1,6 @@
 ---
 name: unitv-bug-learning-loop
-description: Use sempre que o usuario mostrar um bug real do agente UNITV, print de conversa, mensagem fora de contexto, regressao, handoff indevido, follow-up errado ou comportamento comercial ruim.
+description: Use obrigatoriamente em qualquer bug real, print de WhatsApp, investigacao de causa raiz, comportamento fora de contexto, regressao, handoff indevido, follow-up errado, pergunta repetida, saudacao reiniciada, perda de estado, erro comercial ou pedido do usuario para analisar bug do agente UNITV, mesmo quando ele pedir apenas investigacao sem implementar.
 ---
 
 # UNITV Bug Learning Loop
@@ -18,6 +18,8 @@ Todo bug precisa virar:
 ## Quando usar
 
 Use quando o usuario mencionar bug, erro, sem contexto, mensagem aleatoria, handoff desnecessario, suporte humano sem necessidade, follow-up errado, pergunta repetida, etapa voltando, cliente mal conduzido ou print do WhatsApp com comportamento ruim.
+
+Use tambem quando o usuario pedir somente auditoria ou investigacao de um bug antigo. Nesse modo, nao implemente codigo; entregue causa raiz provavel, arquivo/funcao responsavel, teste de regressao esperado e regra do Obsidian.
 
 ## Processo obrigatorio
 
@@ -90,6 +92,17 @@ Use a skill `unitv-obsidian-updater`. Registre caso real, por que estava errado,
 ### 8. Validar
 
 Use a skill `unitv-deploy-verifier`. Rode testes relevantes, build/typecheck/lint quando existirem e validacao manual quando possivel.
+
+## Skills que devem ser combinadas
+
+Para bug real completo, usar tambem:
+
+- `unitv-conversation-state-guardian`;
+- `unitv-regression-test-writer`;
+- `unitv-obsidian-updater`;
+- `unitv-deploy-verifier`.
+
+Para investigacao sem implementar, usar as tres primeiras, mas nao alterar codigo.
 
 ## Bugs reais conhecidos
 

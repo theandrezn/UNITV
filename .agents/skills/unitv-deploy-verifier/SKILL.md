@@ -1,6 +1,6 @@
 ---
 name: unitv-deploy-verifier
-description: Use antes de afirmar que algo esta corrigido, pronto, publicado, implantado, rodando, com testes passando, worker online, PM2 recarregado ou health checks ok no projeto UNITV Agent.
+description: Use obrigatoriamente antes de afirmar que algo esta corrigido, pronto, validado, publicado, implantado, rodando, com testes passando, worker online, PM2 recarregado ou health checks ok; use tambem para auditoria de governanca, AGENTS.md e skills do UNITV Agent.
 ---
 
 # UNITV Deploy Verifier
@@ -27,6 +27,13 @@ Detectar scripts reais no `package.json`. Rodar conforme disponivel:
 - `npm run lint`
 
 Nao inventar comando se nao existir.
+
+Para este projeto, a validacao padrao quando houver mudanca versionada e:
+
+1. `npm run typecheck`
+2. `npm run lint`
+3. `npm test`
+4. `npm run build`
 
 ## Validacoes de bug
 
@@ -55,7 +62,7 @@ Quando bug exigiu aprendizado, verificar se o arquivo foi atualizado e se tem ca
 
 ## Validacao de deploy em VPS
 
-Se o usuario pediu deploy real e o ambiente permitir acesso:
+Se a mudanca afeta runtime do app ou o usuario pediu deploy real e o ambiente permitir acesso:
 
 - rodar build;
 - recarregar PM2 quando necessario;
@@ -72,6 +79,8 @@ curl http://localhost:3000/api/health/ai
 ```
 
 Adaptar porta e endpoints ao projeto real.
+
+Se a mudanca for somente documentacao, AGENTS.md ou skills, nao fazer deploy automaticamente; registrar que a validacao local passou e que nao havia mudanca runtime.
 
 ## O que nao fazer
 

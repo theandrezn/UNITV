@@ -20,13 +20,17 @@ Ele deve:
 - aprender com bugs reais;
 - manter o Obsidian atualizado com o que fazer e o que nunca fazer.
 
-## Local das skills
+## Obrigacao de uso das skills
 
 As skills internas do projeto ficam em:
 
 `.agents/skills/`
 
-Antes de trabalhar, o Codex deve verificar a skill relacionada ao tipo de tarefa.
+Antes de trabalhar em qualquer tarefa deste repositorio, o Codex deve verificar a matriz abaixo e ler as skills aplicaveis. Se a tarefa se encaixar em mais de uma categoria, usar todas as skills relacionadas.
+
+Nao tratar skill como sugestao. Neste projeto, skill aplicavel e obrigatoria.
+
+## Matriz obrigatoria por tipo de tarefa
 
 Para bugs reais, sempre comecar por:
 
@@ -36,6 +40,15 @@ Para bugs reais, sempre comecar por:
 4. `unitv-obsidian-updater`
 5. `unitv-deploy-verifier`
 
+Para investigacao de bug sem implementar ainda, usar:
+
+1. `unitv-bug-learning-loop`
+2. `unitv-conversation-state-guardian`
+3. `unitv-regression-test-writer`
+4. `unitv-obsidian-updater`
+
+Neste caso, nao alterar codigo; entregar causa raiz provavel, arquivos/funcoes envolvidos, teste que deveria existir e regra do Obsidian que deveria ser criada/atualizada.
+
 Para follow-ups, sempre usar:
 
 1. `unitv-followup-auditor`
@@ -43,6 +56,28 @@ Para follow-ups, sempre usar:
 3. `unitv-regression-test-writer`
 4. `unitv-obsidian-updater`
 5. `unitv-deploy-verifier`
+
+Para mudancas em resposta, intencao, LLM, classificacao, estado, templates ou memoria, usar:
+
+1. `unitv-conversation-state-guardian`
+2. `unitv-regression-test-writer`
+3. `unitv-deploy-verifier`
+
+Adicionar `unitv-bug-learning-loop` e `unitv-obsidian-updater` se a mudanca veio de bug real.
+
+Para pagamento, Pix, pedido, comprovante ou entrega de codigo, usar:
+
+1. `unitv-conversation-state-guardian`
+2. `unitv-regression-test-writer`
+3. `unitv-deploy-verifier`
+
+Nunca confirmar pagamento, gerar Pix ou entregar codigo sem respeitar a validacao real do backend/webhook.
+
+Para governanca, AGENTS.md ou alteracao de skills, usar:
+
+1. `unitv-deploy-verifier`
+
+Validar estrutura, frontmatter, ausencia de segredo e comandos basicos do projeto.
 
 ## Skills obrigatorias
 
@@ -115,7 +150,7 @@ Obrigatorio rodar validacoes reais: testes, build, lint quando existir, health c
 
 ## Estados comerciais importantes
 
-O agente deve respeitar estes estados ou equivalentes no codigo:
+O agente deve respeitar estes estados ou equivalentes no codigo. Estados reais ja usados no projeto incluem `welcome_activation`, `download_instructions`, `download_instructions_sent`, `awaiting_download_installation` e o follow-up `post_download_check_10min`.
 
 - `new_lead`
 - `welcome_sent`
@@ -145,9 +180,32 @@ A prioridade para responder deve ser:
 3. Ultima mensagem enviada pelo cliente.
 4. Mensagens recentes do humano/Andre.
 5. Follow-ups pendentes.
-6. So depois considerar fluxos iniciais.
+6. Classificacao de intencao/IA.
+7. So depois considerar fluxos iniciais.
 
 Nunca priorizar saudacao inicial se a conversa ja esta em andamento.
+
+## Fluxo de download protegido
+
+Depois que o agente enviou link/APK, codigo Downloader, tutorial ou instrucao de instalacao:
+
+- manter `download_instructions` ou `awaiting_download_installation`;
+- bloquear saudacao inicial;
+- bloquear pergunta "voce ja usa ou e primeira vez?";
+- bloquear handoff humano em fluxo simples;
+- interpretar respostas curtas como "E Android", "Android", "baixei", "pronto", "nao consegui" dentro do fluxo de instalacao;
+- agendar `post_download_check_10min` somente se nao houver cliente/humano respondendo depois.
+
+## Fluxo de follow-up protegido
+
+Todo follow-up precisa revalidar contexto na execucao. Nao enviar se:
+
+- o cliente respondeu depois do agendamento;
+- humano/Andre interveio depois do agendamento;
+- venda avancou para plano, Pix, pagamento, codigo ou pos-venda;
+- o follow-up nao combina com a ultima mensagem do bot;
+- ja existe follow-up equivalente ativo;
+- a conversa esta em suporte humano real.
 
 ## O que nunca fazer
 

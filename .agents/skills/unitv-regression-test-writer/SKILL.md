@@ -1,6 +1,6 @@
 ---
 name: unitv-regression-test-writer
-description: Use sempre que corrigir bug, alterar fluxo de conversa, mudar resposta do agente, mexer em follow-up, handoff, pagamento, download, teste gratis ou logica comercial do UNITV Agent.
+description: Use obrigatoriamente sempre que corrigir bug, investigar qual teste deveria existir, alterar fluxo de conversa, mudar resposta do agente, mexer em follow-up, handoff, pagamento, download, teste gratis, saudacao, contexto ou logica comercial do UNITV Agent.
 ---
 
 # UNITV Regression Test Writer
@@ -30,6 +30,8 @@ Procurar padroes existentes em:
 - `__tests__/`
 
 Seguir o padrao do projeto. Evitar dependencia real de WhatsApp, OpenAI, Mercado Pago ou banco real; usar mocks/fakes.
+
+Neste projeto, bugs de resposta do agente geralmente entram em `tests/commercial-agent.test.ts`; bugs de follow-up geralmente entram em `tests/whatsapp-followup.test.ts`.
 
 ## Todo teste de bug deve conter
 
@@ -78,6 +80,8 @@ Cliente manda comprovante; agente nao confirma pagamento nem entrega codigo sem 
 - Follow-up de download so depois do tempo configurado.
 - Cancelar follow-up se cliente respondeu.
 - Nao repetir saudacao quando cliente responde "Nao" apos pergunta sobre ja usar/teste.
+- Nao perguntar de novo se e primeira vez depois de enviar link, valor, Pix ou codigo.
+- Nao enviar suporte humano em fluxo simples de aparelho/download.
 
 ## Se teste for dificil
 

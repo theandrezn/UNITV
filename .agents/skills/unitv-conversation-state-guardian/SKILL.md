@@ -1,6 +1,6 @@
 ---
 name: unitv-conversation-state-guardian
-description: Use sempre que mexer em contexto de conversa, geracao de resposta, LLM, estagios, intencoes, templates, download, teste gratis, venda, Pix, recarga ou handoff humano do UNITV Agent.
+description: Use obrigatoriamente ao investigar ou alterar contexto de conversa, ChatAgentService, whatsapp-message.service, sales-response AI, classificacao de intencao, templates, estados, memoria, greeting, teste gratis, download, instalacao, venda, Pix, recarga, pagamento, codigo ou handoff humano do UNITV Agent.
 ---
 
 # UNITV Conversation State Guardian
@@ -21,9 +21,19 @@ A resposta do agente deve respeitar esta ordem:
 
 A IA nunca pode ignorar o estado da conversa.
 
+## Arquivos de atencao
+
+Ao investigar estado/resposta, procurar primeiro em:
+
+- `src/services/agent/chat-agent.service.ts`
+- `src/services/whatsapp/whatsapp-message.service.ts`
+- `src/lib/whatsapp/customer-message-safety.ts`
+- `src/services/agent/sales-response-ai.service.ts`
+- `src/services/agent/intent-classifier.service.ts`
+
 ## Estados minimos esperados
 
-Usar estes estados ou equivalentes:
+Usar estes estados ou equivalentes. O codigo tambem usa nomes reais como `welcome_activation`, `download_instructions`, `download_instructions_sent`, `awaiting_download_installation`, `install_support` e `post_download_check_10min`.
 
 ```txt
 new_lead
@@ -74,13 +84,14 @@ Se a ultima mensagem do bot foi pergunta, interpretar a resposta do cliente dent
 
 ### `device_qualification`
 
-Se o cliente informa aparelho compativel, confirmar compatibilidade, enviar instrucao correta, orientar proximo passo e nao fazer handoff.
+Se o cliente informa aparelho compativel, confirmar compatibilidade, enviar instrucao correta, orientar proximo passo, salvar estado de download/instalacao e nao fazer handoff.
 
 ### `download_link_sent` / `awaiting_download_installation`
 
 - Cliente confirma Android: confirmar que o link enviado e correto e pedir para avisar apos instalar.
 - Cliente diz que baixou: pedir para abrir o app e avisar se apareceu login/cadastro.
 - Cliente diz que nao conseguiu: perguntar onde travou, link, Downloader ou instalacao.
+- Cliente responde algo curto como "ok", "vou baixar", "E Android" ou "Android": manter instalacao, nunca saudacao.
 
 ### `price_discovery`
 

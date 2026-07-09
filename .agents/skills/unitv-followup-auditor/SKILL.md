@@ -1,6 +1,6 @@
 ---
 name: unitv-followup-auditor
-description: Use sempre que mexer em worker de follow-up, mensagens agendadas, regua de recuperacao, timers, cancelamento, revalidacao de contexto ou envio automatico do UNITV Agent.
+description: Use obrigatoriamente ao investigar ou alterar worker de follow-up, mensagens agendadas, followup_key, post_download_check_10min, lead recovery, regua de recuperacao, timers, cancelamento, dedupe, revalidacao de contexto ou envio automatico do UNITV Agent.
 ---
 
 # UNITV Follow-up Auditor
@@ -13,8 +13,8 @@ Todo follow-up deve ser revalidado no momento da execucao. O fato de ter sido ag
 
 ## Antes de enviar follow-up, verificar
 
-- Cliente respondeu depois do agendamento?
-- Humano/Andre respondeu depois do agendamento?
+- Cliente respondeu depois do agendamento ou depois da ultima mensagem do bot que originou o follow-up?
+- Humano/Andre respondeu depois do agendamento ou depois da ultima mensagem do bot que originou o follow-up?
 - Estado avancou para pagamento, Pix, ativacao, venda concluida ou suporte humano?
 - Ultima mensagem do bot combina com o follow-up?
 - Existe follow-up igual pendente?
@@ -40,6 +40,17 @@ Personalizar quando o aparelho estiver claro:
 - `Voce conseguiu baixar no celular Android?`
 
 Nao enviar se cliente respondeu, humano assumiu, estado mudou ou ja existe follow-up pos-download ativo.
+
+Campos/metadados importantes:
+
+- `followup_key`
+- `followup_due_at`
+- `last_followup_stage_id`
+- `last_bot_download_message_at`
+- `last_customer_message_at`
+- `last_specialist_message_at`
+- `conversation_stage`
+- `lead_profile.stage`
 
 ### Pre-venda / Pix
 
@@ -106,6 +117,7 @@ Quando bloquear follow-up, registrar:
 - Follow-up nao executa depois de mensagem humana.
 - Follow-up nao executa depois de pagamento aprovado.
 - Follow-up nao reinicia conversa.
+- Follow-up pos-download nao duplica se ja existe `post_download_check_10min` ativo.
 
 ## Checklist
 

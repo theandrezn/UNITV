@@ -1,6 +1,6 @@
 ---
 name: unitv-obsidian-updater
-description: Use sempre que corrigir bug real, alterar fluxo comercial, adicionar regra de atendimento, registrar o que fazer/nunca fazer ou transformar intervencao do Andre em aprendizado no Obsidian.
+description: Use obrigatoriamente quando corrigir ou investigar bug real, alterar fluxo comercial, criar regra de atendimento, atualizar o que fazer/nunca fazer, documentar teste de regressao, registrar caso real ou transformar intervencao do Andre em aprendizado no Obsidian do UNITV Agent.
 ---
 
 # UNITV Obsidian Updater
@@ -23,6 +23,12 @@ docs/obsidian
 ```
 
 Nao assumir caminho fixo sem procurar. Se nao encontrar o vault, criar pendencia em `docs/obsidian-updates-pending.md`.
+
+Neste workspace, o vault conhecido costuma estar em:
+
+`C:\Users\games\Documents\UNITV - AGENTE\UNITV-KNOWLEDGE-BASE`
+
+Ainda assim, confirmar se o caminho existe antes de editar.
 
 ## Arquivos prioritarios
 
