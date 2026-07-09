@@ -418,6 +418,10 @@ export class WhatsappFollowupService {
       return aiReply;
     }
 
+    if (isSafeContextualFallback(input.context, input.decision, input.reason)) {
+      return input.fallbackText.trim() || input.decision.suggested_message?.trim() || null;
+    }
+
     if (process.env.OPENAI_API_KEY) {
       return null;
     }
@@ -580,6 +584,21 @@ function validateFollowupPolicy(context: FollowupContext, decision: FollowupDeci
   }
 
   return { shouldSend: true, message, dedupeKey, reason: null, duplicateBlocked: false };
+}
+
+function isSafeContextualFallback(context: FollowupContext, decision: FollowupDecision, reason: string) {
+  const followupKey = String(decision.new_followup_key || context.followup_key || "");
+  const followupType = String(decision.followup_type || "");
+
+  if (/payment|pix|download|install|support|technical|receipt|code/i.test(`${followupKey} ${followupType}`)) {
+    return false;
+  }
+
+  return (
+    followupKey === "welcome_activation" ||
+    followupType === "trial_check" ||
+    /recuperacao_de_lead|unanswered_bot|followup_contextual/i.test(reason)
+  );
 }
 
 function buildCancelledFollowupMetadata(

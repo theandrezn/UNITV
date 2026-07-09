@@ -868,6 +868,64 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("Seja bem-vindo");
   });
 
+  it("interprets first-time answers after the traffic greeting without repeating the greeting", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Nunca primeira vez",
+      classification: { intent: "unknown", confidence: 0.2, summary: "primeira vez", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            saudacao_enviada: true,
+            last_bot_question: "Voce ja faz o uso do app? Ou e a primeira vez?"
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: "Ola! Seja bem-vindo ao melhor aplicativo de filmes e canais. Voce ja faz o uso do app? Ou e a primeira vez?" }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.reply).toContain("sua primeira vez");
+    expect(result.reply).toContain("teste gratis");
+    expect(result.reply).toContain("planos");
+    expect(result.reply).not.toContain("Voce ja faz o uso do app");
+  });
+
+  it("clarifies a question mark after first-time qualification instead of restarting the greeting", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "?",
+      classification: { intent: "unknown", confidence: 0.2, summary: "duvida curta", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: {
+          lead_profile: {
+            last_customer_intent: "first_time_user",
+            next_expected_reply: "test_or_plan_choice",
+            last_bot_question: "Perfeito, entao e sua primeira vez. Voce prefere fazer o teste gratis de 3 dias primeiro ou quer ver os planos?"
+          }
+        }
+      },
+      recentMessages: [
+        { role: "assistant", content: "Perfeito, entao e sua primeira vez. Voce prefere fazer o teste gratis de 3 dias primeiro ou quer ver os planos?" }
+      ],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).not.toBe(true);
+    expect(result.reply).toContain("Como e sua primeira vez");
+    expect(result.reply).toContain("comecar pelo teste");
+    expect(result.reply).not.toContain("Voce ja faz o uso do app");
+  });
+
   it("answers an ad recharge lead as Andre without sending a menu", async () => {
     const { service, ordersService } = createChatAgent();
 

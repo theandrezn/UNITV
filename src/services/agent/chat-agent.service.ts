@@ -44,6 +44,10 @@ const TRAFFIC_RECHARGE_WELCOME =
   "Ol\u00e1! Seja bem-vindo ao melhor aplicativo de filmes e canais \u{1F9E1}. Meu nome \u00e9 Andr\u00e9.\n\n" +
   "Voce ja faz o uso do app? Ou e a primeira vez?";
 const RENEWAL_CONTEXT_QUESTION = "Perfeito. Voce ja usa o UNITV e quer so renovar o codigo, ou seria sua primeira vez usando?";
+const FIRST_TIME_ACTIVATION_QUESTION =
+  "Perfeito, entao e sua primeira vez. Voce prefere fazer o teste gratis de 3 dias primeiro ou quer ver os planos?";
+const FIRST_TIME_CLARIFICATION_QUESTION =
+  "Sem problema. Como e sua primeira vez, posso te orientar pelo teste gratis de 3 dias ou te mostrar os planos. Voce prefere comecar pelo teste?";
 
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const SPECIAL_PROMO_MONTHLY_PRICE_CENTS = 1999;
@@ -1178,6 +1182,14 @@ function buildLowRiskRecoveryReply(context: ConversationIntelligenceLayer) {
   const normalized = normalizeContextMessage(context.latestCustomerMessage);
   const lastQuestion = normalizeContextMessage(context.lastBotQuestion || "");
 
+  if (isFirstTimeActivationAnswer(normalized) && isInitialUseQuestion(lastQuestion)) {
+    return FIRST_TIME_ACTIVATION_QUESTION;
+  }
+
+  if (isClarificationPrompt(normalized) && isFirstTimeProgressQuestion(lastQuestion, context.leadProfile)) {
+    return FIRST_TIME_CLARIFICATION_QUESTION;
+  }
+
   if (/^(sim|s|isso|ok|pode|pode ser)$/.test(normalized) && /\b(ja usa|primeira vez|uso do app)\b/.test(lastQuestion)) {
     return "Perfeito. É para recarga de um acesso que você já tem ou seria sua primeira ativação?";
   }
@@ -1199,6 +1211,26 @@ function buildLowRiskRecoveryReply(context: ConversationIntelligenceLayer) {
 
 function buildLowRiskRecoveryPatch(context: ConversationIntelligenceLayer) {
   const normalized = normalizeContextMessage(context.latestCustomerMessage);
+  const lastQuestion = normalizeContextMessage(context.lastBotQuestion || "");
+  if (isFirstTimeActivationAnswer(normalized) && isInitialUseQuestion(lastQuestion)) {
+    return {
+      commercial_stage: "first_time_qualification",
+      stage: "first_time_qualification",
+      last_customer_intent: "first_time_user",
+      next_expected_reply: "test_or_plan_choice",
+      last_bot_question: FIRST_TIME_ACTIVATION_QUESTION
+    };
+  }
+
+  if (isClarificationPrompt(normalized) && isFirstTimeProgressQuestion(lastQuestion, context.leadProfile)) {
+    return {
+      commercial_stage: "first_time_qualification",
+      stage: "first_time_qualification",
+      last_customer_intent: "needs_clarification",
+      next_expected_reply: "test_or_plan_choice",
+      last_bot_question: FIRST_TIME_CLARIFICATION_QUESTION
+    };
+  }
   if (/\b(valor|preco|preço|quanto|planos?)\b/.test(normalized)) {
     return {
       commercial_stage: "qualified",
@@ -1216,6 +1248,29 @@ function buildLowRiskRecoveryPatch(context: ConversationIntelligenceLayer) {
     next_expected_reply: "activation_or_renewal",
     last_bot_question: INITIAL_UNITV_REPLY
   };
+}
+
+function isInitialUseQuestion(lastQuestion: string) {
+  return /\b(ja usa|uso do app|faz o uso|primeira vez)\b/.test(lastQuestion);
+}
+
+function isFirstTimeActivationAnswer(normalized: string) {
+  return (
+    /\b(primeira vez|primeira ativacao|novo por aqui|sou novo|sou nova|nunca usei|nunca use|nunca primeira vez)\b/.test(normalized) ||
+    /\b(nao uso|nao usei|nunca tive|nunca testei)\b/.test(normalized)
+  );
+}
+
+function isClarificationPrompt(normalized: string) {
+  return /^[?!.]*$/.test(normalized) || /\b(nao entendi|n entendi|como assim|pode explicar)\b/.test(normalized);
+}
+
+function isFirstTimeProgressQuestion(lastQuestion: string, leadProfile: Record<string, unknown>) {
+  return (
+    /\b(teste gratis|ver os planos|mostrar os planos|comecar pelo teste)\b/.test(lastQuestion) ||
+    String(leadProfile.last_customer_intent || "") === "first_time_user" ||
+    String(leadProfile.next_expected_reply || "") === "test_or_plan_choice"
+  );
 }
 
 function extractLastQuestionFromText(text: string) {
@@ -1295,6 +1350,32 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
 
     return {
       reply: "Claro 👍 Pra eu liberar seu teste grátis de 3 dias, me diz só em qual aparelho você vai usar: celular Android, TV Box, Android TV, Google TV ou Fire Stick?"
+    };
+  }
+
+  if (isFirstTimeActivationAnswer(normalized) && isInitialUseQuestion(lastBotQuestion)) {
+    return {
+      reply: FIRST_TIME_ACTIVATION_QUESTION,
+      leadProfilePatch: {
+        commercial_stage: "first_time_qualification",
+        stage: "first_time_qualification",
+        last_customer_intent: "first_time_user",
+        next_expected_reply: "test_or_plan_choice",
+        last_bot_question: FIRST_TIME_ACTIVATION_QUESTION
+      }
+    };
+  }
+
+  if (isClarificationPrompt(normalized) && isFirstTimeProgressQuestion(lastBotQuestion, leadProfile)) {
+    return {
+      reply: FIRST_TIME_CLARIFICATION_QUESTION,
+      leadProfilePatch: {
+        commercial_stage: "first_time_qualification",
+        stage: "first_time_qualification",
+        last_customer_intent: "needs_clarification",
+        next_expected_reply: "test_or_plan_choice",
+        last_bot_question: FIRST_TIME_CLARIFICATION_QUESTION
+      }
     };
   }
 

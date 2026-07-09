@@ -205,6 +205,57 @@ describe("WhatsappFollowupService", () => {
     );
   });
 
+  it("uses safe welcome fallback when contextual AI text is unavailable in production mode", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    openAIResponsesCreate.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        should_send_followup: true,
+        followup_type: "trial_check",
+        reason: "Lead inicial sem resposta apos abordagem.",
+        conversation_summary: "Cliente veio de anuncio e recebeu a saudacao inicial.",
+        evidence: ["assistant: Voce ja faz o uso do app? Ou e a primeira vez?"],
+        suggested_message: "Voce prefere fazer o teste gratis ou quer ativar o mensal?",
+        cancel_existing_followup: false,
+        new_stage: "welcome_activation",
+        new_followup_key: "welcome_activation",
+        confidence: 0.9
+      })
+    });
+    const now = new Date("2026-07-06T12:00:00.000Z");
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888", name: "Joao Cliente" },
+          metadata: {
+            followup_key: "welcome_activation",
+            followup_due_at: "2026-07-06T11:59:00.000Z",
+            last_bot_message_at: "2026-07-06T11:54:00.000Z",
+            last_customer_message_at: "2026-07-06T11:53:00.000Z",
+            last_followup_stage_id: "greeting:welcome_activation:1",
+            followup_count: 0,
+            lead_profile: { intencao_inicial: "greeting" }
+          }
+        }
+      ],
+      { aiReply: null }
+    );
+
+    const result = await service.processDueFollowups(now);
+
+    expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("teste gratis")
+      })
+    );
+    expect(conversationsRepository.updateConversationMetadata).not.toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ followup_cancel_reason: "contextual_ai_reply_unavailable" })
+    );
+  });
+
   it("recovers unanswered bot messages after 5 minutes even when followup_due_at is missing", async () => {
     const now = new Date("2026-07-06T12:35:00.000Z");
     const { service, evolutionService, messagesRepository, conversationsRepository } = createService([
