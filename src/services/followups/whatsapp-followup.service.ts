@@ -133,7 +133,48 @@ export class WhatsappFollowupService {
       }
 
       const context = await this.buildFollowupContext(conversation, metadata, now, phone);
-      const decision = await this.contextualFollowupDecisionService.decide(context);
+      const scheduledDecision = await this.contextualFollowupDecisionService.decide(context);
+      const validation = validateFollowupAgainstConversationContext(context, scheduledDecision);
+      const decision = validation.correctedDecision || scheduledDecision;
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: validation.allowed ? "followup_context_validation_allowed" : "followup_context_validation_blocked",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: {
+          contactId: phone,
+          followupKey: metadata.followup_key,
+          blockedFollowupKey: validation.allowed ? null : metadata.followup_key,
+          detectedStage: validation.detectedStage,
+          detectedIntent: validation.detectedIntent,
+          reason: validation.reason,
+          reasonBlocked: validation.allowed ? null : validation.reason,
+          confidence: validation.confidence,
+          replacementFollowupKey: validation.replacementFollowupKey || null,
+          lastCustomerMessage: context.latest_customer_message?.content || null,
+          lastHumanMessage: context.latest_human_message?.content || null,
+          lastBotMessage: context.latest_bot_message?.content || null
+        }
+      });
+      if (!validation.allowed && !validation.correctedDecision) {
+        skipped++;
+        await this.conversationsRepository.updateConversationMetadata(
+          conversation.id,
+          buildCancelledFollowupMetadata(
+            metadata,
+            context,
+            {
+              ...decision,
+              cancel_existing_followup: true,
+              new_stage: validation.detectedStage,
+              new_followup_key: null
+            },
+            validation.reason,
+            now
+          )
+        );
+        continue;
+      }
       const policy = validateFollowupPolicy(context, decision, now);
       await this.auditService.createAuditLog({
         actor_type: "system",
@@ -175,7 +216,7 @@ export class WhatsappFollowupService {
       }
       phonesSentThisRun.add(phone);
 
-      const leadRecovery = getLeadRecoveryFollowup(metadata);
+      const leadRecovery = decision.followup_type === "pre_sale_recharge_later" ? null : getLeadRecoveryFollowup(metadata);
       const stageId = unansweredCustomerFollowup
         ? unansweredCustomerFollowup.stageId
         : unansweredBotFollowup
@@ -340,11 +381,17 @@ export class WhatsappFollowupService {
         entity_type: "conversations",
         entity_id: conversation.id,
         metadata: {
+          contactId: phone,
           followup_key: metadata.followup_key,
           stageId,
           sendResult,
           reason: decision.reason,
           confidence: decision.confidence,
+          detectedStage: decision.new_stage || context.lead_profile.stage || context.metadata.conversation_stage || null,
+          detectedIntent: decision.followup_type,
+          lastCustomerMessage: context.latest_customer_message?.content || null,
+          lastHumanMessage: context.latest_human_message?.content || null,
+          lastBotMessage: context.latest_bot_message?.content || null,
           dedupe_key: policy.dedupeKey,
           promo_recovery: promoRecovery,
           unanswered_bot_followup: Boolean(unansweredBotFollowup),
@@ -607,6 +654,132 @@ function validateFollowupPolicy(context: FollowupContext, decision: FollowupDeci
   }
 
   return { shouldSend: true, message, dedupeKey, reason: null, duplicateBlocked: false };
+}
+
+export function validateFollowupAgainstConversationContext(context: FollowupContext, scheduledFollowup: FollowupDecision): {
+  allowed: boolean;
+  correctedFollowupType: FollowupDecision["followup_type"] | null;
+  correctedDecision: FollowupDecision | null;
+  replacementFollowupKey: string | null;
+  reason: string;
+  detectedStage: string;
+  detectedIntent: string;
+  confidence: number;
+} {
+  const detected = detectCurrentConversationStage(context);
+  const key = String(context.followup_key || scheduledFollowup.new_followup_key || "");
+  const isInitialFunnelFollowup =
+    key === "welcome_activation" ||
+    key === "test" ||
+    scheduledFollowup.followup_type === "trial_check";
+
+  if (detected.intent === "payment_intent_delayed" || detected.intent === "pre_sale_commitment_pending_payment") {
+    if (scheduledFollowup.followup_type === "pre_sale_recharge_later" || key === "pre_sale_recharge_later_4h") {
+      return {
+        allowed: true,
+        correctedFollowupType: null,
+        correctedDecision: null,
+        replacementFollowupKey: null,
+        reason: "scheduled_followup_matches_current_pre_sale_context",
+        detectedStage: detected.stage,
+        detectedIntent: detected.intent,
+        confidence: detected.confidence
+      };
+    }
+
+    if (isInitialFunnelFollowup) {
+      return {
+        allowed: true,
+        correctedFollowupType: "pre_sale_recharge_later",
+        correctedDecision: buildPreSaleReplacementDecision(context, detected),
+        replacementFollowupKey: "pre_sale_recharge_later_4h",
+        reason: "replaced_stale_initial_followup_with_payment_intent_followup",
+        detectedStage: detected.stage,
+        detectedIntent: detected.intent,
+        confidence: detected.confidence
+      };
+    }
+  }
+
+  if (detected.stage !== "initial_qualification" && isInitialFunnelFollowup) {
+    return {
+      allowed: false,
+      correctedFollowupType: null,
+      correctedDecision: null,
+      replacementFollowupKey: null,
+      reason: "blocked_initial_funnel_regression",
+      detectedStage: detected.stage,
+      detectedIntent: detected.intent,
+      confidence: detected.confidence
+    };
+  }
+
+  return {
+    allowed: true,
+    correctedFollowupType: null,
+    correctedDecision: null,
+    replacementFollowupKey: null,
+    reason: "followup_matches_context",
+    detectedStage: detected.stage,
+    detectedIntent: detected.intent,
+    confidence: detected.confidence
+  };
+}
+
+function buildPreSaleReplacementDecision(context: FollowupContext, detected: { stage: string; intent: string; confidence: number }): FollowupDecision {
+  const firstName = readFirstName(context.lead_profile.nome);
+  const prefix = firstName ? `Boa tarde, ${firstName}.` : "Boa tarde.";
+  return {
+    should_send_followup: true,
+    followup_type: "pre_sale_recharge_later",
+    reason: "Follow-up antigo de qualificacao substituido por fechamento de pre-venda.",
+    conversation_summary: "Conversa evoluiu para preco/oferta/aceite e intencao de pagamento futura.",
+    evidence: collectContextEvidence(context),
+    suggested_message: `${prefix} Posso te mandar a chave Pix para deixar sua recarga UNITV separada?`,
+    cancel_existing_followup: false,
+    new_stage: detected.stage,
+    new_followup_key: "pre_sale_recharge_later_4h",
+    confidence: detected.confidence
+  };
+}
+
+function detectCurrentConversationStage(context: FollowupContext) {
+  const profile = context.lead_profile || {};
+  const text = normalizeText(context.recent_messages.slice(-20).map((message) => message.content || "").join("\n"));
+  const hasCommercialCommitment = Boolean(
+    profile.selected_plan ||
+    profile.plano_interesse ||
+    profile.requested_screens ||
+    profile.negotiated_price_cents ||
+    profile.quoted_price_cents ||
+    profile.accepted_special_promo ||
+    profile.payment_intent_status === "later" ||
+    profile.last_detected_intent === "wants_to_recharge_later" ||
+    /\b(duas telas|2 telas|3 telas|tres telas|r\$\s*\d+|\b17[,.]90\b|\b25\b|mensal|30 dias|recarga|chave pix|pix)\b/.test(text) ||
+    (/\b(ok|beleza|pode ser|fechado)\b/.test(text) && /\b(condicao|fechar|plano|telas|17[,.]90|pix|recarga)\b/.test(text))
+  );
+  const delayedPayment = Boolean(
+    profile.payment_intent_status === "later" ||
+    profile.last_detected_intent === "wants_to_recharge_later" ||
+    /\b(mais tarde|depois|daqui a pouco|logo mais|quando eu chegar)\b.{0,50}\b(faco|fazer|pago|pagar|recarga|recarrego|recarregar|fecho|fechar|realizo|realizar)\b/.test(text) ||
+    /\b(vou realizar a recarga|vou pagar|vou fazer a recarga|vou fechar depois)\b/.test(text)
+  );
+
+  if (delayedPayment && hasCommercialCommitment) {
+    return { stage: "payment_intent_delayed", intent: "payment_intent_delayed", confidence: 0.96 };
+  }
+
+  if (hasCommercialCommitment) {
+    return { stage: "pre_sale_commitment_pending_payment", intent: "pre_sale_commitment_pending_payment", confidence: 0.91 };
+  }
+
+  return { stage: "initial_qualification", intent: "qualification", confidence: 0.82 };
+}
+
+function collectContextEvidence(context: FollowupContext) {
+  return context.recent_messages
+    .slice(-8)
+    .map((message) => `${message.role || "unknown"}: ${String(message.content || "").slice(0, 140)}`);
 }
 
 function isSafeContextualFallback(context: FollowupContext, decision: FollowupDecision, reason: string) {

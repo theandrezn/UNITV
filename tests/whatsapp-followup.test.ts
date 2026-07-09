@@ -18,6 +18,7 @@ import {
   getLeadRecoveryFollowup,
   shouldSendPromoRecoveryFollowup,
   shouldUseLeadRecoverySequence,
+  validateFollowupAgainstConversationContext,
   WhatsappFollowupService
 } from "@/services/followups/whatsapp-followup.service";
 import { decideFollowupDeterministically } from "@/services/followups/contextual-followup-decision.service";
@@ -376,6 +377,110 @@ describe("WhatsappFollowupService", () => {
         followup_count: 1
       })
     );
+  });
+
+  it("replaces stale welcome activation follow-up after manual offer and delayed payment intent", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888", name: "Fabio Cliente" },
+          metadata: {
+            followup_key: "welcome_activation",
+            followup_due_at: "2026-07-09T15:42:00.000Z",
+            last_bot_message_at: "2026-07-09T12:36:00.000Z",
+            last_customer_message_at: "2026-07-09T12:36:00.000Z",
+            last_followup_stage_id: "greeting:welcome_activation:1",
+            followup_count: 0,
+            lead_profile: {
+              nome: "Fabio",
+              selected_plan: "mensal",
+              requested_screens: 2,
+              negotiated_price_cents: 1790,
+              stage: "pre_sale_recharge_intent"
+            }
+          }
+        }
+      ],
+      {
+        aiReply: null,
+        recentMessages: [
+          { id: "m1", role: "customer", content: "E Duas telas", created_at: "2026-07-09T12:34:00.000Z" },
+          { id: "m2", role: "human_agent", content: "Fabio, nos estamos com bastante interesse em adquirir novos clientes, consigo fechar pra voce o plano por 17,90 por 3 Telas, o que voce acha?", created_at: "2026-07-09T12:35:00.000Z" },
+          { id: "m3", role: "customer", content: "Ok", created_at: "2026-07-09T12:35:30.000Z" },
+          { id: "m4", role: "customer", content: "Mais tarde eu faco", created_at: "2026-07-09T12:35:45.000Z" },
+          { id: "m5", role: "human_agent", content: "Vou deixar seu contato salvo aqui", created_at: "2026-07-09T12:36:00.000Z" }
+        ]
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-09T15:42:00.000Z"));
+
+    expect(result.sent).toBe(1);
+    const text = String((evolutionService.sendTextMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].text);
+    expect(text).toContain("chave Pix");
+    expect(text).not.toContain("teste gratis");
+    expect(text).not.toContain("Qual aparelho");
+    expect(text).not.toContain("Voce ja usou");
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_sent_stage_id: "greeting:welcome_activation:1",
+        last_followup_key_sent: "pre_sale_recharge_later_4h",
+        lead_profile: expect.objectContaining({ stage: "payment_intent_delayed" })
+      })
+    );
+  });
+
+  it("replaces stale initial follow-up when current context has price offer even without an old pre-sale key", () => {
+    const validation = validateFollowupAgainstConversationContext(
+      {
+        conversation_id: "conversation-id",
+        customer_id: "customer-id",
+        phone: "5511999998888",
+        now: "2026-07-09T15:42:00.000Z",
+        metadata: { followup_key: "welcome_activation" },
+        lead_profile: { selected_plan: "mensal", negotiated_price_cents: 1790 },
+        recent_messages: [
+          { role: "customer", content: "E duas telas" },
+          { role: "human_agent", content: "Consigo fechar pra voce por 17,90 por 3 telas" },
+          { role: "customer", content: "Ok" }
+        ],
+        latest_customer_message: { role: "customer", content: "Ok" },
+        latest_bot_message: null,
+        latest_human_message: { role: "human_agent", content: "Consigo fechar pra voce por 17,90 por 3 telas" },
+        last_speaker: "customer",
+        last_customer_was_answered: false,
+        last_bot_question: null,
+        last_human_question: null,
+        open_order: null,
+        latest_order: null,
+        human_hold_active: false,
+        followup_key: "welcome_activation",
+        followup_due_at: "2026-07-09T15:42:00.000Z",
+        last_followup_text_hash: null,
+        last_followup_context_hash: "hash"
+      },
+      {
+        should_send_followup: true,
+        followup_type: "trial_check",
+        reason: "Lead inicial sem resposta",
+        conversation_summary: "Inicio",
+        evidence: [],
+        suggested_message: "Voce ja usou o UNITV? Posso liberar teste gratis.",
+        cancel_existing_followup: false,
+        new_stage: "qualified",
+        new_followup_key: "welcome_activation",
+        confidence: 0.88
+      }
+    );
+
+    expect(validation.allowed).toBe(true);
+    expect(validation.correctedFollowupType).toBe("pre_sale_recharge_later");
+    expect(validation.replacementFollowupKey).toBe("pre_sale_recharge_later_4h");
+    expect(validation.reason).toBe("replaced_stale_initial_followup_with_payment_intent_followup");
+    expect(validation.detectedStage).toBe("pre_sale_commitment_pending_payment");
   });
 
   it("runs progressive lead recovery after the first unanswered agent message", async () => {

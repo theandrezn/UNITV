@@ -1854,6 +1854,10 @@ function buildPreSaleRechargeLaterFollowupState(input: {
     pre_sale_followup_scheduled_at: input.now.toISOString(),
     pre_sale_followup_base_customer_message_at: input.customerMessageAt,
     pre_sale_followup_reason: "customer_wants_recharge_later",
+    conversation_version: buildConversationVersion(input.metadata, input.now),
+    last_message_id: null,
+    detected_stage_at_schedule_time: "pre_sale_recharge_intent",
+    reason_for_schedule: "customer_wants_recharge_later",
     pre_sale_followup_context: {
       customer_last_message: input.text,
       plan: captured.plan || null,
@@ -1958,6 +1962,29 @@ function buildManualOutboundFollowupState(
   metadata: Record<string, unknown> | null | undefined,
   now: Date
 ) {
+  if (isManualPreSaleNegotiationContext(text) || isManualContactSavedContext(text, metadata)) {
+    return {
+      followup_key: PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY,
+      followup_due_at: new Date(now.getTime() + PRE_SALE_RECHARGE_LATER_DELAY_MS).toISOString(),
+      followup_sent_at: null,
+      followup_sent_stage_id: null,
+      followup_count: 0,
+      last_followup_stage_id: `${PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY}:manual:${now.getTime()}`,
+      awaiting_customer_action: "pix_permission",
+      conversation_stage: "pre_sale_recharge_intent",
+      customer_stage: "pre_sale_recharge_intent",
+      payment_intent_status: "later",
+      last_detected_intent: "pre_sale_commitment_pending_payment",
+      detected_stage_at_schedule_time: "pre_sale_recharge_intent",
+      reason_for_schedule: "manual_pre_sale_negotiation",
+      conversation_version: buildConversationVersion(metadata, now),
+      last_message_id: null,
+      last_customer_message_at: metadata?.last_customer_message_at || null,
+      pre_sale_followup_scheduled_at: now.toISOString(),
+      pre_sale_followup_reason: "manual_offer_or_contact_saved"
+    };
+  }
+
   if (isManualAccessDeliveryContext(text)) {
     return {
       followup_key: null,
@@ -1979,6 +2006,22 @@ function buildManualOutboundFollowupState(
   }, metadata, now);
 
   return state.followup_key ? state : {};
+}
+
+function isManualPreSaleNegotiationContext(text: string) {
+  const normalized = normalizeFreeText(text);
+  return /\b(condicao especial|condi[cç]ao especial|adquirir novos clientes|fechar pra voce|17[,.]90|17[,.]9|3 telas|tres telas|o que voce acha)\b/.test(normalized);
+}
+
+function isManualContactSavedContext(text: string, metadata: Record<string, unknown> | null | undefined) {
+  const normalized = normalizeFreeText(text);
+  const profile = readLeadProfile(metadata);
+  return /\b(contato salvo|vou deixar seu contato|deixar seu contato salvo|prazer.*andre)\b/.test(normalized) &&
+    (metadata?.followup_key === PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY || profile.stage === "pre_sale_recharge_intent");
+}
+
+function buildConversationVersion(metadata: Record<string, unknown> | null | undefined, now: Date) {
+  return Number(metadata?.conversation_version || 0) + 1 || now.getTime();
 }
 
 function buildManualOutboundLeadProfilePatch(text: string, messageAt: string) {

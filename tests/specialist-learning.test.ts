@@ -240,6 +240,17 @@ describe("specialist operational learning", () => {
       })
     }));
     expect(updateConversationMetadata).toHaveBeenCalledWith("conversation-id", expect.objectContaining({
+      followup_key: "pre_sale_recharge_later_4h",
+      conversation_stage: "pre_sale_recharge_intent",
+      payment_intent_status: "later",
+      last_detected_intent: "pre_sale_commitment_pending_payment",
+      followup_due_at: expect.any(String),
+      reason_for_schedule: "manual_pre_sale_negotiation",
+      lead_profile: expect.objectContaining({
+        stage: "pre_sale_recharge_intent"
+      })
+    }));
+    expect(updateConversationMetadata).toHaveBeenCalledWith("conversation-id", expect.objectContaining({
       lead_profile: expect.objectContaining({
         learned_pattern: "cliente_faz_depois_pedir_permissao_pix_4h",
         next_best_action: "agendar_followup_4h_pedir_permissao_pix"
