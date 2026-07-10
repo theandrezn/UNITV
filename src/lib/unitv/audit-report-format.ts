@@ -23,6 +23,7 @@ type ReportInput = {
   followup_cancelled_count: number;
   approved_specialist_examples_count: number;
   pending_specialist_examples_count: number;
+  learning_memories_created_count?: number;
   abandoned_after_price_count: number;
   abandoned_after_download_count: number;
   abandoned_after_pix_count: number;
@@ -74,6 +75,7 @@ export function formatDailyAuditShortReport(audit: ReportInput) {
     `- Saudacoes iniciais bloqueadas: ${audit.greeting_blocked_count}`,
     `- Follow-ups cancelados por contexto: ${audit.followup_cancelled_count}`,
     `- Exemplos do Andre aprovados/pendentes: ${audit.approved_specialist_examples_count}/${audit.pending_specialist_examples_count}`,
+    `- Licoes operacionais criadas: ${audit.learning_memories_created_count || 0}`,
     "",
     "Principais objecoes:",
     ...padTopList(objections),

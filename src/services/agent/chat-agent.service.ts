@@ -78,6 +78,14 @@ type CommercialReplyInput = {
     bot_previous_message?: string | null;
     specialist_message?: string | null;
   }>;
+  learningMemories?: Array<{
+    intent?: string | null;
+    stage?: string | null;
+    rule?: string | null;
+    style_directive?: string | null;
+    avoid?: string[] | null;
+    confidence?: number | null;
+  }>;
 };
 
 type CommercialReplyResult = {
@@ -230,7 +238,8 @@ export class ChatAgentService {
       intent,
       leadProfile,
       recentMessages: input.recentMessages,
-      specialistExamplesCount: input.specialistExamples?.length || 0
+      specialistExamplesCount: input.specialistExamples?.length || 0,
+      learningMemoriesCount: input.learningMemories?.length || 0
     })) {
       const aiReply = await this.salesResponseAIService.generateResponse({
         message,
@@ -238,6 +247,7 @@ export class ChatAgentService {
         leadProfile,
         recentMessages: input.recentMessages,
         specialistExamples: input.specialistExamples,
+        learningMemories: input.learningMemories,
         fallbackReply: contextualReply?.reply || null,
         useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
       });
@@ -567,6 +577,7 @@ export class ChatAgentService {
       leadProfile,
       recentMessages: input.recentMessages,
       specialistExamples: input.specialistExamples,
+      learningMemories: input.learningMemories,
       fallbackReply,
       useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
     });
@@ -1115,6 +1126,7 @@ export class ChatAgentService {
       },
       recentMessages: input.recentMessages,
       specialistExamples: input.specialistExamples,
+      learningMemories: input.learningMemories,
       useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
     });
 

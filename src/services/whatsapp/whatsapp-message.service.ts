@@ -18,6 +18,7 @@ import {
   validateResponseAgainstLeadProfile
 } from "@/lib/whatsapp/customer-message-safety";
 import { SpecialistTrainingExamplesRepository } from "@/repositories/specialist-training-examples.repository";
+import { AgentLearningMemoriesRepository } from "@/repositories/agent-learning-memories.repository";
 import { buildMaskedConversationExcerpt, maskSpecialistTrainingText } from "@/lib/whatsapp/specialist-training-privacy";
 import { SpecialistInterventionAnalysisService } from "@/services/agent/specialist-intervention-analysis.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
@@ -65,7 +66,8 @@ export class WhatsappMessageService {
     private readonly agentEventLogService?: AgentEventLogService,
     private readonly hotLeadAlertService?: HotLeadAlertService,
     private readonly contextualIntelligenceService = new ContextualIntelligenceService(),
-    private readonly conversationBrainService = new ConversationBrainService()
+    private readonly conversationBrainService = new ConversationBrainService(),
+    private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -583,7 +585,10 @@ export class WhatsappMessageService {
         brain_evidence: conversationBrainDecision.evidence
       }
     });
-    const specialistExamples = await this.listRelevantSpecialistExamples(conversation.metadata, message.text, recentMessages);
+    const [specialistExamples, learningMemories] = await Promise.all([
+      this.listRelevantSpecialistExamples(conversation.metadata, message.text, recentMessages),
+      this.listRelevantLearningMemories(conversation.metadata, message.text, recentMessages)
+    ]);
     const preSaleFollowupState = buildPreSaleRechargeLaterFollowupState({
       text: message.text,
       metadata: conversation.metadata,
@@ -643,7 +648,8 @@ export class WhatsappMessageService {
       recentMessages,
       contextualDecision,
       conversationBrainDecision,
-      specialistExamples
+      specialistExamples,
+      learningMemories
     });
     await this.safeCreateAgentEvent({
       conversation_id: conversation.id,
@@ -661,6 +667,7 @@ export class WhatsappMessageService {
         rule: commercialReply.responseRule || "deterministic_reply",
         confidence: classification.confidence,
         specialist_examples_count: specialistExamples.length,
+        learning_memories_count: learningMemories.length,
         brain_stage: conversationBrainDecision.stage,
         brain_context_active: conversationBrainDecision.contextActive,
         brain_response_rule: conversationBrainDecision.responseRule,
@@ -1134,6 +1141,26 @@ export class WhatsappMessageService {
         customerMessage,
         recentContext: buildSpecialistExampleLookupContext(recentMessages),
         limit: 3
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private async listRelevantLearningMemories(
+    metadata: Record<string, unknown> | null | undefined,
+    customerMessage: string,
+    recentMessages: Array<{ role?: string; content?: string | null }> = []
+  ) {
+    const leadProfile = readLeadProfile(metadata);
+    try {
+      const repository = this.agentLearningMemoriesRepository || new AgentLearningMemoriesRepository();
+      return await repository.getRelevantMemories({
+        intent: typeof leadProfile.ultima_intencao === "string" ? leadProfile.ultima_intencao : null,
+        stage: typeof leadProfile.stage === "string" ? leadProfile.stage : null,
+        customerMessage,
+        recentContext: buildSpecialistExampleLookupContext(recentMessages),
+        limit: 4
       });
     } catch {
       return [];

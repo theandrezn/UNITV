@@ -30,6 +30,42 @@ describe("daily agent audit aggregation", () => {
     expect(audit.full_report).toContain("Detalhes:");
   });
 
+  it("persists daily specialist learning together with the audit", async () => {
+    process.env.SUPABASE_URL = "https://example.supabase.co";
+    process.env.SUPABASE_ANON_KEY = "anon";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service";
+    const upsertAudit = vi.fn(async (audit) => ({ id: "audit-id", ...audit }));
+    const synthesizeDailyLearning = vi.fn(async () => ({
+      createdCount: 2,
+      summary: "Duas diretivas operacionais foram consolidadas."
+    }));
+    const service = new DailyAgentAuditService({
+      conversationsRepository: { listTouchedBetween: vi.fn(async () => []) },
+      messagesRepository: { listMessagesBetween: vi.fn(async () => []) },
+      eventLogsRepository: { listEventsBetween: vi.fn(async () => []), createEvent: vi.fn() },
+      specialistTrainingExamplesRepository: { listExamplesBetween: vi.fn(async () => []) },
+      dailyAuditsRepository: {
+        findPrevious: vi.fn(async () => null),
+        findByDate: vi.fn(async () => null),
+        findById: vi.fn(),
+        upsertAudit,
+        markSent: vi.fn()
+      },
+      dailySpecialistLearningService: { synthesizeDailyLearning },
+      evolutionService: { sendTextMessage: vi.fn() },
+      now: new Date("2026-07-11T02:55:00.000Z")
+    });
+
+    const audit = await service.buildDailyAgentAudit({ date: "2026-07-10" });
+
+    expect(audit).toMatchObject({
+      learning_memories_created_count: 2,
+      learning_summary: { summary: "Duas diretivas operacionais foram consolidadas." }
+    });
+    expect(upsertAudit).toHaveBeenCalledWith(expect.objectContaining({ learning_memories_created_count: 2 }));
+    expect(String(audit.short_report)).toContain("Licoes operacionais criadas: 2");
+  });
+
   it("counts messages, AI, local rules, interventions, followups and funnel events", () => {
     const audit = buildAuditRecord({
       period,

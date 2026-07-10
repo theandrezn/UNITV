@@ -53,6 +53,7 @@ export async function handleDailyAgentAuditJob(
       followup_cancelled_count: audit.followup_cancelled_count,
       approved_specialist_examples_count: audit.approved_specialist_examples_count,
       pending_specialist_examples_count: audit.pending_specialist_examples_count,
+      learning_memories_created_count: Number(audit.learning_memories_created_count || 0),
       pix_requested_not_paid_count: audit.pix_requested_not_paid_count
     },
     short_report: dryRun ? audit.short_report : undefined

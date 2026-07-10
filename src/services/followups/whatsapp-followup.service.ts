@@ -7,6 +7,7 @@ import { AuditService } from "@/services/audit.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 import { SalesResponseAIService } from "@/services/agent/sales-response-ai.service";
 import { OrdersService } from "@/services/orders.service";
+import { AgentLearningMemoriesRepository } from "@/repositories/agent-learning-memories.repository";
 import { validateFollowupWithConversationBrain } from "@/services/agent/conversation-brain.service";
 import {
   buildFollowupContextHash,
@@ -55,7 +56,8 @@ export class WhatsappFollowupService {
     private readonly agentEventLogService?: AgentEventLogService,
     private readonly salesResponseAIService = new SalesResponseAIService(),
     private readonly ordersService = new OrdersService(),
-    private readonly contextualFollowupDecisionService = new ContextualFollowupDecisionService()
+    private readonly contextualFollowupDecisionService = new ContextualFollowupDecisionService(),
+    private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository
   ) {}
 
   async processDueFollowups(now = new Date()): Promise<FollowupResult> {
@@ -469,12 +471,9 @@ export class WhatsappFollowupService {
     fallbackText: string;
     reason: string;
   }): Promise<string | null> {
-    if (input.decision.new_followup_key === MONTHLY_PROMO_FOLLOWUP_KEY) {
-      return input.fallbackText.trim() || input.decision.suggested_message?.trim() || null;
-    }
-
     const leadProfile = input.context.lead_profile || {};
     const latestCustomerMessage = input.context.latest_customer_message?.content || String(leadProfile.last_customer_answer || "");
+    const learningMemories = await this.listRelevantLearningMemories(input.context);
     const aiReply = await this.salesResponseAIService.generateResponse({
       message: [
         latestCustomerMessage,
@@ -487,6 +486,9 @@ export class WhatsappFollowupService {
         "Use o historico completo para decidir o proximo passo.",
         input.decision.followup_type === "pre_sale_recharge_later"
           ? "Este e um follow-up de pre-venda: o cliente disse que faria depois. Peca permissao para mandar a chave Pix, com baixa pressao, sem reiniciar saudacao, sem tabela completa e sem inventar nome."
+          : "",
+        input.decision.new_followup_key === MONTHLY_PROMO_FOLLOWUP_KEY
+          ? "Esta condicao foi autorizada pelo sistema: mensal por R$ 19,99. Mencione exatamente esse valor, componha uma frase nova e faca uma unica pergunta de interesse. Nao cite outro preco nem gere Pix."
           : "",
         "Nao invente Pix, preco, codigo, pagamento confirmado ou compatibilidade."
       ].join("\n"),
@@ -501,6 +503,7 @@ export class WhatsappFollowupService {
         role: message.role || undefined,
         content: message.content || null
       })),
+      learningMemories,
       fallbackReply: input.fallbackText,
       useStrongModel: shouldUseStrongFollowupTextModel(input.context, input.decision)
     });
@@ -508,16 +511,7 @@ export class WhatsappFollowupService {
     if (aiReply) {
       return aiReply;
     }
-
-    if (isSafeContextualFallback(input.context, input.decision, input.reason)) {
-      return input.fallbackText.trim() || input.decision.suggested_message?.trim() || null;
-    }
-
-    if (process.env.OPENAI_API_KEY) {
-      return null;
-    }
-
-    return input.decision.suggested_message?.trim() || null;
+    return null;
   }
 
   private async listRecentMessages(conversationId: string) {
@@ -619,6 +613,21 @@ export class WhatsappFollowupService {
       return (this.agentEventLogService || new AgentEventLogService()).safeCreateEvent(input);
     } catch {
       return null;
+    }
+  }
+
+  private async listRelevantLearningMemories(context: FollowupContext) {
+    try {
+      const repository = this.agentLearningMemoriesRepository || new AgentLearningMemoriesRepository();
+      return await repository.getRelevantMemories({
+        intent: String(context.lead_profile.ultima_intencao || context.metadata.conversation_stage || "followup"),
+        stage: String(context.lead_profile.stage || context.lead_profile.commercial_stage || context.metadata.conversation_stage || ""),
+        customerMessage: context.latest_customer_message?.content || null,
+        recentContext: context.recent_messages.slice(-12).map((message) => `${message.role || "unknown"}: ${message.content || ""}`).join("\n"),
+        limit: 4
+      });
+    } catch {
+      return [];
     }
   }
 
@@ -874,21 +883,6 @@ function collectContextEvidence(context: FollowupContext) {
   return context.recent_messages
     .slice(-8)
     .map((message) => `${message.role || "unknown"}: ${String(message.content || "").slice(0, 140)}`);
-}
-
-function isSafeContextualFallback(context: FollowupContext, decision: FollowupDecision, reason: string) {
-  const followupKey = String(decision.new_followup_key || context.followup_key || "");
-  const followupType = String(decision.followup_type || "");
-
-  if (/payment|pix|download|install|support|technical|receipt|code/i.test(`${followupKey} ${followupType}`)) {
-    return false;
-  }
-
-  return (
-    followupKey === "welcome_activation" ||
-    followupType === "trial_check" ||
-    /recuperacao_de_lead|unanswered_bot|followup_contextual/i.test(reason)
-  );
 }
 
 function isOnlyQuestionMark(value: string) {

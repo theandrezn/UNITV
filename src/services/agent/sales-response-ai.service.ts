@@ -18,12 +18,22 @@ type SpecialistExample = {
   metadata?: Record<string, unknown> | null;
 };
 
+type LearnedOperationalDirective = {
+  intent?: string | null;
+  stage?: string | null;
+  rule?: string | null;
+  style_directive?: string | null;
+  avoid?: string[] | null;
+  confidence?: number | null;
+};
+
 type GenerateSalesResponseInput = {
   message: string;
   intent: string;
   leadProfile: Record<string, unknown>;
   recentMessages?: ConversationMessage[];
   specialistExamples?: SpecialistExample[];
+  learningMemories?: LearnedOperationalDirective[];
   fallbackReply?: string | null;
   useStrongModel?: boolean;
 };
@@ -56,10 +66,8 @@ const SYSTEM_PROMPT = [
   "Primeiro descubra se e renovacao ou primeira vez; depois pergunte preferencia de plano sem valores.",
   "So cite todos os valores se o cliente pedir claramente todos os valores, precos, tabela ou quais planos tem.",
   "Se o cliente escolher um plano especifico ou citar um valor, responda somente o valor daquele plano.",
-  "Se escolheu ou perguntou pelo mensal, diga que o mensal esta saindo a R$ 25 e pergunte se ele ja faz recarga; se sim, faz a quanto.",
-  "Nao avance para Pix/cartao logo apos revelar o mensal; primeiro descubra se existe recarga atual e objeção de preco.",
-  "So ofereca R$ 19,99 quando o cliente disser que faz recarga ate R$ 20, estiver comparando preco, ou deixar claro que so fez teste e sera primeira recarga.",
-  "Ao oferecer R$ 19,99, pergunte primeiro se tem interesse. Nao peca Pix/cartao na mesma mensagem.",
+  "Nunca reutilize uma mensagem pronta. Escreva uma resposta original para a conversa atual, com uma unica proxima acao clara.",
+  "Para valores e condicoes comerciais, respeite o plano, o estado e os dados oficiais recebidos no contexto. Nao invente nem antecipe desconto, Pix ou pagamento.",
   "Se escolheu mensal, considere o plano mensal de R$ 25 e nao cite os outros planos.",
   "Se informou TV Box, nao pergunte o aparelho novamente.",
   "Faca no maximo uma pergunta e conduza ao proximo passo.",
@@ -78,6 +86,7 @@ const SYSTEM_PROMPT = [
   "Se o cliente ja baixou ou instalou, nao envie download novamente; avance para teste ou ativacao.",
   "Use exemplos reais do especialista como referencia de logica e estilo, nunca como texto para copiar cegamente.",
   "Quando houver specialist_examples, priorize a logica, o ritmo e a forma de conduzir do especialista sobre respostas padrao.",
+  "Quando houver learned_operational_directives, aplique-as como principios de raciocinio, nunca como frases para repetir.",
   "Se o exemplo do especialista for curto, responda curto tambem. Nao transforme resposta curta em paragrafo grande.",
   "Evite templates genericos quando um exemplo do especialista mostrar uma abordagem mais contextual.",
   "Nao copie safe_fallback literalmente; use apenas como contexto de seguranca se precisar.",
@@ -101,6 +110,14 @@ export class SalesResponseAIService {
         content: item.content
       })),
       specialist_examples: (input.specialistExamples || []).slice(0, 3),
+      learned_operational_directives: (input.learningMemories || []).slice(0, 4).map((memory) => ({
+        intent: memory.intent || null,
+        stage: memory.stage || null,
+        rule: memory.rule || null,
+        style_directive: memory.style_directive || null,
+        avoid: memory.avoid || [],
+        confidence: memory.confidence || null
+      })),
       specialist_style_directives: buildSpecialistStyleDirectives(input.specialistExamples || []),
       safe_fallback: input.fallbackReply || null
     };
@@ -169,6 +186,7 @@ export function shouldUseAIResponse(input: {
   leadProfile: Record<string, unknown>;
   recentMessages?: ConversationMessage[];
   specialistExamplesCount?: number;
+  learningMemoriesCount?: number;
 }) {
   const normalized = input.message.trim().toLowerCase();
   const words = normalized.split(/\s+/).filter(Boolean);
@@ -180,6 +198,7 @@ export function shouldUseAIResponse(input: {
   );
   const hasHumanHistory = (input.recentMessages || []).some((item) => item.role === "human_agent");
   const hasSpecialistLearning = Number(input.specialistExamplesCount || 0) > 0;
+  const hasDailyLearning = Number(input.learningMemoriesCount || 0) > 0;
 
-  return hasSpecialistLearning || (commercialStage && (contextualShortMessage || contextualFact || hasKnownFacts || hasHumanHistory));
+  return hasSpecialistLearning || hasDailyLearning || (commercialStage && (contextualShortMessage || contextualFact || hasKnownFacts || hasHumanHistory));
 }

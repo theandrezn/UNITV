@@ -13,7 +13,7 @@ describe("daily audit schedule", () => {
     expect(result).toEqual({ runKey: "2026-07-09:23:55", shouldRun: true });
   });
 
-  it("does not run twice for the same daily key or outside the scheduled minute", () => {
+  it("does not run twice for the same daily key, but recovers after a late worker restart", () => {
     expect(shouldRunDailyAudit({
       now: new Date("2026-07-10T02:55:00.000Z"),
       timezone: "America/Sao_Paulo",
@@ -21,6 +21,13 @@ describe("daily audit schedule", () => {
       minute: 55,
       lastRunKey: "2026-07-09:23:55"
     }).shouldRun).toBe(false);
+
+    expect(shouldRunDailyAudit({
+      now: new Date("2026-07-10T02:56:00.000Z"),
+      timezone: "America/Sao_Paulo",
+      hour: 23,
+      minute: 55
+    }).shouldRun).toBe(true);
 
     expect(shouldRunDailyAudit({
       now: new Date("2026-07-10T02:54:00.000Z"),

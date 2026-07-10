@@ -354,6 +354,32 @@ describe("specialist operational learning", () => {
     expect(context.specialist_examples).toHaveLength(3);
   });
 
+  it("passes daily operational learning as principles instead of canned replies", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    openAIResponsesCreate.mockClear();
+
+    await new SalesResponseAIService().generateResponse({
+      message: "ok",
+      intent: "technical_support",
+      leadProfile: { stage: "awaiting_download_installation" },
+      learningMemories: [{
+        intent: "technical_support",
+        stage: "awaiting_download_installation",
+        rule: "Interpretar resposta curta pela ultima pergunta e manter a etapa atual.",
+        style_directive: "Uma frase curta e um proximo passo claro.",
+        avoid: ["reiniciar saudacao"],
+        confidence: 0.94
+      }]
+    });
+
+    const request = openAIResponsesCreate.mock.calls[0][0] as { input: Array<{ role: string; content: Array<{ text: string }> }> };
+    const context = JSON.parse(request.input[1].content[0].text);
+    expect(context.learned_operational_directives).toEqual([
+      expect.objectContaining({ rule: "Interpretar resposta curta pela ultima pergunta e manter a etapa atual." })
+    ]);
+    expect(context.learned_operational_directives[0]).not.toHaveProperty("specialist_message");
+  });
+
   it("passes fast specialist style directives to avoid long template replies", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     openAIResponsesCreate.mockClear();

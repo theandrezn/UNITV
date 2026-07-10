@@ -9,13 +9,15 @@ import { ConversationsRepository } from "@/repositories/conversations.repository
 import { MessagesRepository } from "@/repositories/messages.repository";
 import { SpecialistTrainingExamplesRepository } from "@/repositories/specialist-training-examples.repository";
 import { EvolutionService } from "@/services/evolution/evolution.service";
+import { DailySpecialistLearningService, type DailySpecialistLearningResult } from "@/services/agent/daily-specialist-learning.service";
 
 type DailyAuditDependencies = {
   conversationsRepository?: Pick<ConversationsRepository, "listTouchedBetween">;
   messagesRepository?: Pick<MessagesRepository, "listMessagesBetween">;
   eventLogsRepository?: Pick<AgentEventLogsRepository, "listEventsBetween" | "createEvent">;
   dailyAuditsRepository?: Pick<AgentDailyAuditsRepository, "upsertAudit" | "findByDate" | "findById" | "findPrevious" | "markSent">;
-  specialistTrainingExamplesRepository?: Pick<SpecialistTrainingExamplesRepository, "listExamplesBetween">;
+  specialistTrainingExamplesRepository?: Pick<SpecialistTrainingExamplesRepository, "listExamplesBetween"> & Partial<Pick<SpecialistTrainingExamplesRepository, "listLearningCandidatesBetween">>;
+  dailySpecialistLearningService?: Pick<DailySpecialistLearningService, "synthesizeDailyLearning">;
   evolutionService?: Pick<EvolutionService, "sendTextMessage">;
   now?: Date;
 };
@@ -32,12 +34,23 @@ type SendDailyAgentAuditInput = {
 
 const ABANDONED_AFTER_MS = 30 * 60 * 1000;
 
+function dedupeExamples(examples: Array<Record<string, unknown>>) {
+  const seen = new Set<string>();
+  return examples.filter((example) => {
+    const key = String(example.id || `${example.conversation_id || ""}:${example.created_at || ""}:${example.inferred_specialist_action || ""}`);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export class DailyAgentAuditService {
   private readonly conversationsRepository: Pick<ConversationsRepository, "listTouchedBetween">;
   private readonly messagesRepository: Pick<MessagesRepository, "listMessagesBetween">;
   private readonly eventLogsRepository: Pick<AgentEventLogsRepository, "listEventsBetween" | "createEvent">;
   private readonly dailyAuditsRepository: Pick<AgentDailyAuditsRepository, "upsertAudit" | "findByDate" | "findById" | "findPrevious" | "markSent">;
-  private readonly specialistTrainingExamplesRepository: Pick<SpecialistTrainingExamplesRepository, "listExamplesBetween">;
+  private readonly specialistTrainingExamplesRepository: Pick<SpecialistTrainingExamplesRepository, "listExamplesBetween"> & Partial<Pick<SpecialistTrainingExamplesRepository, "listLearningCandidatesBetween">>;
+  private readonly dailySpecialistLearningService: Pick<DailySpecialistLearningService, "synthesizeDailyLearning">;
   private readonly evolutionService: Pick<EvolutionService, "sendTextMessage">;
   private readonly now: Date;
 
@@ -48,6 +61,7 @@ export class DailyAgentAuditService {
     this.dailyAuditsRepository = dependencies.dailyAuditsRepository || new AgentDailyAuditsRepository();
     this.specialistTrainingExamplesRepository =
       dependencies.specialistTrainingExamplesRepository || new SpecialistTrainingExamplesRepository();
+    this.dailySpecialistLearningService = dependencies.dailySpecialistLearningService || new DailySpecialistLearningService();
     this.evolutionService = dependencies.evolutionService || new EvolutionService();
     this.now = dependencies.now || new Date();
   }
@@ -55,11 +69,14 @@ export class DailyAgentAuditService {
   async buildDailyAgentAudit(input: BuildDailyAgentAuditInput = {}) {
     const config = getDailyAuditConfig();
     const period = resolveAuditPeriod(input.date || undefined, config.timezone, this.now);
-    const [conversations, messages, events, specialistExamples, previousAudit, currentAudit] = await Promise.all([
+    const [conversations, messages, events, specialistExamples, learningCandidates, previousAudit, currentAudit] = await Promise.all([
       this.conversationsRepository.listTouchedBetween(period.periodStart, period.periodEnd),
       this.messagesRepository.listMessagesBetween(period.periodStart, period.periodEnd),
       this.eventLogsRepository.listEventsBetween(period.periodStart, period.periodEnd),
       this.specialistTrainingExamplesRepository.listExamplesBetween(period.periodStart, period.periodEnd),
+      this.specialistTrainingExamplesRepository.listLearningCandidatesBetween
+        ? this.specialistTrainingExamplesRepository.listLearningCandidatesBetween(period.periodStart, period.periodEnd)
+        : Promise.resolve([]),
       this.dailyAuditsRepository.findPrevious(period.auditDate, config.timezone),
       this.dailyAuditsRepository.findByDate(period.auditDate, config.timezone)
     ]);
@@ -76,11 +93,51 @@ export class DailyAgentAuditService {
       now: this.now
     });
 
+    const learning = await this.safelySynthesizeDailyLearning({
+      auditDate: period.auditDate,
+      timezone: config.timezone,
+      examples: dedupeExamples([...specialistExamples, ...learningCandidates]),
+      dryRun: Boolean(input.dryRun)
+    });
+    const enrichedAudit = {
+      ...audit,
+      learning_memories_created_count: learning.createdCount,
+      learning_summary: {
+        summary: learning.summary,
+        skipped_reason: learning.skippedReason || null
+      },
+      short_report: formatDailyAuditShortReport({
+        ...audit,
+        learning_memories_created_count: learning.createdCount
+      }),
+      full_report: formatDailyAuditFullReport({
+        ...audit,
+        learning_memories_created_count: learning.createdCount
+      })
+    };
+
     if (input.dryRun) {
-      return audit;
+      return enrichedAudit;
     }
 
-    return this.upsertDailyAudit(audit);
+    return this.upsertDailyAudit(enrichedAudit);
+  }
+
+  private async safelySynthesizeDailyLearning(input: {
+    auditDate: string;
+    timezone: string;
+    examples: Array<Record<string, unknown>>;
+    dryRun: boolean;
+  }): Promise<DailySpecialistLearningResult> {
+    try {
+      return await this.dailySpecialistLearningService.synthesizeDailyLearning(input);
+    } catch {
+      return {
+        createdCount: 0,
+        summary: "A auditoria foi concluida, mas a sintese de aprendizado sera tentada novamente no proximo ciclo.",
+        skippedReason: "learning_persistence_failed"
+      };
+    }
   }
 
   async upsertDailyAudit(audit: Record<string, unknown>) {

@@ -314,7 +314,7 @@ describe("WhatsappFollowupService", () => {
         }
       ],
       {
-        aiReply: null,
+        aiReply: "Fabio, ainda quer seguir com a recarga? Posso te mandar a chave Pix?",
         recentMessages: [
           { id: "m1", role: "customer", content: "Valor de 30 dias", created_at: "2026-07-09T15:22:00.000Z" },
           { id: "m2", role: "assistant", content: "O mensal esta saindo a R$ 25.", created_at: "2026-07-09T15:23:00.000Z" },
@@ -356,7 +356,7 @@ describe("WhatsappFollowupService", () => {
         }
       ],
       {
-        aiReply: null,
+        aiReply: "Boa tarde. Posso te mandar a chave Pix para seguir com a recarga?",
         recentMessages: [
           { role: "customer", content: "Mais tarde eu faco", created_at: "2026-07-09T15:35:00.000Z" },
           { role: "assistant", content: "Perfeito.", created_at: "2026-07-09T15:36:00.000Z" }
@@ -568,7 +568,7 @@ describe("WhatsappFollowupService", () => {
         }
       ],
       {
-        aiReply: null,
+        aiReply: "Fabio, posso te mandar a chave Pix para deixar sua recarga encaminhada?",
         recentMessages: [
           { id: "m1", role: "customer", content: "E Duas telas", created_at: "2026-07-09T12:34:00.000Z" },
           { id: "m2", role: "human_agent", content: "Fabio, nos estamos com bastante interesse em adquirir novos clientes, consigo fechar pra voce o plano por 17,90 por 3 Telas, o que voce acha?", created_at: "2026-07-09T12:35:00.000Z" },
@@ -690,7 +690,7 @@ describe("WhatsappFollowupService", () => {
     );
   });
 
-  it("uses safe welcome fallback when contextual AI text is unavailable in production mode", async () => {
+  it("does not send a canned welcome fallback when contextual AI text is unavailable", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     openAIResponsesCreate.mockResolvedValueOnce({
       output_text: JSON.stringify({
@@ -729,15 +729,14 @@ describe("WhatsappFollowupService", () => {
 
     const result = await service.processDueFollowups(now);
 
-    expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
-    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        text: expect.stringContaining("teste gratis")
-      })
-    );
-    expect(conversationsRepository.updateConversationMetadata).not.toHaveBeenCalledWith(
+    expect(result).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
-      expect.objectContaining({ followup_cancel_reason: "contextual_ai_reply_unavailable" })
+      expect.objectContaining({
+        followup_cancel_reason: "contextual_ai_reply_unavailable",
+        followup_due_at: "2026-07-06T12:30:00.000Z"
+      })
     );
   });
 
@@ -925,7 +924,7 @@ describe("WhatsappFollowupService", () => {
         }
       ],
       {
-        aiReply: "Nao deve substituir o valor aprovado.",
+        aiReply: "Consegui uma condicao de R$ 19,99 no mensal para voce. Faz sentido aproveitar?",
         recentMessages: [
           {
             id: "m1",
@@ -942,7 +941,7 @@ describe("WhatsappFollowupService", () => {
     expect(result).toMatchObject({ sent: 1, skipped: 0 });
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
-      text: "Consigo deixar o mensal por R$ 19,99 hoje. Quer aproveitar essa condicao?"
+      text: "Consegui uma condicao de R$ 19,99 no mensal para voce. Faz sentido aproveitar?"
     });
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
@@ -1504,7 +1503,7 @@ describe("WhatsappFollowupService", () => {
     );
   });
 
-  it("uses contextual decision message only when OpenAI is not configured", async () => {
+  it("does not send a canned contextual message when OpenAI is not configured", async () => {
     process.env.OPENAI_API_KEY = "";
     const now = new Date("2026-07-06T12:00:00.000Z");
     const { service, evolutionService, messagesRepository, conversationsRepository, auditService } = createService(
@@ -1528,29 +1527,20 @@ describe("WhatsappFollowupService", () => {
 
     const result = await service.processDueFollowups(now);
 
-    expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
-    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
-      phone: "5511999998888",
-      text: "Te ajudo a escolher o melhor plano. Voce quer mensal, trimestral ou anual?"
-    });
-    expect(messagesRepository.createMessage).toHaveBeenCalledWith(
-      expect.objectContaining({
-        role: "assistant",
-        content: "Te ajudo a escolher o melhor plano. Voce quer mensal, trimestral ou anual?"
-      })
-    );
+    expect(result).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(messagesRepository.createMessage).not.toHaveBeenCalled();
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        followup_due_at: null,
-        followup_sent_stage_id: "ask_price:values:no-ai",
-        followup_count: 1
+        followup_due_at: "2026-07-06T12:30:00.000Z",
+        followup_cancel_reason: "contextual_ai_reply_unavailable"
       })
     );
     expect(auditService.createAuditLog).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: "whatsapp_followup_sent",
-        metadata: expect.objectContaining({ followup_key: "values" })
+        action: "whatsapp_followup_skipped",
+        metadata: expect.objectContaining({ reason: "contextual_ai_reply_unavailable" })
       })
     );
   });

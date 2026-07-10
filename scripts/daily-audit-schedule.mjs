@@ -1,9 +1,10 @@
 export function shouldRunDailyAudit({ now = new Date(), timezone, hour, minute, lastRunKey = null }) {
   const parts = zonedParts(now, timezone);
   const runKey = `${parts.date}:${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  const scheduledTimeReached = parts.hour > hour || (parts.hour === hour && parts.minute >= minute);
   return {
     runKey,
-    shouldRun: parts.hour === hour && parts.minute === minute && lastRunKey !== runKey
+    shouldRun: scheduledTimeReached && lastRunKey !== runKey
   };
 }
 
