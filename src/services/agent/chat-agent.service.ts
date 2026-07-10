@@ -37,6 +37,7 @@ const PLANS_TEXT = ["Mensal — R$ 25", "3 meses — R$ 70", "6 meses — R$ 120
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
+const MONTHLY_OFFER_QUESTION = "Voce teria interesse em seguir hoje?";
 const BROAD_PRICE_QUALIFICATION_QUESTION =
   "Claro, te explico sim.\n\n" +
   "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?\n\n" +
@@ -352,11 +353,11 @@ export class ChatAgentService {
             leadProfilePatch: {
               selected_plan: "mensal",
               plano_interesse: "mensal",
-              commercial_stage: "price_comparison",
-              stage: "price_comparison",
+              commercial_stage: "monthly_offer_pending",
+              stage: "monthly_offer_pending",
               last_customer_intent: "ask_monthly_price",
-              next_expected_reply: "current_recharge_price",
-              last_bot_question: CURRENT_RECHARGE_PRICE_QUESTION
+              next_expected_reply: "monthly_offer_interest",
+              last_bot_question: MONTHLY_OFFER_QUESTION
             }
           };
         }
@@ -483,11 +484,11 @@ export class ChatAgentService {
           leadProfilePatch: {
             selected_plan: "mensal",
             plano_interesse: "mensal",
-            commercial_stage: "price_comparison",
-            stage: "price_comparison",
+            commercial_stage: "monthly_offer_pending",
+            stage: "monthly_offer_pending",
             last_customer_intent: "ask_monthly_price",
-            next_expected_reply: "current_recharge_price",
-            last_bot_question: CURRENT_RECHARGE_PRICE_QUESTION
+            next_expected_reply: "monthly_offer_interest",
+            last_bot_question: MONTHLY_OFFER_QUESTION
           }
         };
       }
@@ -1853,17 +1854,32 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
     };
   }
 
+  if (/^(sim|s|isso|ok|pode|quero|pode ser)$/.test(normalized) && /\b(interesse em seguir hoje|quer seguir com ele)\b/.test(lastBotQuestion)) {
+    return {
+      reply: PAYMENT_TEXT,
+      leadProfilePatch: {
+        selected_plan: "mensal",
+        plano_interesse: "mensal",
+        commercial_stage: "payment_choice",
+        stage: "payment_choice",
+        last_customer_intent: "monthly_offer_accepted",
+        next_expected_reply: "payment_method",
+        last_bot_question: PAYMENT_TEXT
+      }
+    };
+  }
+
   if (/^(sim|s|isso|ok|pode|quero|pode ser)$/.test(normalized) && /\b(interesse no mensal|mensal mesmo)\b/.test(lastBotQuestion)) {
     return {
       reply: buildMonthlyPriceComparisonReply(leadProfile),
       leadProfilePatch: {
         selected_plan: "mensal",
         plano_interesse: "mensal",
-        commercial_stage: "price_comparison",
-        stage: "price_comparison",
+        commercial_stage: "monthly_offer_pending",
+        stage: "monthly_offer_pending",
         last_customer_intent: "ask_monthly_price",
-        next_expected_reply: "current_recharge_price",
-        last_bot_question: CURRENT_RECHARGE_PRICE_QUESTION
+        next_expected_reply: "monthly_offer_interest",
+        last_bot_question: MONTHLY_OFFER_QUESTION
       }
     };
   }
@@ -1945,11 +1961,11 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
       leadProfilePatch: {
         selected_plan: "mensal",
         plano_interesse: "mensal",
-        commercial_stage: "price_comparison",
-        stage: "price_comparison",
+        commercial_stage: "monthly_offer_pending",
+        stage: "monthly_offer_pending",
         last_customer_intent: "ask_monthly_price",
-        next_expected_reply: "current_recharge_price",
-        last_bot_question: CURRENT_RECHARGE_PRICE_QUESTION
+        next_expected_reply: "monthly_offer_interest",
+        last_bot_question: MONTHLY_OFFER_QUESTION
       }
     };
   }
@@ -1981,7 +1997,7 @@ function buildTrafficRechargeWelcomeReply(): CommercialReplyResult {
 function buildMonthlyPriceComparisonReply(leadProfile: Record<string, unknown>) {
   const firstName = getLeadFirstName(leadProfile);
   const namePart = firstName ? `, ${firstName},` : "";
-  return `O mensal${namePart} esta saindo a R$ 25.\n\n${CURRENT_RECHARGE_PRICE_QUESTION}`;
+  return `O mensal${namePart} esta saindo a R$ 25.\n\n${MONTHLY_OFFER_QUESTION}`;
 }
 
 function buildFirstRechargePromoReply(leadProfile: Record<string, unknown>) {

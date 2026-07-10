@@ -24,6 +24,7 @@ const UNANSWERED_BOT_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const UNANSWERED_CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const RECENT_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
+const MONTHLY_PROMO_FOLLOWUP_KEY = "monthly_promo_19_99_check";
 const LEAD_RECOVERY_DELAYS_AFTER_SEND_MS = [
   2 * 60 * 60 * 1000,
   6 * 60 * 60 * 1000
@@ -299,7 +300,7 @@ export class WhatsappFollowupService {
       const sendResult = await this.evolutionService.sendTextMessage({ phone, text: followupText });
       const leadProfile = readLeadProfile(metadata);
       const nextLeadRecoveryDueAt = leadRecovery ? getNextLeadRecoveryDueAt(leadRecovery.step, now) : null;
-      const sentSpecialOffer = promoRecovery;
+      const sentSpecialOffer = promoRecovery || decision.new_followup_key === MONTHLY_PROMO_FOLLOWUP_KEY;
       const nextMetadata = {
         ...metadata,
         followup_due_at: nextLeadRecoveryDueAt,
@@ -347,6 +348,12 @@ export class WhatsappFollowupService {
                 special_promo_followup_sent: true,
                 special_promo_followup_sent_at: now.toISOString(),
                 special_promo_offer: SPECIAL_PROMO_OFFER_ID,
+                special_promo_price_cents: 1999,
+                original_price_cents: 2500,
+                stage: "special_promo_offered",
+                commercial_stage: "special_promo_offered",
+                next_expected_reply: "promo_confirmation",
+                last_bot_question: "Quer aproveitar essa condicao?",
                 next_best_action: "cliente_confirmar_promocao_para_receber_pix",
                 proxima_acao: "cliente confirmar promocao para receber Pix"
               }
@@ -462,6 +469,10 @@ export class WhatsappFollowupService {
     fallbackText: string;
     reason: string;
   }): Promise<string | null> {
+    if (input.decision.new_followup_key === MONTHLY_PROMO_FOLLOWUP_KEY) {
+      return input.fallbackText.trim() || input.decision.suggested_message?.trim() || null;
+    }
+
     const leadProfile = input.context.lead_profile || {};
     const latestCustomerMessage = input.context.latest_customer_message?.content || String(leadProfile.last_customer_answer || "");
     const aiReply = await this.salesResponseAIService.generateResponse({
@@ -1208,6 +1219,10 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
     return "Voce prefere seguir pelo Pix ou pelo cartao?";
   }
 
+  if (key === MONTHLY_PROMO_FOLLOWUP_KEY) {
+    return "Consigo deixar o mensal por R$ 19,99 hoje. Quer aproveitar essa condicao?";
+  }
+
   if (key === "pre_sale_recharge_later_4h") {
     const profile = readLeadProfile(metadata);
     const firstName = readFirstName(profile.nome);
@@ -1217,12 +1232,12 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
 
   if (key === "post_download_check_10min") {
     if (/android_phone|celular/i.test(device)) {
-      return "Voce conseguiu baixar no celular Android?";
+      return "Voce conseguiu realizar o download no celular Android?";
     }
     if (/tvbox_android|tv box/i.test(device)) {
-      return "Voce conseguiu baixar na TV Box?";
+      return "Voce conseguiu realizar o download na TV Box?";
     }
-    return "Voce conseguiu baixar?";
+    return "Voce conseguiu realizar o download?";
   }
 
   if (key === "download" || key === "install") {

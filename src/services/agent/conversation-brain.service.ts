@@ -261,6 +261,13 @@ export function validateFollowupWithConversationBrain(input: {
       return { allowed: false, reason: "post_download_without_latest_download_instruction" };
     }
   }
+  if (key === "monthly_promo_19_99_check") {
+    if (input.customerRepliedAfterBaseMessage) return { allowed: false, reason: "customer_replied_after_followup_base" };
+    if (input.humanRepliedAfterBaseMessage) return { allowed: false, reason: "human_context_blocks_followup" };
+    if (!/\bmensal\b.*\br\$\s*25\b[\s\S]*\binteresse\b/i.test(String(input.lastBotMessage || ""))) {
+      return { allowed: false, reason: "monthly_promo_without_latest_monthly_offer" };
+    }
+  }
   return { allowed: true, reason: "conversation_brain_followup_allowed" };
 }
 

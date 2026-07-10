@@ -217,14 +217,14 @@ describe("commercial WhatsApp agent", () => {
     expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(result.reply).toContain("mensal");
     expect(result.reply).toContain("R$");
-    expect(result.reply).toContain("faz a quanto?");
+    expect(result.reply).toContain("Voce teria interesse em seguir hoje?");
     expect(result.reply).not.toContain("R$ 19,99");
   });
 
   it.each([
     ["Ativar", {}, "ja usa o UNITV", "R$ 25"],
     ["Nao paguei ainda", {}, "3 dias", "comprovante"],
-    ["Mensal", { wants_activation: true }, "faz a quanto?", "Qual plano"],
+    ["Mensal", { wants_activation: true }, "Voce teria interesse em seguir hoje?", "Qual plano"],
     ["Ja baixei", { device: "tvbox" }, "3 dias", "ja baixou"],
     ["Sim", { last_bot_question: "Voce ja baixou o app?" }, "ativa\u00e7\u00e3o", "ja baixou"],
     ["Ja usei", {}, "preferencia por qual plano", "R$ 25"],
@@ -695,7 +695,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.requiresHuman).toBeUndefined();
   });
 
-  it("shows the monthly value after the customer confirms monthly interest", async () => {
+  it("shows the monthly value and asks whether the customer wants to continue today", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -711,15 +711,16 @@ describe("commercial WhatsApp agent", () => {
 
     expect(result.reply).toContain("mensal");
     expect(result.reply).toContain("R$ 25");
-    expect(result.reply).toContain("Voce ja faz a recarga?");
+    expect(result.reply).toContain("Voce teria interesse em seguir hoje?");
+    expect(result.reply).not.toContain("Voce ja faz a recarga?");
     expect(result.leadProfilePatch).toMatchObject({
       selected_plan: "mensal",
-      next_expected_reply: "current_recharge_price",
-      commercial_stage: "price_comparison"
+      next_expected_reply: "monthly_offer_interest",
+      commercial_stage: "monthly_offer_pending"
     });
   });
 
-  it("answers monthly price with name and asks current recharge price before Pix", async () => {
+  it("answers monthly price with name and keeps the offer pending before payment", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -731,14 +732,36 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("O mensal, Celio, esta saindo a R$ 25");
-    expect(result.reply).toContain("Voce ja faz a recarga?");
-    expect(result.reply).toContain("faz a quanto?");
+    expect(result.reply).toContain("Voce teria interesse em seguir hoje?");
+    expect(result.reply).not.toContain("Voce ja faz a recarga?");
     expect(result.reply).not.toContain("Pix");
     expect(result.reply).not.toContain("R$ 70");
     expect(result.leadProfilePatch).toMatchObject({
       selected_plan: "mensal",
-      next_expected_reply: "current_recharge_price",
-      last_bot_question: "Voce ja faz a recarga? Se sim, faz a quanto?"
+      next_expected_reply: "monthly_offer_interest",
+      last_bot_question: "Voce teria interesse em seguir hoje?"
+    });
+  });
+
+  it("moves to payment choice after the customer accepts the monthly offer", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "sim",
+      classification: { intent: "unknown", confidence: 0.95, summary: "aceite", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: { lead_profile: { selected_plan: "mensal", last_bot_question: "Voce teria interesse em seguir hoje?" } }
+      },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("Pix ou cartão");
+    expect(result.leadProfilePatch).toMatchObject({
+      selected_plan: "mensal",
+      commercial_stage: "payment_choice",
+      next_expected_reply: "payment_method"
     });
   });
 
@@ -928,7 +951,7 @@ describe("commercial WhatsApp agent", () => {
     expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(result.reply).toContain("mensal");
     expect(result.reply).toContain("R$");
-    expect(result.reply).toContain("faz a quanto?");
+    expect(result.reply).toContain("Voce teria interesse em seguir hoje?");
     expect(result.reply).not.toContain("Pix");
     expect(result.reply).not.toContain("R$ 70");
     expect(result.reply).not.toContain("R$ 120");
@@ -1697,7 +1720,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(result.reply).not.toContain("Cartao:");
     expect(result.reply).not.toContain("Para gerar o Pix Copia e Cola");
-    expect(result.reply).toContain("faz a quanto?");
+    expect(result.reply).toContain("Voce teria interesse em seguir hoje?");
     expect(result.reply).not.toContain("Quer que eu gere o Pix");
     expect(result.menu).toBeUndefined();
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");

@@ -38,6 +38,7 @@ const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
 const CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const POST_DOWNLOAD_FOLLOWUP_DELAY_MS = 10 * 60 * 1000;
+const MONTHLY_PROMO_FOLLOWUP_DELAY_MS = 10 * 60 * 1000;
 const RESPONSE_INTENT_LOCK_MS = 30 * 60 * 1000;
 const PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY = "pre_sale_recharge_later_4h";
 const PRE_SALE_RECHARGE_LATER_DELAY_MS = 4 * 60 * 60 * 1000;
@@ -1863,11 +1864,34 @@ function buildFollowupState(
     };
   }
 
+  if (
+    key === "monthly_promo_19_99_check" &&
+    metadata?.followup_key === "monthly_promo_19_99_check" &&
+    typeof metadata.followup_due_at === "string"
+  ) {
+    return {
+      followup_key: "monthly_promo_19_99_check",
+      followup_due_at: metadata.followup_due_at,
+      followup_sent_at: metadata.followup_sent_at || null,
+      followup_sent_stage_id: metadata.followup_sent_stage_id || null,
+      followup_count: Number(metadata.followup_count || 0),
+      last_followup_stage_id: metadata.last_followup_stage_id || `monthly_promo_19_99_check:${now.getTime()}`,
+      awaiting_customer_action: metadata.awaiting_customer_action || "confirm_monthly_offer",
+      conversation_stage: metadata.conversation_stage || "monthly_offer_pending",
+      followup_type: "monthly_promo_19_99_check",
+      context_stage: metadata.context_stage || "monthly_offer_pending",
+      created_reason: metadata.created_reason || "monthly offer sent without customer reply",
+      last_bot_monthly_offer_at: metadata.last_bot_monthly_offer_at || now.toISOString(),
+      plan_interest: "mensal"
+    };
+  }
+
   const stageId = `${intent || "conversation"}:${key}:${now.getTime()}`;
   const isPostDownload = key === "post_download_check_10min";
+  const isMonthlyPromo = key === "monthly_promo_19_99_check";
   return {
     followup_key: key,
-    followup_due_at: new Date(now.getTime() + (isPostDownload ? POST_DOWNLOAD_FOLLOWUP_DELAY_MS : CUSTOMER_FOLLOWUP_DELAY_MS)).toISOString(),
+    followup_due_at: new Date(now.getTime() + (isPostDownload ? POST_DOWNLOAD_FOLLOWUP_DELAY_MS : isMonthlyPromo ? MONTHLY_PROMO_FOLLOWUP_DELAY_MS : CUSTOMER_FOLLOWUP_DELAY_MS)).toISOString(),
     followup_sent_at: null,
     followup_sent_stage_id: null,
     followup_count: 0,
@@ -1879,6 +1903,11 @@ function buildFollowupState(
       context_stage: "download_sent",
       created_reason: "download instructions sent",
       last_bot_download_message_at: now.toISOString()
+    } : isMonthlyPromo ? {
+      followup_type: "monthly_promo_19_99_check",
+      context_stage: "monthly_offer_pending",
+      created_reason: "monthly offer sent without customer reply",
+      last_bot_monthly_offer_at: now.toISOString()
     } : {}),
     plan_interest: metadata?.lead_profile && typeof metadata.lead_profile === "object"
       ? (metadata.lead_profile as Record<string, unknown>).plano_interesse || metadata.plan_interest || null
@@ -2234,6 +2263,9 @@ function inferFollowupKey(
   intent: string
 ) {
   const reply = output.reply.toLowerCase();
+  if (/o mensal.*r\$\s*25[\s\S]*voce teria interesse em seguir hoje\?/i.test(output.reply)) {
+    return "monthly_promo_19_99_check";
+  }
   if (/mediafire\.com|baixe por aqui|download|baixar|apk|downloader|tutorial|youtube\.com|voce prefere instalar pelo link ou pelo downloader|você prefere instalar pelo link ou pelo downloader/i.test(output.reply)) {
     return "post_download_check_10min";
   }
@@ -2270,6 +2302,7 @@ function inferAwaitingAction(key: string) {
     payment_choice: "choose_payment_method",
     download: "confirm_download",
     post_download_check_10min: "confirm_download",
+    monthly_promo_19_99_check: "confirm_monthly_offer",
     install: "install_app",
     test: "confirm_test",
     pix: "send_proof",
@@ -2287,6 +2320,7 @@ function inferConversationStage(intent: string, key: string) {
   if (key === "welcome_activation") return "boas_vindas";
   if (key === "proof") return "aguardando_comprovante";
   if (key === "download" || key === "install" || key === "post_download_check_10min") return "instalacao";
+  if (key === "monthly_promo_19_99_check") return "monthly_offer_pending";
   if (key === "test") return "teste";
   if (key === "values" || key === "plan_choice") return "valores";
   if (intent === "human_help") return "humano";

@@ -104,11 +104,11 @@ describe("WhatsappFollowupService", () => {
       "Voce prefere fazer o teste gratis ou quer ativar o mensal?"
     );
     const downloadFollowup = buildFollowupText({ followup_key: "post_download_check_10min", device: "TV Box / Android TV" });
-    expect(downloadFollowup).toBe("Voce conseguiu baixar na TV Box?");
+    expect(downloadFollowup).toBe("Voce conseguiu realizar o download na TV Box?");
     expect(downloadFollowup.trim().endsWith("?")).toBe(true);
     expect(buildFollowupText({ followup_key: "download", device: "android_tv_google_tv" })).toContain("Play Store");
-    expect(buildFollowupText({ followup_key: "post_download_check_10min", device: "android_phone" })).toBe("Voce conseguiu baixar no celular Android?");
-    expect(buildFollowupText({ followup_key: "post_download_check_10min", device: "unknown" })).toBe("Voce conseguiu baixar?");
+    expect(buildFollowupText({ followup_key: "post_download_check_10min", device: "android_phone" })).toBe("Voce conseguiu realizar o download no celular Android?");
+    expect(buildFollowupText({ followup_key: "post_download_check_10min", device: "unknown" })).toBe("Voce conseguiu realizar o download?");
     expect(buildFollowupText({ followup_key: "download", device: "firestick" })).toContain("862585");
     expect(buildFollowupText({ followup_key: "install", device: "unknown" })).toContain("Android ou Play Store?");
     expect(buildUnansweredCustomerFallbackText({ followup_key: "download", conversation_stage: "instalacao" }, "Ok")).toBe("Conseguiu avancar?");
@@ -142,7 +142,7 @@ describe("WhatsappFollowupService", () => {
       recentMessages: [
         { role: "assistant", content: "Baixe por aqui: https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file" }
       ],
-      aiReply: "Voce conseguiu baixar no celular Android?"
+        aiReply: "Voce conseguiu realizar o download no celular Android?"
     });
 
     expect(await service.processDueFollowups(new Date("2026-07-09T14:09:59.000Z"))).toMatchObject({ sent: 0 });
@@ -151,7 +151,7 @@ describe("WhatsappFollowupService", () => {
     expect(await service.processDueFollowups(new Date("2026-07-09T14:10:00.000Z"))).toMatchObject({ checked: 1, sent: 1 });
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
-      text: "Voce conseguiu baixar no celular Android?"
+      text: "Voce conseguiu realizar o download no celular Android?"
     });
   });
 
@@ -265,16 +265,16 @@ describe("WhatsappFollowupService", () => {
       recentMessages: [
         { role: "assistant", content: "APK TV Box: https://www.mediafire.com/app.apk", created_at: "2026-07-09T14:00:00.000Z" }
       ],
-      aiReply: "Voce conseguiu baixar na TV Box?"
+        aiReply: "Voce conseguiu realizar o download na TV Box?"
     });
 
     expect(await service.processDueFollowups(new Date("2026-07-09T14:10:00.000Z"))).toMatchObject({ sent: 1 });
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
-      text: "Voce conseguiu baixar na TV Box?"
+      text: "Voce conseguiu realizar o download na TV Box?"
     });
 
-    expect(buildFollowupText({ followup_key: "post_download_check_10min" })).toBe("Voce conseguiu baixar?");
+    expect(buildFollowupText({ followup_key: "post_download_check_10min" })).toBe("Voce conseguiu realizar o download?");
   });
 
   it("uses renewal wording after values when the customer wants recarga", () => {
@@ -900,6 +900,95 @@ describe("WhatsappFollowupService", () => {
         lead_profile: expect.objectContaining({ stage: "awaiting_payment" })
       })
     );
+  });
+
+  it("sends the R$ 19,99 monthly condition only after the customer stays silent for the scheduled offer", async () => {
+    const { service, evolutionService, conversationsRepository } = createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "monthly_promo_19_99_check",
+            followup_type: "monthly_promo_19_99_check",
+            followup_due_at: "2026-07-06T12:00:00.000Z",
+            last_bot_message_at: "2026-07-06T11:50:00.000Z",
+            last_bot_monthly_offer_at: "2026-07-06T11:50:00.000Z",
+            last_followup_stage_id: "ask_price:monthly_promo_19_99_check:1",
+            lead_profile: {
+              selected_plan: "mensal",
+              stage: "monthly_offer_pending",
+              commercial_stage: "monthly_offer_pending"
+            }
+          }
+        }
+      ],
+      {
+        aiReply: "Nao deve substituir o valor aprovado.",
+        recentMessages: [
+          {
+            id: "m1",
+            role: "assistant",
+            content: "O mensal esta saindo a R$ 25.\n\nVoce teria interesse em seguir hoje?",
+            created_at: "2026-07-06T11:50:00.000Z"
+          }
+        ]
+      }
+    );
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"));
+
+    expect(result).toMatchObject({ sent: 1, skipped: 0 });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "Consigo deixar o mensal por R$ 19,99 hoje. Quer aproveitar essa condicao?"
+    });
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        lead_profile: expect.objectContaining({
+          special_promo_followup_sent: true,
+          special_promo_offer: "mensal_19_99_first_2_months",
+          special_promo_price_cents: 1999
+        })
+      })
+    );
+  });
+
+  it("cancels the monthly promotion when the customer or specialist responds after the R$ 25 offer", async () => {
+    const createMonthlyOfferConversation = (recentMessages: Array<Record<string, unknown>>) => createService(
+      [
+        {
+          id: "conversation-id",
+          customer_id: "customer-id",
+          customers: { id: "customer-id", phone: "5511999998888" },
+          metadata: {
+            followup_key: "monthly_promo_19_99_check",
+            followup_type: "monthly_promo_19_99_check",
+            followup_due_at: "2026-07-06T12:00:00.000Z",
+            last_bot_message_at: "2026-07-06T11:50:00.000Z",
+            last_bot_monthly_offer_at: "2026-07-06T11:50:00.000Z",
+            lead_profile: { selected_plan: "mensal", stage: "monthly_offer_pending" }
+          }
+        }
+      ],
+      { recentMessages }
+    );
+
+    const customerReply = createMonthlyOfferConversation([
+      { role: "assistant", content: "O mensal esta saindo a R$ 25. Voce teria interesse em seguir hoje?", created_at: "2026-07-06T11:50:00.000Z" },
+      { role: "customer", content: "vou pensar", created_at: "2026-07-06T11:55:00.000Z" }
+    ]);
+    const humanReply = createMonthlyOfferConversation([
+      { role: "assistant", content: "O mensal esta saindo a R$ 25. Voce teria interesse em seguir hoje?", created_at: "2026-07-06T11:50:00.000Z" },
+      { role: "human_agent", content: "Vou te ajudar por aqui.", created_at: "2026-07-06T11:55:00.000Z" }
+    ]);
+
+    expect(await customerReply.service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"))).toMatchObject({ sent: 0, skipped: 1 });
+    expect(await humanReply.service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"))).toMatchObject({ sent: 0, skipped: 1 });
+    expect(customerReply.evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(humanReply.evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
 
   it("does not offer the promotional recovery twice or to cold leads", () => {
