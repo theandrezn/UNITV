@@ -43,21 +43,25 @@ export class DailySpecialistLearningService {
       return { createdCount: 0, summary: "Aprendizado diario aguardando configuracao da IA.", skippedReason: "learning_model_unavailable" };
     }
 
-    const learning = await this.generateLearning(examples);
-    if (!learning) {
-      return { createdCount: 0, summary: "Nao foi possivel sintetizar uma regra segura a partir dos exemplos do dia.", skippedReason: "unsafe_or_invalid_learning" };
+    const generated = await this.generateLearning(examples);
+    if (!generated.learning) {
+      return {
+        createdCount: 0,
+        summary: learningFailureSummary(generated.skippedReason),
+        skippedReason: generated.skippedReason
+      };
     }
 
     const eligibleExampleIds = new Set(examples.map((example) => String(example.id || "")).filter(Boolean));
-    const memories = learning.directives
+    const memories = generated.learning.directives
       .filter((directive) => isSafeDirective(directive, eligibleExampleIds))
       .map((directive) => toMemory(directive, input, examples));
     if (input.dryRun || !memories.length) {
-      return { createdCount: memories.length, summary: learning.summary, skippedReason: input.dryRun ? "dry_run" : "no_safe_directives" };
+      return { createdCount: memories.length, summary: generated.learning.summary, skippedReason: input.dryRun ? "dry_run" : "no_safe_directives" };
     }
 
     await this.memoriesRepository.upsertMemories(memories);
-    return { createdCount: memories.length, summary: learning.summary };
+    return { createdCount: memories.length, summary: generated.learning.summary };
   }
 
   private async generateLearning(examples: Array<Record<string, unknown>>) {
@@ -108,11 +112,31 @@ export class DailySpecialistLearningService {
         }
       });
       const parsed = learningSchema.safeParse(JSON.parse(response.output_text || "{}"));
-      return parsed.success ? parsed.data : null;
-    } catch {
-      return null;
+      return parsed.success
+        ? { learning: parsed.data, skippedReason: undefined }
+        : { learning: null, skippedReason: "unsafe_or_invalid_learning" };
+    } catch (error) {
+      return { learning: null, skippedReason: classifyLearningModelError(error) };
     }
   }
+}
+
+function classifyLearningModelError(error: unknown) {
+  const candidate = error as { status?: unknown; code?: unknown } | null;
+  if (Number(candidate?.status) === 429 || candidate?.code === "insufficient_quota") {
+    return "learning_model_quota_exhausted";
+  }
+  return "learning_model_request_failed";
+}
+
+function learningFailureSummary(reason: string | undefined) {
+  if (reason === "learning_model_quota_exhausted") {
+    return "A IA ficou sem quota. Os exemplos aprovados foram preservados e o aprendizado sera tentado novamente no proximo ciclo.";
+  }
+  if (reason === "learning_model_request_failed") {
+    return "A IA de aprendizado ficou indisponivel. Os exemplos aprovados foram preservados para nova tentativa.";
+  }
+  return "Nao foi possivel sintetizar uma regra segura a partir dos exemplos do dia.";
 }
 
 function isEligibleExample(example: Record<string, unknown>) {

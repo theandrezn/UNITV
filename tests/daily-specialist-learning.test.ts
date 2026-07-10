@@ -86,6 +86,26 @@ describe("daily specialist learning", () => {
     expect(upsertMemories).not.toHaveBeenCalled();
   });
 
+  it("preserves approved examples for retry when the learning model has no quota", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    openAIResponsesCreate.mockRejectedValueOnce(Object.assign(new Error("quota"), {
+      status: 429,
+      code: "insufficient_quota"
+    }));
+    const upsertMemories = vi.fn();
+    const service = new DailySpecialistLearningService({ upsertMemories } as never);
+
+    const result = await service.synthesizeDailyLearning({
+      auditDate: "2026-07-10",
+      timezone: "America/Sao_Paulo",
+      examples: [{ id: "d5589076-5a12-4fa6-bcd4-f9cfad12dba4", review_status: "approved", outcome_status: "positive" }]
+    });
+
+    expect(result).toMatchObject({ createdCount: 0, skippedReason: "learning_model_quota_exhausted" });
+    expect(result.summary).toContain("preservados");
+    expect(upsertMemories).not.toHaveBeenCalled();
+  });
+
   it("retrieves the most relevant active memory for the current stage", async () => {
     const memories = [
       {

@@ -108,11 +108,13 @@ export class DailyAgentAuditService {
       },
       short_report: formatDailyAuditShortReport({
         ...audit,
-        learning_memories_created_count: learning.createdCount
+        learning_memories_created_count: learning.createdCount,
+        learning_skipped_reason: learning.skippedReason || null
       }),
       full_report: formatDailyAuditFullReport({
         ...audit,
-        learning_memories_created_count: learning.createdCount
+        learning_memories_created_count: learning.createdCount,
+        learning_skipped_reason: learning.skippedReason || null
       })
     };
 

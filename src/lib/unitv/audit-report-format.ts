@@ -24,6 +24,7 @@ type ReportInput = {
   approved_specialist_examples_count: number;
   pending_specialist_examples_count: number;
   learning_memories_created_count?: number;
+  learning_skipped_reason?: string | null;
   abandoned_after_price_count: number;
   abandoned_after_download_count: number;
   abandoned_after_pix_count: number;
@@ -76,6 +77,9 @@ export function formatDailyAuditShortReport(audit: ReportInput) {
     `- Follow-ups cancelados por contexto: ${audit.followup_cancelled_count}`,
     `- Exemplos do Andre aprovados/pendentes: ${audit.approved_specialist_examples_count}/${audit.pending_specialist_examples_count}`,
     `- Licoes operacionais criadas: ${audit.learning_memories_created_count || 0}`,
+    ...(audit.learning_skipped_reason && audit.learning_skipped_reason !== "no_eligible_examples"
+      ? [`- Aprendizado adiado: ${audit.learning_skipped_reason}`]
+      : []),
     "",
     "Principais objecoes:",
     ...padTopList(objections),

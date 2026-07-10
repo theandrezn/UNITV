@@ -54,6 +54,10 @@ export async function handleDailyAgentAuditJob(
       approved_specialist_examples_count: audit.approved_specialist_examples_count,
       pending_specialist_examples_count: audit.pending_specialist_examples_count,
       learning_memories_created_count: Number(audit.learning_memories_created_count || 0),
+      learning_skipped_reason:
+        audit.learning_summary && typeof audit.learning_summary === "object" && "skipped_reason" in audit.learning_summary
+          ? String((audit.learning_summary as Record<string, unknown>).skipped_reason || "") || null
+          : null,
       pix_requested_not_paid_count: audit.pix_requested_not_paid_count
     },
     short_report: dryRun ? audit.short_report : undefined
