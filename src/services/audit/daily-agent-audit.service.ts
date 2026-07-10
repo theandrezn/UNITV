@@ -205,6 +205,19 @@ export function buildAuditRecord(input: {
       .filter((problem) => /^abandoned_after_/.test(String(problem.problem_key || "")))
       .map((problem) => String(problem.conversation_id || ""))
   ].filter(Boolean));
+  const humanTakeoverConversationIds = new Set([
+    ...conversationIdsForEvents(input.events, "human_intervention"),
+    ...input.specialistExamples.map((example) => String(example.conversation_id || ""))
+  ].filter(Boolean));
+  const repeatedQuestionConversationIds = new Set(conversationIdsForEvents(input.events, "repetition_blocked"));
+  const greetingBlockedConversationIds = new Set(conversationIdsForEvents(input.events, "greeting_blocked"));
+  const followupCancelledConversationIds = new Set(conversationIdsForEvents(input.events, "followup_cancelled"));
+  const downloadStuckConversationIds = new Set([
+    ...conversationIdsForEvents(input.events, "install_stuck"),
+    ...problemConversations
+      .filter((problem) => problem.problem_key === "install_stuck")
+      .map((problem) => String(problem.conversation_id || ""))
+  ].filter(Boolean));
   const approvedSpecialistExamples = input.specialistExamples.filter((example) => example.review_status === "approved");
   const pendingSpecialistExamples = input.specialistExamples.filter((example) => example.review_status === "pending_review");
 
@@ -234,11 +247,11 @@ export function buildAuditRecord(input: {
     converted_count: eventCounts.converted || 0,
     sales_concluded_count: salesConcludedConversationIds.size,
     customer_abandoned_count: abandonedConversationIds.size,
-    human_takeover_count: eventCounts.human_intervention || 0,
-    repeated_question_count: eventCounts.repetition_blocked || 0,
-    greeting_blocked_count: eventCounts.greeting_blocked || 0,
-    download_stuck_count: Math.max(eventCounts.install_stuck || 0, problemCounts.install_stuck || 0),
-    followup_cancelled_count: eventCounts.followup_cancelled || 0,
+    human_takeover_count: humanTakeoverConversationIds.size,
+    repeated_question_count: repeatedQuestionConversationIds.size,
+    greeting_blocked_count: greetingBlockedConversationIds.size,
+    download_stuck_count: downloadStuckConversationIds.size,
+    followup_cancelled_count: followupCancelledConversationIds.size,
     approved_specialist_examples_count: approvedSpecialistExamples.length,
     pending_specialist_examples_count: pendingSpecialistExamples.length,
     abandoned_after_price_count: problemCounts.abandoned_after_price || 0,
@@ -257,8 +270,8 @@ export function buildAuditRecord(input: {
       abandoned_after_download: problemCounts.abandoned_after_download || 0,
       abandoned_after_pix: problemCounts.abandoned_after_pix || 0,
       customer_abandoned: abandonedConversationIds.size,
-      download_stuck: Math.max(eventCounts.install_stuck || 0, problemCounts.install_stuck || 0),
-      followup_cancelled: eventCounts.followup_cancelled || 0
+      download_stuck: downloadStuckConversationIds.size,
+      followup_cancelled: followupCancelledConversationIds.size
     },
     top_problem_conversations: problemConversations.slice(0, 10)
   };
@@ -425,6 +438,13 @@ function countBy(items: Array<Record<string, unknown>>, keyFn: (item: Record<str
     if (key) output[key] = (output[key] || 0) + 1;
   }
   return output;
+}
+
+function conversationIdsForEvents(events: Array<Record<string, unknown>>, eventType: string) {
+  return events
+    .filter((event) => event.event_type === eventType)
+    .map((event) => String(event.conversation_id || ""))
+    .filter(Boolean);
 }
 
 function countValues(values: unknown[]) {

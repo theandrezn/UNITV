@@ -140,6 +140,31 @@ describe("daily agent audit aggregation", () => {
     expect(audit.recommendations.length).toBeGreaterThan(0);
   });
 
+  it("counts quality categories by unique conversation instead of repeated events", () => {
+    const audit = buildAuditRecord({
+      period,
+      timezone: "America/Sao_Paulo",
+      conversations: [conversation("same", { lead_profile: { stage: "instalacao" } })],
+      messages: [],
+      events: [
+        event("same", "human_intervention"),
+        event("same", "human_intervention"),
+        event("same", "repetition_blocked"),
+        event("same", "repetition_blocked"),
+        event("same", "followup_cancelled"),
+        event("same", "followup_cancelled"),
+        event("same", "install_stuck")
+      ],
+      specialistExamples: [],
+      now: new Date("2026-07-06T18:00:00.000Z")
+    });
+
+    expect(audit.human_takeover_count).toBe(1);
+    expect(audit.repeated_question_count).toBe(1);
+    expect(audit.followup_cancelled_count).toBe(1);
+    expect(audit.download_stuck_count).toBe(1);
+  });
+
   it("masks sensitive data in audit text and phones", () => {
     const masked = maskAuditText("CPF 123.456.789-09 Pix: 67070222000151 codigo ABC12345");
     expect(masked).not.toContain("123.456.789-09");
