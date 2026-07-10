@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { createOpenAIClient, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
 import { AgentLearningMemoriesRepository, type AgentLearningMemory } from "@/repositories/agent-learning-memories.repository";
+import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 
 const directiveSchema = z.object({
   intent: z.string().nullable(),
@@ -66,8 +67,11 @@ export class DailySpecialistLearningService {
 
   private async generateLearning(examples: Array<Record<string, unknown>>) {
     try {
-      const response = await createOpenAIClient().responses.create({
-        model: getStrongSalesAgentOpenAIModel(),
+      const model = getStrongSalesAgentOpenAIModel();
+      const response = await executeObservedOpenAICall(
+        { callType: "daily_specialist_learning", model },
+        () => createOpenAIClient().responses.create({
+        model,
         input: [
           {
             role: "system",
@@ -109,8 +113,14 @@ export class DailySpecialistLearningService {
             schema: toJsonSchema(),
             strict: true
           }
-        }
-      });
+        },
+        reasoning: { effort: "low" },
+        max_output_tokens: 900
+      })
+      );
+      if (!response) {
+        return { learning: null, skippedReason: "learning_model_circuit_open" };
+      }
       const parsed = learningSchema.safeParse(JSON.parse(response.output_text || "{}"));
       return parsed.success
         ? { learning: parsed.data, skippedReason: undefined }

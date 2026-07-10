@@ -469,7 +469,7 @@ export class WhatsappMessageService {
         suggested_reply: ""
       };
     } else {
-      classification = await this.intentClassifier.classify({ message: message.text });
+      classification = await this.intentClassifier.classify({ message: message.text, conversationId: conversation.id });
     }
 
     const leadProfilePatch = buildLeadProfilePatch(message.text, classification.intent, conversation.metadata);
@@ -522,7 +522,7 @@ export class WhatsappMessageService {
     });
     const contextualDecision = await this.contextualIntelligenceService.extract({
       context: contextSnapshot,
-      useStrongModel: shouldUseStrongContextModel(message.text, contextSnapshot)
+      useStrongModel: false
     });
     const conversationBrainDecision = this.conversationBrainService.decide({
       context: contextSnapshot,
@@ -1088,6 +1088,7 @@ export class WhatsappMessageService {
       : null;
 
     return {
+      conversation_id: conversation.id,
       current_message: message.text,
       recent_messages: recentMessages,
       lead_profile: leadProfile,
@@ -1240,6 +1241,7 @@ export class WhatsappMessageService {
       const maskedBotMessage = maskSpecialistTrainingText(botPreviousText);
       const maskedSpecialistMessage = maskSpecialistTrainingText(message.text) || "";
       const analysis = await this.specialistInterventionAnalysis.analyzeSpecialistIntervention({
+        conversationId: conversation.id,
         customerLastMessage: maskedCustomerMessage,
         botPreviousMessage: maskedBotMessage,
         specialistMessage: maskedSpecialistMessage,

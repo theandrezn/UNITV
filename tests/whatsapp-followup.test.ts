@@ -1133,7 +1133,7 @@ describe("WhatsappFollowupService", () => {
     expect(decision.suggested_message).not.toContain("tela de login");
   });
 
-  it("uses the LLM decision for contextual follow-ups before deterministic send text", async () => {
+  it("uses the state decision before calling AI only to compose a valid follow-up", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     openAIResponsesCreate.mockResolvedValueOnce({
       output_text: JSON.stringify({
@@ -1177,17 +1177,73 @@ describe("WhatsappFollowupService", () => {
     const result = await service.processDueFollowups(now);
 
     expect(result.sent).toBe(1);
-    expect(openAIResponsesCreate).toHaveBeenCalledTimes(1);
+    expect(openAIResponsesCreate).not.toHaveBeenCalled();
     expect(salesResponseAIService.generateResponse).toHaveBeenCalledWith(
       expect.objectContaining({
         fallbackReply: "Conseguiu baixar o Downloader na Play Store?",
-        intent: "download_check"
+        intent: "download_check",
+        useStrongModel: false
       })
     );
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "556581336536",
       text: "Conseguiu baixar o Downloader certinho?"
     });
+  });
+
+  it("marks an unsafe follow-up context as processed so the one-minute worker does not retry it", async () => {
+    const conversation = {
+      id: "conversation-id",
+      customer_id: "customer-id",
+      customers: { id: "customer-id", phone: "556581336536" },
+      metadata: {
+        followup_key: "unknown_legacy_key",
+        followup_due_at: "2026-07-08T21:53:00.000Z",
+        last_bot_message_at: "2026-07-08T21:40:00.000Z",
+        last_customer_message_at: "2026-07-08T21:42:00.000Z"
+      }
+    };
+    const { service, salesResponseAIService, conversationsRepository } = createService([conversation]);
+
+    expect(await service.processDueFollowups(new Date("2026-07-08T21:53:00.000Z"))).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(conversation.metadata).toMatchObject({
+      followup_key: null,
+      followup_due_at: null,
+      unanswered_customer_followup_for_message_at: "2026-07-08T21:42:00.000Z"
+    });
+
+    expect(await service.processDueFollowups(new Date("2026-07-08T21:54:00.000Z"))).toEqual({ checked: 1, sent: 0, skipped: 0 });
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes only the latest twelve clean messages to follow-up copy generation", async () => {
+    const recentMessages = Array.from({ length: 18 }, (_, index) => ({
+      id: `message-${index}`,
+      role: index === 17 ? "assistant" : index % 2 === 0 ? "customer" : "assistant",
+      content: index === 17 ? "Baixe pelo Downloader e me avisa quando terminar." : `Mensagem ${index}`,
+      created_at: `2026-07-08T21:${String(index).padStart(2, "0")}:00.000Z`,
+      metadata: { very_large_internal_payload: "nao deve ir para a IA" }
+    }));
+    const { service, salesResponseAIService } = createService([
+      {
+        id: "conversation-id",
+        customer_id: "customer-id",
+        customers: { id: "customer-id", phone: "556581336536" },
+        metadata: {
+          followup_key: "download",
+          followup_due_at: "2026-07-08T22:00:00.000Z",
+          last_bot_message_at: "2026-07-08T21:47:00.000Z",
+          conversation_stage: "instalacao"
+        }
+      }
+    ], { recentMessages, aiReply: "Conseguiu baixar?" });
+
+    await service.processDueFollowups(new Date("2026-07-08T22:00:00.000Z"));
+
+    const aiInput = (salesResponseAIService.generateResponse as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(aiInput.recentMessages).toHaveLength(12);
+    expect(aiInput.recentMessages.every((message: Record<string, unknown>) => !("metadata" in message))).toBe(true);
   });
 
   it("does not send deterministic follow-up text when LLM text generation fails in production mode", async () => {

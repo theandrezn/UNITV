@@ -1,6 +1,7 @@
 import "server-only";
 import { z } from "zod";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
+import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 
 const commercialIntentSchema = z.enum([
   "activate",
@@ -125,6 +126,7 @@ export const contextualDecisionSchema = z.object({
 export type ContextualDecision = z.infer<typeof contextualDecisionSchema>;
 
 export type CommercialContext = {
+  conversation_id?: string | null;
   current_message: string;
   recent_messages: Array<{ role?: string; content?: string | null }>;
   lead_profile: Record<string, unknown>;
@@ -166,11 +168,14 @@ export class ContextualIntelligenceService {
 
     try {
       const client = createOpenAIClient();
-      const response = await client.responses.create({
-        model: input.useStrongModel ? getStrongSalesAgentOpenAIModel() : getSalesAgentOpenAIModel(),
+      const model = input.useStrongModel ? getStrongSalesAgentOpenAIModel() : getSalesAgentOpenAIModel();
+      const response = await executeObservedOpenAICall(
+        { callType: "context_interpretation", model, conversationId: input.context.conversation_id || null },
+        () => client.responses.create({
+        model,
         input: [
           { role: "system", content: [{ type: "input_text", text: SYSTEM_PROMPT }] },
-          { role: "user", content: [{ type: "input_text", text: JSON.stringify(input.context) }] }
+          { role: "user", content: [{ type: "input_text", text: JSON.stringify(compactCommercialContextForModel(input.context)) }] }
         ],
         text: {
           format: {
@@ -179,8 +184,13 @@ export class ContextualIntelligenceService {
             schema: toJsonSchema(),
             strict: true
           }
-        }
-      });
+        },
+        max_output_tokens: 320
+      })
+      );
+      if (!response) {
+        return deterministic;
+      }
 
       const parsed = contextualDecisionSchema.safeParse(JSON.parse(response.output_text || "{}"));
       return parsed.success ? parsed.data : deterministic;
@@ -469,6 +479,36 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
   }
 
   return base;
+}
+
+function compactCommercialContextForModel(context: CommercialContext) {
+  const profileKeys = [
+    "stage", "etapa_atual", "commercial_stage", "ultima_intencao", "selected_plan", "plano_interesse",
+    "device", "aparelho", "download_status", "install_status", "trial_status", "payment_status",
+    "payment_method", "wants_test", "wants_recharge", "wants_activation", "pediu_pix", "codigo_enviado",
+    "last_bot_question", "next_expected_reply", "main_objection"
+  ];
+  const leadProfile = profileKeys.reduce<Record<string, unknown>>((result, key) => {
+    const value = context.lead_profile[key];
+    if (value !== undefined && value !== null && typeof value !== "object") {
+      result[key] = typeof value === "string" ? value.slice(-280) : value;
+    }
+    return result;
+  }, {});
+
+  return {
+    current_message: context.current_message.slice(-900),
+    recent_messages: context.recent_messages.slice(-8).map((message) => ({
+      role: message.role || null,
+      content: typeof message.content === "string" ? message.content.slice(-700) : null
+    })),
+    lead_profile: leadProfile,
+    open_order: context.open_order ? { id: context.open_order.id || null, status: context.open_order.status || null } : null,
+    latest_order: context.latest_order ? { id: context.latest_order.id || null, status: context.latest_order.status || null } : null,
+    last_bot_question: context.last_bot_question,
+    followup_key: context.followup_key,
+    human_hold_active: context.human_hold_active
+  };
 }
 
 function isTrialSelectionAnswer(normalized: string, lastQuestion: string) {

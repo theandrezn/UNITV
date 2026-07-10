@@ -1,5 +1,6 @@
 import "server-only";
 import { createOpenAIClient, getSalesAgentOpenAIModel } from "@/lib/openai/client";
+import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 
 export type SpecialistInterventionAnalysis = {
   inferred_intent: string;
@@ -15,6 +16,7 @@ export type SpecialistInterventionAnalysis = {
 };
 
 type AnalyzeSpecialistInterventionInput = {
+  conversationId?: string | null;
   customerLastMessage?: string | null;
   botPreviousMessage?: string | null;
   specialistMessage: string;
@@ -67,8 +69,11 @@ export class SpecialistInterventionAnalysisService {
     }
 
     try {
-      const response = await createOpenAIClient().responses.create({
-        model: getSalesAgentOpenAIModel(),
+      const model = getSalesAgentOpenAIModel();
+      const response = await executeObservedOpenAICall(
+        { callType: "specialist_intervention_analysis", model, conversationId: input.conversationId },
+        () => createOpenAIClient().responses.create({
+        model,
         input: [
           { role: "system", content: [{ type: "input_text", text: ANALYSIS_PROMPT }] },
           { role: "user", content: [{ type: "input_text", text: JSON.stringify(input) }] }
@@ -80,8 +85,13 @@ export class SpecialistInterventionAnalysisService {
             schema: ANALYSIS_SCHEMA,
             strict: true
           }
-        }
-      });
+        },
+        max_output_tokens: 360
+      })
+      );
+      if (!response) {
+        return fallback;
+      }
       return { ...fallback, ...(JSON.parse(response.output_text || "{}") as SpecialistInterventionAnalysis) };
     } catch {
       return fallback;

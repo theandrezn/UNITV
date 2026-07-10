@@ -79,34 +79,7 @@ const SYSTEM_PROMPT = [
 
 export class ContextualFollowupDecisionService {
   async decide(context: FollowupContext): Promise<FollowupDecision> {
-    const deterministic = decideFollowupDeterministically(context);
-
-    if (isHardSafetyDecision(deterministic) || !process.env.OPENAI_API_KEY) {
-      return deterministic;
-    }
-
-    try {
-      const response = await createOpenAIClient().responses.create({
-        model: shouldUseStrongModel(context) ? getStrongSalesAgentOpenAIModel() : getSalesAgentOpenAIModel(),
-        input: [
-          { role: "system", content: [{ type: "input_text", text: SYSTEM_PROMPT }] },
-          { role: "user", content: [{ type: "input_text", text: JSON.stringify(context) }] }
-        ],
-        text: {
-          format: {
-            type: "json_schema",
-            name: "unitv_followup_decision",
-            schema: toJsonSchema(),
-            strict: true
-          }
-        }
-      });
-
-      const parsed = followupDecisionSchema.safeParse(JSON.parse(response.output_text || "{}"));
-      return parsed.success ? parsed.data : deterministic;
-    } catch {
-      return deterministic;
-    }
+    return decideFollowupDeterministically(context);
   }
 }
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createOpenAIClient, getDefaultOpenAIModel, getIntentOpenAIModel } from "@/lib/openai/client";
 import { UNITV_INTENT_JSON_SCHEMA, UNITV_INTENT_SYSTEM_PROMPT } from "./unitv-sales-ai-prompt";
 import { isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
+import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 
 export const intentSchema = z.enum([
   "greeting",
@@ -38,7 +39,7 @@ const fallbackClassification: IntentClassification = {
 };
 
 export class IntentClassifierService {
-  async classify(input: { message: string }): Promise<IntentClassification> {
+  async classify(input: { message: string; conversationId?: string | null }): Promise<IntentClassification> {
     const deterministic = classifyDeterministicIntent(input.message);
     if (deterministic) {
       return deterministic;
@@ -46,10 +47,13 @@ export class IntentClassifierService {
 
     try {
       const client = createOpenAIClient();
-      const content = await classifyWithResponsesApi(client, input.message);
+      const content = await classifyWithResponsesApi(client, input.message, input.conversationId);
       if (!content) {
-        const completion = await client.chat.completions.create({
-          model: getDefaultOpenAIModel(),
+        const model = getDefaultOpenAIModel();
+        const completion = await executeObservedOpenAICall(
+          { callType: "intent_classification_fallback", model, conversationId: input.conversationId },
+          () => client.chat.completions.create({
+          model,
           messages: [
             {
               role: "system",
@@ -62,8 +66,13 @@ export class IntentClassifierService {
             }
           ],
           response_format: { type: "json_object" },
-          temperature: 0
-        });
+          temperature: 0,
+          max_tokens: 180
+        })
+        );
+        if (!completion) {
+          return fallbackClassification;
+        }
 
         return parseClassification(completion.choices[0]?.message.content);
       }
@@ -75,7 +84,7 @@ export class IntentClassifierService {
   }
 }
 
-async function classifyWithResponsesApi(client: unknown, message: string) {
+async function classifyWithResponsesApi(client: unknown, message: string, conversationId?: string | null) {
   const responsesClient = client as {
     responses?: {
       create: (input: Record<string, unknown>) => Promise<{ output_text?: string; output?: unknown[] }>;
@@ -85,8 +94,11 @@ async function classifyWithResponsesApi(client: unknown, message: string) {
     return null;
   }
 
-  const response = await responsesClient.responses.create({
-    model: getIntentOpenAIModel(),
+  const model = getIntentOpenAIModel();
+  const response = await executeObservedOpenAICall(
+    { callType: "intent_classification", model, conversationId },
+    () => responsesClient.responses!.create({
+    model,
     input: [
       {
         role: "system",
@@ -104,8 +116,14 @@ async function classifyWithResponsesApi(client: unknown, message: string) {
         schema: UNITV_INTENT_JSON_SCHEMA,
         strict: true
       }
-    }
-  });
+    },
+    max_output_tokens: 180
+  })
+  );
+
+  if (!response) {
+    return null;
+  }
 
   return response.output_text || extractResponseText(response.output);
 }

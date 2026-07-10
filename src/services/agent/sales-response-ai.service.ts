@@ -1,6 +1,7 @@
 import "server-only";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
 import { sanitizeCustomerMessage, validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
+import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 
 type ConversationMessage = {
   role?: string;
@@ -36,6 +37,7 @@ type GenerateSalesResponseInput = {
   learningMemories?: LearnedOperationalDirective[];
   fallbackReply?: string | null;
   useStrongModel?: boolean;
+  conversationId?: string | null;
 };
 
 const RESPONSE_SCHEMA = {
@@ -104,18 +106,18 @@ export class SalesResponseAIService {
     const context = {
       latest_customer_message: input.message,
       detected_intent: input.intent,
-      facts: input.leadProfile,
-      recent_conversation: (input.recentMessages || []).slice(-12).map((item) => ({
+      facts: compactSalesLeadProfile(input.leadProfile),
+      recent_conversation: (input.recentMessages || []).slice(-8).map((item) => ({
         role: item.role,
-        content: item.content
+        content: truncateForModel(item.content, 700)
       })),
-      specialist_examples: (input.specialistExamples || []).slice(0, 3),
-      learned_operational_directives: (input.learningMemories || []).slice(0, 4).map((memory) => ({
+      specialist_examples: (input.specialistExamples || []).slice(0, 2).map(compactSpecialistExample),
+      learned_operational_directives: (input.learningMemories || []).slice(0, 3).map((memory) => ({
         intent: memory.intent || null,
         stage: memory.stage || null,
-        rule: memory.rule || null,
-        style_directive: memory.style_directive || null,
-        avoid: memory.avoid || [],
+        rule: truncateForModel(memory.rule, 360),
+        style_directive: truncateForModel(memory.style_directive, 220),
+        avoid: (memory.avoid || []).slice(0, 3).map((item) => truncateForModel(item, 120)),
         confidence: memory.confidence || null
       })),
       specialist_style_directives: buildSpecialistStyleDirectives(input.specialistExamples || []),
@@ -123,8 +125,11 @@ export class SalesResponseAIService {
     };
 
     try {
-      const response = await client.responses.create({
-        model: input.useStrongModel ? getStrongSalesAgentOpenAIModel() : getSalesAgentOpenAIModel(),
+      const model = input.useStrongModel ? getStrongSalesAgentOpenAIModel() : getSalesAgentOpenAIModel();
+      const response = await executeObservedOpenAICall(
+        { callType: "sales_response", model, conversationId: input.conversationId },
+        () => client.responses.create({
+        model,
         input: [
           { role: "system", content: [{ type: "input_text", text: SYSTEM_PROMPT }] },
           { role: "user", content: [{ type: "input_text", text: JSON.stringify(context) }] }
@@ -136,8 +141,13 @@ export class SalesResponseAIService {
             schema: RESPONSE_SCHEMA,
             strict: true
           }
-        }
-      });
+        },
+        max_output_tokens: 220
+      })
+      );
+      if (!response) {
+        return null;
+      }
 
       const parsed = JSON.parse(response.output_text || "{}") as { reply?: string };
       const sanitized = sanitizeCustomerMessage(parsed.reply || "");
@@ -178,6 +188,42 @@ function buildSpecialistStyleDirectives(examples: SpecialistExample[]) {
 
 function countWords(value: string) {
   return value.trim().split(/\s+/).filter(Boolean).length;
+}
+
+const SALES_LEAD_PROFILE_KEYS = [
+  "stage", "etapa_atual", "commercial_stage", "ultima_intencao", "intencao_inicial",
+  "selected_plan", "plano_interesse", "requested_screens", "device", "aparelho",
+  "download_status", "install_status", "trial_status", "payment_status", "payment_method",
+  "wants_test", "wants_recharge", "wants_renewal", "wants_activation", "pediu_pix",
+  "codigo_enviado", "accepted_special_promo", "special_promo_offer", "nivel_interesse",
+  "last_bot_question", "next_expected_reply", "next_best_action", "main_objection"
+] as const;
+
+function compactSalesLeadProfile(leadProfile: Record<string, unknown>) {
+  return SALES_LEAD_PROFILE_KEYS.reduce<Record<string, unknown>>((result, key) => {
+    const value = leadProfile[key];
+    if (value !== undefined && value !== null && typeof value !== "object") {
+      result[key] = typeof value === "string" ? truncateForModel(value, 240) : value;
+    }
+    return result;
+  }, {});
+}
+
+function compactSpecialistExample(example: SpecialistExample) {
+  return {
+    customer_last_message: truncateForModel(example.customer_last_message, 280),
+    bot_previous_message: truncateForModel(example.bot_previous_message, 360),
+    specialist_message: truncateForModel(example.specialist_message, 420),
+    style_notes: truncateForModel(example.style_notes, 220),
+    inferred_specialist_action: truncateForModel(example.inferred_specialist_action, 140),
+    why_specialist_intervened: truncateForModel(example.why_specialist_intervened, 180),
+    success_signal: example.success_signal || null
+  };
+}
+
+function truncateForModel(value: unknown, maxLength: number) {
+  if (typeof value !== "string") return value || null;
+  return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
 
 export function shouldUseAIResponse(input: {

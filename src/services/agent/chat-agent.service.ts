@@ -249,7 +249,8 @@ export class ChatAgentService {
         specialistExamples: input.specialistExamples,
         learningMemories: input.learningMemories,
         fallbackReply: contextualReply?.reply || null,
-        useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
+        conversationId: input.conversation.id,
+        useStrongModel: false
       });
       if (aiReply) {
         if (isSafeAICommercialReply(aiReply, leadProfile, input.recentMessages)) {
@@ -571,6 +572,17 @@ export class ChatAgentService {
       return null;
     }
 
+    if (!shouldUseAIResponse({
+      message,
+      intent,
+      leadProfile,
+      recentMessages: input.recentMessages,
+      specialistExamplesCount: input.specialistExamples?.length || 0,
+      learningMemoriesCount: input.learningMemories?.length || 0
+    })) {
+      return null;
+    }
+
     const aiReply = await this.salesResponseAIService.generateResponse({
       message,
       intent,
@@ -579,7 +591,8 @@ export class ChatAgentService {
       specialistExamples: input.specialistExamples,
       learningMemories: input.learningMemories,
       fallbackReply,
-      useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
+      conversationId: input.conversation.id,
+      useStrongModel: false
     });
 
     if (!aiReply || !isSafeAICommercialReply(aiReply, leadProfile, input.recentMessages)) {
@@ -1127,7 +1140,8 @@ export class ChatAgentService {
       recentMessages: input.recentMessages,
       specialistExamples: input.specialistExamples,
       learningMemories: input.learningMemories,
-      useStrongModel: shouldUseStrongSalesModel(message, leadProfile, input.recentMessages)
+      conversationId: input.conversation.id,
+      useStrongModel: false
     });
 
     if (!aiReply) {

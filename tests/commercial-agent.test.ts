@@ -869,7 +869,7 @@ describe("commercial WhatsApp agent", () => {
     });
   });
 
-  it("answers ad information request locally when contextual AI is unavailable", async () => {
+  it("answers ad information request locally without spending an AI call", async () => {
     const { service, salesResponseAIService } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -880,7 +880,7 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(salesResponseAIService.generateResponse).toHaveBeenCalled();
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
     expect(result.reply).toContain("Seja bem-vindo ao melhor aplicativo de filmes e canais");
     expect(result.reply).toContain("Voce ja faz o uso do app? Ou e a primeira vez?");
     expect(result.responseSource).toBe("local_rule");
@@ -2958,7 +2958,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(customersRepository.updateCustomer).not.toHaveBeenCalled();
-    expect(intentClassifier.classify).toHaveBeenCalledWith({ message: "pix" });
+    expect(intentClassifier.classify).toHaveBeenCalledWith({ message: "pix", conversationId: "conversation-id" });
     expect(chatAgent.generateCommercialReply).toHaveBeenCalledWith(
       expect.objectContaining({
         classification: expect.objectContaining({ intent: "pix_payment" }),
@@ -4377,7 +4377,7 @@ describe("commercial WhatsApp agent", () => {
       "conversation-id",
       expect.objectContaining({ requires_human: false, handoff_reason: null })
     );
-    expect(intentClassifier.classify).toHaveBeenCalledWith({ message: "reativar bot" });
+    expect(intentClassifier.classify).toHaveBeenCalledWith({ message: "reativar bot", conversationId: "conversation-id" });
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({ phone: "5511999998888", text: "Bot reativado." });
   });
 

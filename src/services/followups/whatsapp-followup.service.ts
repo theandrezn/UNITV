@@ -12,6 +12,7 @@ import { validateFollowupWithConversationBrain } from "@/services/agent/conversa
 import {
   buildFollowupContextHash,
   ContextualFollowupDecisionService,
+  decideFollowupDeterministically,
   hashText,
   type FollowupContext,
   type FollowupContextMessage,
@@ -56,7 +57,7 @@ export class WhatsappFollowupService {
     private readonly agentEventLogService?: AgentEventLogService,
     private readonly salesResponseAIService = new SalesResponseAIService(),
     private readonly ordersService = new OrdersService(),
-    private readonly contextualFollowupDecisionService = new ContextualFollowupDecisionService(),
+    _contextualFollowupDecisionService = new ContextualFollowupDecisionService(),
     private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository
   ) {}
 
@@ -137,7 +138,33 @@ export class WhatsappFollowupService {
       }
 
       const context = await this.buildFollowupContext(conversation, metadata, now, phone);
-      const scheduledDecision = await this.contextualFollowupDecisionService.decide(context);
+      const alreadyProcessedReason = getAlreadyProcessedFollowupReason(metadata, context);
+      if (alreadyProcessedReason) {
+        skipped++;
+        await this.conversationsRepository.updateConversationMetadata(
+          conversation.id,
+          buildProcessedFollowupMetadata(metadata, context, now, alreadyProcessedReason, {
+            unansweredCustomerFollowup,
+            unansweredBotFollowup
+          })
+        );
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "followup_preflight_blocked",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: {
+            reason: alreadyProcessedReason,
+            followup_key: metadata.followup_key || null,
+            context_hash: context.last_followup_context_hash
+          }
+        });
+        continue;
+      }
+
+      // Context, stage and idempotency decide whether an automatic action is allowed.
+      // AI only composes wording after this guard has approved a new follow-up.
+      const scheduledDecision = decideFollowupDeterministically(context);
       const validation = validateFollowupAgainstConversationContext(context, scheduledDecision);
       const decision = validation.correctedDecision || scheduledDecision;
       await this.auditService.createAuditLog({
@@ -165,17 +192,18 @@ export class WhatsappFollowupService {
         await this.recordFollowupCancellation(conversation, phone, metadata, validation.reason);
         await this.conversationsRepository.updateConversationMetadata(
           conversation.id,
-          buildCancelledFollowupMetadata(
+          buildProcessedFollowupMetadata(
             metadata,
             context,
+            now,
+            validation.reason,
+            { unansweredCustomerFollowup, unansweredBotFollowup },
             {
               ...decision,
               cancel_existing_followup: true,
               new_stage: validation.detectedStage,
               new_followup_key: null
-            },
-            validation.reason,
-            now
+            }
           )
         );
         continue;
@@ -217,7 +245,14 @@ export class WhatsappFollowupService {
         await this.recordFollowupCancellation(conversation, phone, metadata, policy.reason || decision.reason);
         await this.conversationsRepository.updateConversationMetadata(
           conversation.id,
-          buildCancelledFollowupMetadata(metadata, context, decision, policy.reason || decision.reason, now)
+          buildProcessedFollowupMetadata(
+            metadata,
+            context,
+            now,
+            policy.reason || decision.reason,
+            { unansweredCustomerFollowup, unansweredBotFollowup },
+            decision
+          )
         );
         continue;
       }
@@ -282,7 +317,14 @@ export class WhatsappFollowupService {
         await this.recordFollowupCancellation(conversation, phone, metadata, "unsafe_question_mark_followup");
         await this.conversationsRepository.updateConversationMetadata(
           conversation.id,
-          buildCancelledFollowupMetadata(metadata, context, decision, "unsafe_question_mark_followup", now)
+          buildProcessedFollowupMetadata(
+            metadata,
+            context,
+            now,
+            "unsafe_question_mark_followup",
+            { unansweredCustomerFollowup, unansweredBotFollowup },
+            decision
+          )
         );
         await this.auditService.createAuditLog({
           actor_type: "system",
@@ -306,6 +348,8 @@ export class WhatsappFollowupService {
       const nextMetadata = {
         ...metadata,
         followup_due_at: nextLeadRecoveryDueAt,
+        followup_retry_due_at: null,
+        followup_rescheduled_for_context: Boolean(nextLeadRecoveryDueAt),
         followup_sent_at: now.toISOString(),
         followup_sent_stage_id: stageId,
         last_followup_sent_at: now.toISOString(),
@@ -459,7 +503,9 @@ export class WhatsappFollowupService {
         followup_reason: "ultima_mensagem_do_cliente_sem_resposta"
       },
       recentMessages,
-      fallbackReply
+      fallbackReply,
+      conversationId: conversation.id,
+      useStrongModel: false
     });
 
     return aiReply;
@@ -505,7 +551,9 @@ export class WhatsappFollowupService {
       })),
       learningMemories,
       fallbackReply: input.fallbackText,
-      useStrongModel: shouldUseStrongFollowupTextModel(input.context, input.decision)
+      conversationId: input.context.conversation_id,
+      // Safety and stage are already decided locally. A mini model is enough for one natural sentence.
+      useStrongModel: false
     });
 
     if (aiReply) {
@@ -523,16 +571,13 @@ export class WhatsappFollowupService {
     }
 
     try {
-      const messages = await listMessages.call(this.messagesRepository, conversationId, 50);
+      const messages = await listMessages.call(this.messagesRepository, conversationId, 12);
       return messages.map((item) => ({
         id: typeof item.id === "string" ? item.id : null,
         role: typeof item.role === "string" ? item.role : undefined,
         content: typeof item.content === "string" ? item.content : null,
         created_at: typeof item.created_at === "string" ? item.created_at : null,
-        external_message_id: typeof item.external_message_id === "string" ? item.external_message_id : null,
-        metadata: item.metadata && typeof item.metadata === "object" && !Array.isArray(item.metadata)
-          ? item.metadata as Record<string, unknown>
-          : null
+        external_message_id: typeof item.external_message_id === "string" ? item.external_message_id : null
       }));
     } catch {
       return [];
@@ -545,8 +590,10 @@ export class WhatsappFollowupService {
     now: Date,
     phone: string
   ): Promise<FollowupContext> {
-    const recentMessages = await this.listRecentMessages(conversation.id) as FollowupContextMessage[];
-    const leadProfile = readLeadProfile(metadata);
+    const recentMessages = (await this.listRecentMessages(conversation.id) as FollowupContextMessage[])
+      .slice(-12)
+      .map(compactFollowupMessage);
+    const leadProfile = compactFollowupLeadProfile(readLeadProfile(metadata));
     const latestCustomerMessage = findLatestMessageByRole(recentMessages, "customer");
     const latestBotMessage = findLatestMessageByRole(recentMessages, "assistant");
     const latestHumanMessage = findLatestMessageByRole(recentMessages, "human_agent");
@@ -571,7 +618,7 @@ export class WhatsappFollowupService {
       customer_id: customerId,
       phone,
       now: now.toISOString(),
-      metadata,
+      metadata: compactFollowupMetadata(metadata),
       lead_profile: leadProfile,
       recent_messages: recentMessages,
       latest_customer_message: latestCustomerMessage,
@@ -898,11 +945,14 @@ function buildCancelledFollowupMetadata(
 ) {
   const leadProfile = readLeadProfile(metadata);
   const newStage = decision.new_stage || inferCancelledStage(context, reason);
-  const newFollowupKey = decision.new_followup_key || null;
+  const keepRescheduledFollowup = Boolean(decision.new_followup_due_at);
+  const newFollowupKey = keepRescheduledFollowup ? decision.new_followup_key || null : null;
   return {
     ...metadata,
     followup_key: newFollowupKey,
-    followup_due_at: decision.new_followup_due_at || null,
+    followup_due_at: keepRescheduledFollowup ? decision.new_followup_due_at || null : null,
+    followup_retry_due_at: null,
+    followup_rescheduled_for_context: keepRescheduledFollowup,
     followup_cancelled_at: now.toISOString(),
     followup_cancel_reason: reason,
     followup_context_hash: context.last_followup_context_hash,
@@ -919,6 +969,58 @@ function buildCancelledFollowupMetadata(
   };
 }
 
+function buildProcessedFollowupMetadata(
+  metadata: Record<string, unknown>,
+  context: FollowupContext,
+  now: Date,
+  reason: string,
+  pending: { unansweredCustomerFollowup: { customerMessageAt: string } | null; unansweredBotFollowup: { botMessageAt: string } | null },
+  decision: (FollowupDecision & { new_followup_due_at?: string | null }) = {
+    should_send_followup: false,
+    followup_type: "none",
+    reason,
+    conversation_summary: "Follow-up ja foi resolvido para o contexto atual.",
+    evidence: [],
+    suggested_message: null,
+    cancel_existing_followup: true,
+    new_stage: null,
+    new_followup_key: null,
+    confidence: 1
+  }
+) {
+  const next = buildCancelledFollowupMetadata(metadata, context, decision, reason, now);
+  const rescheduled = Boolean(decision.new_followup_due_at);
+  return {
+    ...next,
+    ...(rescheduled ? {} : {
+      followup_key: null,
+      followup_due_at: null,
+      ...(pending.unansweredCustomerFollowup
+        ? { unanswered_customer_followup_for_message_at: pending.unansweredCustomerFollowup.customerMessageAt }
+        : {}),
+      ...(pending.unansweredBotFollowup
+        ? { unanswered_bot_followup_for_message_at: pending.unansweredBotFollowup.botMessageAt }
+        : {})
+    })
+  };
+}
+
+function getAlreadyProcessedFollowupReason(metadata: Record<string, unknown>, context: FollowupContext) {
+  if (metadata.followup_context_hash !== context.last_followup_context_hash) {
+    return null;
+  }
+  if (metadata.followup_rescheduled_for_context === true && isDue(metadata.followup_due_at, new Date(context.now))) {
+    return null;
+  }
+  if (metadata.followup_cancel_reason === "contextual_ai_reply_unavailable") {
+    return null;
+  }
+  if (metadata.followup_sent_at || metadata.followup_cancelled_at) {
+    return "followup_context_already_processed";
+  }
+  return null;
+}
+
 function buildContextualAiUnavailableMetadata(
   metadata: Record<string, unknown>,
   context: FollowupContext,
@@ -930,6 +1032,7 @@ function buildContextualAiUnavailableMetadata(
   return {
     ...metadata,
     followup_due_at: retryDueAt,
+    followup_retry_due_at: retryDueAt,
     followup_cancelled_at: now.toISOString(),
     followup_cancel_reason: "contextual_ai_reply_unavailable",
     followup_context_hash: context.last_followup_context_hash,
@@ -1378,6 +1481,10 @@ function getUnansweredCustomerFollowup(metadata: Record<string, unknown>, now: D
     return null;
   }
 
+  if (isFutureDate(metadata.followup_retry_due_at, now)) {
+    return null;
+  }
+
   return {
     customerMessageAt: metadata.last_customer_message_at,
     stageId: `customer_unanswered:${metadata.last_customer_message_at}`
@@ -1447,6 +1554,98 @@ function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
   return profile && typeof profile === "object" && !Array.isArray(profile) ? (profile as Record<string, unknown>) : {};
 }
 
+const FOLLOWUP_METADATA_KEYS = [
+  "awaiting_customer_action",
+  "conversation_stage",
+  "device",
+  "device_detected",
+  "followup_context_hash",
+  "followup_dedupe_key",
+  "followup_due_at",
+  "followup_key",
+  "followup_sent_at",
+  "followup_sent_stage_id",
+  "followup_type",
+  "human_hold_until",
+  "last_bot_download_message_at",
+  "last_bot_message_at",
+  "last_bot_monthly_offer_at",
+  "last_bot_question",
+  "last_customer_message_at",
+  "last_followup_sent_at",
+  "last_followup_stage_id",
+  "last_followup_text_hash",
+  "last_specialist_message_at",
+  "lead_recovery_followup_base_stage_id",
+  "lead_recovery_followup_completed",
+  "lead_recovery_followup_step",
+  "plan_interest",
+  "pre_sale_followup_scheduled_at",
+  "promo_followup_sent_at",
+  "requires_human"
+] as const;
+
+const FOLLOWUP_LEAD_PROFILE_KEYS = [
+  "accepted_special_promo",
+  "access_delivery_status",
+  "aparelho",
+  "codigo_enviado",
+  "commercial_stage",
+  "converted",
+  "device",
+  "last_detected_intent",
+  "negotiated_price_cents",
+  "nivel_interesse",
+  "nome",
+  "order_status",
+  "payment_intent_status",
+  "payment_method",
+  "payment_status",
+  "pediu_pix",
+  "pix_code",
+  "plano_interesse",
+  "quoted_price_cents",
+  "renovacao",
+  "requested_screens",
+  "reseller_intent",
+  "sale_closed_by_specialist",
+  "selected_plan",
+  "special_promo_followup_sent",
+  "special_promo_offer",
+  "stage",
+  "ultima_intencao",
+  "wants_activation",
+  "wants_recharge",
+  "wants_renewal"
+] as const;
+
+function compactFollowupMetadata(metadata: Record<string, unknown>) {
+  return pickKnownFields(metadata, FOLLOWUP_METADATA_KEYS);
+}
+
+function compactFollowupLeadProfile(leadProfile: Record<string, unknown>) {
+  return pickKnownFields(leadProfile, FOLLOWUP_LEAD_PROFILE_KEYS);
+}
+
+function compactFollowupMessage(message: FollowupContextMessage): FollowupContextMessage {
+  return {
+    id: message.id || null,
+    role: message.role || null,
+    content: typeof message.content === "string" ? message.content.slice(-1200) : null,
+    created_at: message.created_at || null,
+    external_message_id: message.external_message_id || null
+  };
+}
+
+function pickKnownFields(source: Record<string, unknown>, keys: readonly string[]) {
+  return keys.reduce<Record<string, unknown>>((result, key) => {
+    if (source[key] !== undefined) {
+      result[key] = source[key];
+    }
+    return result;
+  }, {});
+}
+
 function isRenewalFollowup(metadata: Record<string, unknown>, profile: Record<string, unknown>) {
   return Boolean(
     profile.wants_recharge ||
@@ -1455,15 +1654,6 @@ function isRenewalFollowup(metadata: Record<string, unknown>, profile: Record<st
       profile.ultima_intencao === "renew_plan" ||
       metadata.conversation_stage === "recarga" ||
       metadata.awaiting_customer_action === "renew_plan"
-  );
-}
-
-function shouldUseStrongFollowupTextModel(context: FollowupContext, decision: FollowupDecision) {
-  const text = normalizeText(context.recent_messages.map((message) => message.content || "").join("\n"));
-  return (
-    decision.confidence < 0.82 ||
-    /\b(revenda|revendedor|pix|comprovante|pagamento|senha|erro|reclama|cancelar|humano)\b/.test(text) ||
-    Boolean(context.latest_human_message)
   );
 }
 
