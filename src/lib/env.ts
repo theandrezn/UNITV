@@ -45,6 +45,8 @@ const serverEnvSchema = z.object({
   UNITV_MIDDAY_AUDIT_ENABLED: z.string().optional(),
   UNITV_AUDIT_USE_AI_SUMMARY: z.string().optional(),
   OPENAI_MODEL_AUDIT_SUMMARY: z.string().optional(),
+  UNITV_MESSAGE_BURST_DEBOUNCE_MS: z.string().optional(),
+  UNITV_DAILY_LEARNING_STRONG_MODEL_ENABLED: z.string().optional(),
   UNITV_HOT_LEAD_ALERTS_ENABLED: z.string().optional(),
   UNITV_HOT_LEAD_ALERT_DEDUPE_MINUTES: z.string().optional(),
   UNITV_HOT_LEAD_ALERT_ADMIN_PHONE: z.string().optional(),

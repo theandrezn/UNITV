@@ -142,7 +142,7 @@ export class SalesResponseAIService {
             strict: true
           }
         },
-        max_output_tokens: 220
+        max_output_tokens: getSalesResponseOutputBudget(input)
       })
       );
       if (!response) {
@@ -164,6 +164,12 @@ export class SalesResponseAIService {
       return null;
     }
   }
+}
+
+function getSalesResponseOutputBudget(input: GenerateSalesResponseInput) {
+  if (/(technical_support|support|activation_help)/.test(input.intent)) return 180;
+  if (/(free_trial|ask_price|buy_plan|renew_plan)/.test(input.intent)) return 150;
+  return 110;
 }
 
 function buildSpecialistStyleDirectives(examples: SpecialistExample[]) {

@@ -23,6 +23,7 @@ import { buildMaskedConversationExcerpt, maskSpecialistTrainingText } from "@/li
 import { SpecialistInterventionAnalysisService } from "@/services/agent/specialist-intervention-analysis.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 import { HotLeadAlertService } from "@/services/leads/hot-lead-alert.service";
+import { CustomerMessageBurstService } from "@/services/whatsapp/customer-message-burst.service";
 import {
   ContextualIntelligenceService,
   type CommercialContext,
@@ -67,7 +68,8 @@ export class WhatsappMessageService {
     private readonly hotLeadAlertService?: HotLeadAlertService,
     private readonly contextualIntelligenceService = new ContextualIntelligenceService(),
     private readonly conversationBrainService = new ConversationBrainService(),
-    private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository
+    private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository,
+    private readonly customerMessageBurstService = new CustomerMessageBurstService()
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -324,7 +326,9 @@ export class WhatsappMessageService {
       ...(conversation.metadata || {}),
       ...metaReferralPatch,
       last_customer_message_at: customerMessageAt,
+      last_customer_message_id: message.externalMessageId,
       followup_due_at: null,
+      response_due_at: null,
       awaiting_customer_action: null,
       lead_profile: {
         ...readLeadProfile(conversation.metadata),
@@ -448,6 +452,25 @@ export class WhatsappMessageService {
       const reply = await this.handleReceiptMessage({ webhookEventId, message, customer, conversation });
       return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification: { intent: "receipt_sent" } });
     }
+
+    if (!await this.customerMessageBurstService.isLatestMessageInBurst(conversation.id)) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "customer_message_burst_coalesced",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, externalMessageId: message.externalMessageId }
+      });
+      return { status: "ignored" as const };
+    }
+
+    const responseRecoveryDueAt = new Date(new Date(customerMessageAt).getTime() + 5 * 60 * 1000).toISOString();
+    conversation.metadata = {
+      ...(conversation.metadata || {}),
+      response_due_at: responseRecoveryDueAt,
+      response_recovery_reason: "customer_message_waiting_for_agent_reply"
+    };
+    await this.conversationsRepository.updateConversationMetadata(conversation.id, conversation.metadata);
 
     let effectiveMessage = message.text;
     let classification: IntentClassification;
@@ -951,6 +974,8 @@ export class WhatsappMessageService {
     const nextMetadata = {
       ...(conversation.metadata || {}),
       last_bot_message_at: now.toISOString(),
+      response_due_at: null,
+      response_recovery_reason: null,
       lead_profile: {
         ...currentLeadProfile,
         last_bot_question: lastBotQuestion || currentLeadProfile.last_bot_question,

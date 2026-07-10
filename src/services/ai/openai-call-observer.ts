@@ -3,7 +3,7 @@ import { AuditService } from "@/services/audit.service";
 
 type OpenAIUsage = {
   input_tokens?: number | null;
-  input_tokens_details?: { cached_tokens?: number | null } | null;
+  input_tokens_details?: { cached_tokens?: number | null; cache_write_tokens?: number | null } | null;
   output_tokens?: number | null;
   output_tokens_details?: { reasoning_tokens?: number | null } | null;
   total_tokens?: number | null;
@@ -86,6 +86,7 @@ async function recordOpenAICall(
         outcome: result.outcome,
         input_tokens: Number(result.usage?.input_tokens || 0),
         cached_input_tokens: Number(result.usage?.input_tokens_details?.cached_tokens || 0),
+        cache_write_tokens: Number(result.usage?.input_tokens_details?.cache_write_tokens || 0),
         output_tokens: Number(result.usage?.output_tokens || 0),
         reasoning_tokens: Number(result.usage?.output_tokens_details?.reasoning_tokens || 0),
         total_tokens: Number(result.usage?.total_tokens || 0),

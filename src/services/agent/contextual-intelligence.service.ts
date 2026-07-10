@@ -123,7 +123,7 @@ export const contextualDecisionSchema = z.object({
   confidence: z.number().min(0).max(1)
 });
 
-export type ContextualDecision = z.infer<typeof contextualDecisionSchema>;
+export type ContextualDecision = z.infer<typeof contextualDecisionSchema> & { source?: "deterministic" | "ai" };
 
 export type CommercialContext = {
   conversation_id?: string | null;
@@ -163,7 +163,7 @@ export class ContextualIntelligenceService {
   async extract(input: { context: CommercialContext; useStrongModel?: boolean }): Promise<ContextualDecision> {
     const deterministic = extractDeterministicDecision(input.context);
     if (deterministic.confidence >= 0.92 || !process.env.OPENAI_API_KEY) {
-      return deterministic;
+      return { ...deterministic, source: "deterministic" };
     }
 
     try {
@@ -185,7 +185,7 @@ export class ContextualIntelligenceService {
             strict: true
           }
         },
-        max_output_tokens: 320
+        max_output_tokens: 240
       })
       );
       if (!response) {
@@ -193,9 +193,9 @@ export class ContextualIntelligenceService {
       }
 
       const parsed = contextualDecisionSchema.safeParse(JSON.parse(response.output_text || "{}"));
-      return parsed.success ? parsed.data : deterministic;
+      return parsed.success ? { ...parsed.data, source: "ai" } : { ...deterministic, source: "deterministic" };
     } catch {
-      return deterministic;
+      return { ...deterministic, source: "deterministic" };
     }
   }
 }

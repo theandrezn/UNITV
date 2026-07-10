@@ -34,6 +34,7 @@ function createService(
 ) {
   const conversationsRepository = {
     listOpenConversations: vi.fn(async () => conversations),
+    listFollowupCandidates: vi.fn(async () => conversations),
     updateConversationMetadata: vi.fn(async (_id, metadata) => {
       const conversation = conversations.find((item) => item.id === _id);
       if (conversation) {
@@ -114,6 +115,14 @@ describe("WhatsappFollowupService", () => {
     expect(buildUnansweredCustomerFallbackText({ followup_key: "download", conversation_stage: "instalacao" }, "Ok")).toBe("Conseguiu avancar?");
   });
 
+  it("reads only indexed due candidates when the repository supports the optimized queue", async () => {
+    const { service, conversationsRepository } = createService([]);
+
+    await expect(service.processDueFollowups(new Date("2026-07-10T20:00:00.000Z"))).resolves.toEqual({ checked: 0, sent: 0, skipped: 0 });
+    expect(conversationsRepository.listFollowupCandidates).toHaveBeenCalledWith(new Date("2026-07-10T20:00:00.000Z"), 200);
+    expect(conversationsRepository.listOpenConversations).not.toHaveBeenCalled();
+  });
+
   it("sends Android download follow-up only after the 10 minute due time", async () => {
     const conversation = {
       id: "conversation-id",
@@ -156,8 +165,7 @@ describe("WhatsappFollowupService", () => {
   });
 
   it("does not send download follow-up when customer replied before the due time", async () => {
-    const { service, evolutionService } = createService([
-      {
+    const conversation = {
         id: "conversation-id",
         customer_id: "customer-id",
         customers: { id: "customer-id", phone: "5511999998888" },
@@ -178,11 +186,13 @@ describe("WhatsappFollowupService", () => {
             download_status: "link_sent"
           }
         }
-      }
-    ]);
+      };
+    const { service, evolutionService } = createService([conversation]);
 
     expect(await service.processDueFollowups(new Date("2026-07-09T14:10:00.000Z"))).toEqual({ checked: 1, sent: 0, skipped: 1 });
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(conversation.metadata).toMatchObject({ followup_key: null, followup_due_at: null });
+    expect(String((conversation.metadata as Record<string, unknown>).followup_cancel_reason)).toMatch(/customer_replied/);
   });
 
   it("does not send post-download follow-up when a human replied after the download", async () => {

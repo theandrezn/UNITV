@@ -29,7 +29,11 @@ export class ConversationsRepository {
   }
 
   async createConversation(data: UpsertConversationInput) {
-    const { data: conversation, error } = await this.supabase.from("conversations").insert(data).select("*").single();
+    const { data: conversation, error } = await this.supabase
+      .from("conversations")
+      .insert({ ...data, ...extractAgentDueFields(data.metadata) })
+      .select("*")
+      .single();
     return assertSupabaseSuccess(conversation, error);
   }
 
@@ -47,7 +51,7 @@ export class ConversationsRepository {
   async updateConversationMetadata(id: string, metadata: Record<string, unknown>) {
     const { data, error } = await this.supabase
       .from("conversations")
-      .update({ metadata })
+      .update({ metadata, ...extractAgentDueFields(metadata) })
       .eq("id", id)
       .select("*")
       .single();
@@ -78,6 +82,20 @@ export class ConversationsRepository {
     return assertSupabaseSuccess(data || [], error);
   }
 
+  async listFollowupCandidates(now: Date, limit = 200) {
+    const nowIso = now.toISOString();
+    const { data, error } = await this.supabase
+      .from("conversations")
+      .select("*, customers(id, name, phone)")
+      .eq("channel", "whatsapp")
+      .eq("status", "open")
+      .or(`followup_due_at.lte.${nowIso},response_due_at.lte.${nowIso}`)
+      .order("followup_due_at", { ascending: true, nullsFirst: false })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error);
+  }
+
   async listTouchedBetween(periodStart: string, periodEnd: string, limit = 1000) {
     const { data, error } = await this.supabase
       .from("conversations")
@@ -90,4 +108,19 @@ export class ConversationsRepository {
 
     return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
   }
+}
+
+function extractAgentDueFields(metadata: Record<string, unknown> | undefined) {
+  return {
+    followup_due_at: parseTimestamp(metadata?.followup_due_at),
+    response_due_at: parseTimestamp(metadata?.response_due_at)
+  };
+}
+
+function parseTimestamp(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) {
+    return null;
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
 }

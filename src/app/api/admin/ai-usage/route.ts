@@ -31,7 +31,7 @@ export async function handleOpenAIUsage(request: NextRequest, dependencies: Depe
 }
 
 export function summarizeUsage(rows: Array<Record<string, unknown>>) {
-  const totals = { calls: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0, errors: 0, circuit_open: 0 };
+  const totals = { calls: 0, input_tokens: 0, cached_input_tokens: 0, cache_write_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0, errors: 0, circuit_open: 0 };
   const byCallType = new Map<string, Record<string, number>>();
   const byModel = new Map<string, Record<string, number>>();
 
@@ -56,6 +56,7 @@ function metricsFromMetadata(metadata: Record<string, unknown>) {
     calls: 1,
     input_tokens: numberValue(metadata.input_tokens),
     cached_input_tokens: numberValue(metadata.cached_input_tokens),
+    cache_write_tokens: numberValue(metadata.cache_write_tokens),
     output_tokens: numberValue(metadata.output_tokens),
     reasoning_tokens: numberValue(metadata.reasoning_tokens),
     total_tokens: numberValue(metadata.total_tokens),
@@ -71,7 +72,7 @@ function addMetrics(target: Record<string, number>, source: Record<string, numbe
 }
 
 function addMetricsToMap(map: Map<string, Record<string, number>>, key: string, source: Record<string, number>) {
-  const target = map.get(key) || { calls: 0, input_tokens: 0, cached_input_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0, errors: 0, circuit_open: 0 };
+  const target = map.get(key) || { calls: 0, input_tokens: 0, cached_input_tokens: 0, cache_write_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0, errors: 0, circuit_open: 0 };
   addMetrics(target, source);
   map.set(key, target);
 }

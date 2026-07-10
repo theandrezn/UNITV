@@ -62,7 +62,12 @@ export class WhatsappFollowupService {
   ) {}
 
   async processDueFollowups(now = new Date()): Promise<FollowupResult> {
-    const conversations = (await this.conversationsRepository.listOpenConversations(200)) as ConversationRow[];
+    const repository = this.conversationsRepository as ConversationsRepository & {
+      listFollowupCandidates?: (now: Date, limit?: number) => Promise<ConversationRow[]>;
+    };
+    const conversations = (repository.listFollowupCandidates
+      ? await repository.listFollowupCandidates(now, 200)
+      : await this.conversationsRepository.listOpenConversations(200)) as ConversationRow[];
     let sent = 0;
     let skipped = 0;
     inProcessDedupeKeys.clear();
@@ -82,6 +87,10 @@ export class WhatsappFollowupService {
       });
       if (skipReason) {
         skipped++;
+        await this.conversationsRepository.updateConversationMetadata(
+          conversation.id,
+          clearSkippedFollowupCandidate(metadata, skipReason, now)
+        );
         await this.auditService.createAuditLog({
           actor_type: "system",
           action: "whatsapp_followup_skipped",
@@ -349,6 +358,8 @@ export class WhatsappFollowupService {
         ...metadata,
         followup_due_at: nextLeadRecoveryDueAt,
         followup_retry_due_at: null,
+        response_due_at: null,
+        response_recovery_reason: null,
         followup_rescheduled_for_context: Boolean(nextLeadRecoveryDueAt),
         followup_sent_at: now.toISOString(),
         followup_sent_stage_id: stageId,
@@ -952,6 +963,8 @@ function buildCancelledFollowupMetadata(
     followup_key: newFollowupKey,
     followup_due_at: keepRescheduledFollowup ? decision.new_followup_due_at || null : null,
     followup_retry_due_at: null,
+    response_due_at: null,
+    response_recovery_reason: null,
     followup_rescheduled_for_context: keepRescheduledFollowup,
     followup_cancelled_at: now.toISOString(),
     followup_cancel_reason: reason,
@@ -995,6 +1008,8 @@ function buildProcessedFollowupMetadata(
     ...(rescheduled ? {} : {
       followup_key: null,
       followup_due_at: null,
+      response_due_at: null,
+      response_recovery_reason: null,
       ...(pending.unansweredCustomerFollowup
         ? { unanswered_customer_followup_for_message_at: pending.unansweredCustomerFollowup.customerMessageAt }
         : {}),
@@ -1002,6 +1017,19 @@ function buildProcessedFollowupMetadata(
         ? { unanswered_bot_followup_for_message_at: pending.unansweredBotFollowup.botMessageAt }
         : {})
     })
+  };
+}
+
+function clearSkippedFollowupCandidate(metadata: Record<string, unknown>, reason: string, now: Date) {
+  return {
+    ...metadata,
+    followup_key: null,
+    followup_due_at: null,
+    response_due_at: null,
+    response_recovery_reason: null,
+    followup_cancelled_at: now.toISOString(),
+    followup_cancel_reason: reason,
+    followup_rescheduled_for_context: false
   };
 }
 
@@ -1473,7 +1501,8 @@ function getUnansweredCustomerFollowup(metadata: Record<string, unknown>, now: D
     return null;
   }
 
-  if (now.getTime() - customerMessageAt.getTime() < UNANSWERED_CUSTOMER_FOLLOWUP_DELAY_MS) {
+  const responseRecoveryIsDue = isDue(metadata.response_due_at, now);
+  if (!responseRecoveryIsDue && now.getTime() - customerMessageAt.getTime() < UNANSWERED_CUSTOMER_FOLLOWUP_DELAY_MS) {
     return null;
   }
 
@@ -1581,6 +1610,8 @@ const FOLLOWUP_METADATA_KEYS = [
   "lead_recovery_followup_step",
   "plan_interest",
   "pre_sale_followup_scheduled_at",
+  "response_due_at",
+  "response_recovery_reason",
   "promo_followup_sent_at",
   "requires_human"
 ] as const;

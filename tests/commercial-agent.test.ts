@@ -1259,6 +1259,45 @@ describe("commercial WhatsApp agent", () => {
     });
   });
 
+  it("uses one contextual AI conclusion instead of paying a second model to restyle it", async () => {
+    const salesResponseAIService = { generateResponse: vi.fn(async () => "nao deveria chamar") };
+    const { service } = createChatAgent({ salesResponseAIService });
+    const contextualDecision = {
+      ...extractDeterministicDecision({
+        current_message: "quais planos voce tem?",
+        recent_messages: [],
+        lead_profile: { stage: "price_discovery" },
+        open_order: null,
+        latest_order: null,
+        last_bot_question: "",
+        last_bot_message_at: null,
+        last_specialist_message_at: null,
+        followup_key: null,
+        followup_due_at: null,
+        human_hold_active: false
+      }),
+      source: "ai" as const,
+      confidence: 0.91,
+      detected_intent: "PLAN_PRICE_REQUEST" as const,
+      next_action: "ask_plan_preference" as const,
+      recommended_response: "Posso te mostrar o mensal ou voce prefere um plano maior?"
+    };
+
+    const result = await service.generateCommercialReply({
+      message: "quais planos voce tem?",
+      classification: { intent: "ask_price", confidence: 0.7, summary: "preco", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: { stage: "price_discovery" } } },
+      recentMessages: [],
+      contextualDecision,
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toBe("Posso te mostrar o mensal ou voce prefere um plano maior?");
+    expect(result.responseRule).toBe("contextual_interpreter_single_ai_reply");
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+  });
+
   it("asks Android confirmation when the contextual answer is only celular", async () => {
     const { service } = createChatAgent();
     const lastQuestion = "Me fala so qual aparelho voce vai usar: celular Android, TV Box, Android TV/Google TV ou Fire Stick?";

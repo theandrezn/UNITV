@@ -572,6 +572,12 @@ export class ChatAgentService {
       return null;
     }
 
+    // The contextual interpreter already performed the semantic work for this
+    // turn. Avoid paying a second model just to restyle the same conclusion.
+    if (input.contextualDecision?.source === "ai") {
+      return null;
+    }
+
     if (!shouldUseAIResponse({
       message,
       intent,
@@ -1403,6 +1409,25 @@ function buildContextualUnderstandingReply(
         contextual_detected_intent: decision.detected_intent,
         contextual_next_action: decision.next_action,
         contextual_reason: decision.reason
+      }
+    };
+  }
+
+  if (
+    decision.source === "ai" &&
+    decision.confidence >= 0.8 &&
+    safeResponse &&
+    ["ask_plan_preference", "clarify_intent"].includes(decision.next_action)
+  ) {
+    return {
+      reply: safeResponse,
+      responseSource: "ai",
+      responseRule: "contextual_interpreter_single_ai_reply",
+      leadProfilePatch: {
+        contextual_detected_intent: decision.detected_intent,
+        contextual_next_action: decision.next_action,
+        contextual_reason: decision.reason,
+        next_expected_reply: decision.next_expected_reply || context.leadProfile.next_expected_reply || null
       }
     };
   }

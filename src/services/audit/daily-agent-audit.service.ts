@@ -16,7 +16,7 @@ type DailyAuditDependencies = {
   messagesRepository?: Pick<MessagesRepository, "listMessagesBetween">;
   eventLogsRepository?: Pick<AgentEventLogsRepository, "listEventsBetween" | "createEvent">;
   dailyAuditsRepository?: Pick<AgentDailyAuditsRepository, "upsertAudit" | "findByDate" | "findById" | "findPrevious" | "markSent">;
-  specialistTrainingExamplesRepository?: Pick<SpecialistTrainingExamplesRepository, "listExamplesBetween"> & Partial<Pick<SpecialistTrainingExamplesRepository, "listLearningCandidatesBetween">>;
+  specialistTrainingExamplesRepository?: Pick<SpecialistTrainingExamplesRepository, "listExamplesBetween"> & Partial<Pick<SpecialistTrainingExamplesRepository, "listLearningCandidatesBetween" | "listApprovedLearningBacklog">>;
   dailySpecialistLearningService?: Pick<DailySpecialistLearningService, "synthesizeDailyLearning">;
   evolutionService?: Pick<EvolutionService, "sendTextMessage">;
   now?: Date;
@@ -49,7 +49,7 @@ export class DailyAgentAuditService {
   private readonly messagesRepository: Pick<MessagesRepository, "listMessagesBetween">;
   private readonly eventLogsRepository: Pick<AgentEventLogsRepository, "listEventsBetween" | "createEvent">;
   private readonly dailyAuditsRepository: Pick<AgentDailyAuditsRepository, "upsertAudit" | "findByDate" | "findById" | "findPrevious" | "markSent">;
-  private readonly specialistTrainingExamplesRepository: Pick<SpecialistTrainingExamplesRepository, "listExamplesBetween"> & Partial<Pick<SpecialistTrainingExamplesRepository, "listLearningCandidatesBetween">>;
+  private readonly specialistTrainingExamplesRepository: Pick<SpecialistTrainingExamplesRepository, "listExamplesBetween"> & Partial<Pick<SpecialistTrainingExamplesRepository, "listLearningCandidatesBetween" | "listApprovedLearningBacklog">>;
   private readonly dailySpecialistLearningService: Pick<DailySpecialistLearningService, "synthesizeDailyLearning">;
   private readonly evolutionService: Pick<EvolutionService, "sendTextMessage">;
   private readonly now: Date;
@@ -69,13 +69,16 @@ export class DailyAgentAuditService {
   async buildDailyAgentAudit(input: BuildDailyAgentAuditInput = {}) {
     const config = getDailyAuditConfig();
     const period = resolveAuditPeriod(input.date || undefined, config.timezone, this.now);
-    const [conversations, messages, events, specialistExamples, learningCandidates, previousAudit, currentAudit] = await Promise.all([
+    const [conversations, messages, events, specialistExamples, learningCandidates, learningBacklog, previousAudit, currentAudit] = await Promise.all([
       this.conversationsRepository.listTouchedBetween(period.periodStart, period.periodEnd),
       this.messagesRepository.listMessagesBetween(period.periodStart, period.periodEnd),
       this.eventLogsRepository.listEventsBetween(period.periodStart, period.periodEnd),
       this.specialistTrainingExamplesRepository.listExamplesBetween(period.periodStart, period.periodEnd),
       this.specialistTrainingExamplesRepository.listLearningCandidatesBetween
         ? this.specialistTrainingExamplesRepository.listLearningCandidatesBetween(period.periodStart, period.periodEnd)
+        : Promise.resolve([]),
+      this.specialistTrainingExamplesRepository.listApprovedLearningBacklog
+        ? this.specialistTrainingExamplesRepository.listApprovedLearningBacklog(120)
         : Promise.resolve([]),
       this.dailyAuditsRepository.findPrevious(period.auditDate, config.timezone),
       this.dailyAuditsRepository.findByDate(period.auditDate, config.timezone)
@@ -96,7 +99,7 @@ export class DailyAgentAuditService {
     const learning = await this.safelySynthesizeDailyLearning({
       auditDate: period.auditDate,
       timezone: config.timezone,
-      examples: dedupeExamples([...specialistExamples, ...learningCandidates]),
+      examples: dedupeExamples([...specialistExamples, ...learningCandidates, ...learningBacklog]),
       dryRun: Boolean(input.dryRun)
     });
     const enrichedAudit = {

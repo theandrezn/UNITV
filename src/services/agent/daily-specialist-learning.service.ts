@@ -1,7 +1,8 @@
 import "server-only";
 import { z } from "zod";
-import { createOpenAIClient, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
+import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
 import { AgentLearningMemoriesRepository, type AgentLearningMemory } from "@/repositories/agent-learning-memories.repository";
+import { AgentLearningExampleProgressRepository } from "@/repositories/agent-learning-example-progress.repository";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 
 const directiveSchema = z.object({
@@ -33,12 +34,16 @@ type DailySpecialistLearningInput = {
 };
 
 export class DailySpecialistLearningService {
-  constructor(private readonly memoriesRepository = new AgentLearningMemoriesRepository()) {}
+  constructor(
+    private readonly memoriesRepository = new AgentLearningMemoriesRepository(),
+    private readonly progressRepository = new AgentLearningExampleProgressRepository()
+  ) {}
 
   async synthesizeDailyLearning(input: DailySpecialistLearningInput): Promise<DailySpecialistLearningResult> {
-    const examples = input.examples.filter(isEligibleExample).slice(-30);
+    const eligibleExamples = input.examples.filter(isEligibleExample);
+    const examples = (await this.progressRepository.filterUnprocessedExamples(eligibleExamples)).slice(0, 18);
     if (!examples.length) {
-      return { createdCount: 0, summary: "Sem exemplos aprovados com resultado observado no periodo.", skippedReason: "no_eligible_examples" };
+      return { createdCount: 0, summary: "Nenhum exemplo novo ou revisado precisa ser sintetizado hoje.", skippedReason: "no_new_learning_examples" };
     }
     if (!process.env.OPENAI_API_KEY) {
       return { createdCount: 0, summary: "Aprendizado diario aguardando configuracao da IA.", skippedReason: "learning_model_unavailable" };
@@ -57,17 +62,24 @@ export class DailySpecialistLearningService {
     const memories = generated.learning.directives
       .filter((directive) => isSafeDirective(directive, eligibleExampleIds))
       .map((directive) => toMemory(directive, input, examples));
-    if (input.dryRun || !memories.length) {
+    if (input.dryRun) {
       return { createdCount: memories.length, summary: generated.learning.summary, skippedReason: input.dryRun ? "dry_run" : "no_safe_directives" };
     }
 
-    await this.memoriesRepository.upsertMemories(memories);
-    return { createdCount: memories.length, summary: generated.learning.summary };
+    if (memories.length) {
+      await this.memoriesRepository.upsertMemories(memories);
+    }
+    await this.progressRepository.markExamplesProcessed(examples, memories.length);
+    return {
+      createdCount: memories.length,
+      summary: generated.learning.summary,
+      ...(memories.length ? {} : { skippedReason: "no_safe_directives" })
+    };
   }
 
   private async generateLearning(examples: Array<Record<string, unknown>>) {
     try {
-      const model = getStrongSalesAgentOpenAIModel();
+      const model = shouldUseStrongLearning(examples) ? getStrongSalesAgentOpenAIModel() : getSalesAgentOpenAIModel();
       const response = await executeObservedOpenAICall(
         { callType: "daily_specialist_learning", model },
         () => createOpenAIClient().responses.create({
@@ -115,7 +127,7 @@ export class DailySpecialistLearningService {
           }
         },
         reasoning: { effort: "low" },
-        max_output_tokens: 900
+        max_output_tokens: 520
       })
       );
       if (!response) {
@@ -129,6 +141,15 @@ export class DailySpecialistLearningService {
       return { learning: null, skippedReason: classifyLearningModelError(error) };
     }
   }
+}
+
+function shouldUseStrongLearning(examples: Array<Record<string, unknown>>) {
+  if (process.env.UNITV_DAILY_LEARNING_STRONG_MODEL_ENABLED !== "true") {
+    return false;
+  }
+  const stages = new Set(examples.map((example) => String(example.inferred_stage || "")).filter(Boolean));
+  const intents = new Set(examples.map((example) => String(example.inferred_intent || "")).filter(Boolean));
+  return stages.size >= 4 || intents.size >= 5;
 }
 
 function classifyLearningModelError(error: unknown) {

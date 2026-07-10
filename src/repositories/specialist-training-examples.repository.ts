@@ -157,6 +157,18 @@ export class SpecialistTrainingExamplesRepository {
     return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
   }
 
+  async listApprovedLearningBacklog(limit = 120) {
+    const { data, error } = await this.supabase
+      .from("specialist_training_examples")
+      .select("*")
+      .eq("review_status", "approved")
+      .in("outcome_status", ["positive", "neutral"])
+      .order("updated_at", { ascending: true })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+  }
+
   async listReviewQueue(limit = 50) {
     const { data, error } = await this.supabase
       .from("specialist_training_examples")

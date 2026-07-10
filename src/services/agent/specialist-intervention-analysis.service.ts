@@ -86,7 +86,7 @@ export class SpecialistInterventionAnalysisService {
             strict: true
           }
         },
-        max_output_tokens: 360
+        max_output_tokens: 240
       })
       );
       if (!response) {

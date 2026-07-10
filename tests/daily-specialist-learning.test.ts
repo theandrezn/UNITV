@@ -1,17 +1,31 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
 const openAIResponsesCreate = vi.hoisted(() => vi.fn());
 vi.mock("@/lib/openai/client", () => ({
   createOpenAIClient: () => ({ responses: { create: openAIResponsesCreate } }),
+  getSalesAgentOpenAIModel: () => "gpt-5.4-mini",
   getStrongSalesAgentOpenAIModel: () => "gpt-5.4"
 }));
 
 import { DailySpecialistLearningService } from "@/services/agent/daily-specialist-learning.service";
 import { AgentLearningMemoriesRepository } from "@/repositories/agent-learning-memories.repository";
 
+function createLearningService(upsertMemories = vi.fn(async (memories) => memories)) {
+  const progressRepository = {
+    filterUnprocessedExamples: vi.fn(async (examples) => examples),
+    markExamplesProcessed: vi.fn(async () => [])
+  };
+  return {
+    service: new DailySpecialistLearningService({ upsertMemories } as never, progressRepository as never),
+    progressRepository
+  };
+}
+
 describe("daily specialist learning", () => {
+  beforeEach(() => openAIResponsesCreate.mockReset());
+
   it("turns approved specialist outcomes into reusable operational directives", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     openAIResponsesCreate.mockResolvedValueOnce({
@@ -31,7 +45,7 @@ describe("daily specialist learning", () => {
       })
     });
     const upsertMemories = vi.fn(async (memories) => memories);
-    const service = new DailySpecialistLearningService({ upsertMemories } as never);
+    const { service, progressRepository } = createLearningService(upsertMemories);
 
     const result = await service.synthesizeDailyLearning({
       auditDate: "2026-07-10",
@@ -55,6 +69,7 @@ describe("daily specialist learning", () => {
         source_example_ids: ["d5589076-5a12-4fa6-bcd4-f9cfad12dba4"]
       })
     ]);
+    expect(progressRepository.markExamplesProcessed).toHaveBeenCalledWith(expect.any(Array), 1);
   });
 
   it("does not persist directives containing mutable commercial facts", async () => {
@@ -74,7 +89,7 @@ describe("daily specialist learning", () => {
       })
     });
     const upsertMemories = vi.fn();
-    const service = new DailySpecialistLearningService({ upsertMemories } as never);
+    const { service, progressRepository } = createLearningService(upsertMemories);
 
     const result = await service.synthesizeDailyLearning({
       auditDate: "2026-07-10",
@@ -84,6 +99,7 @@ describe("daily specialist learning", () => {
 
     expect(result).toMatchObject({ createdCount: 0, skippedReason: "no_safe_directives" });
     expect(upsertMemories).not.toHaveBeenCalled();
+    expect(progressRepository.markExamplesProcessed).toHaveBeenCalledWith(expect.any(Array), 0);
   });
 
   it("preserves approved examples for retry when the learning model has no quota", async () => {
@@ -93,7 +109,7 @@ describe("daily specialist learning", () => {
       code: "insufficient_quota"
     }));
     const upsertMemories = vi.fn();
-    const service = new DailySpecialistLearningService({ upsertMemories } as never);
+    const { service, progressRepository } = createLearningService(upsertMemories);
 
     const result = await service.synthesizeDailyLearning({
       auditDate: "2026-07-10",
@@ -104,6 +120,23 @@ describe("daily specialist learning", () => {
     expect(result).toMatchObject({ createdCount: 0, skippedReason: "learning_model_quota_exhausted" });
     expect(result.summary).toContain("preservados");
     expect(upsertMemories).not.toHaveBeenCalled();
+    expect(progressRepository.markExamplesProcessed).not.toHaveBeenCalled();
+  });
+
+  it("does not pay to synthesize an approved example that has not changed", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    const progressRepository = {
+      filterUnprocessedExamples: vi.fn(async () => []),
+      markExamplesProcessed: vi.fn()
+    };
+    const service = new DailySpecialistLearningService({ upsertMemories: vi.fn() } as never, progressRepository as never);
+
+    await expect(service.synthesizeDailyLearning({
+      auditDate: "2026-07-10",
+      timezone: "America/Sao_Paulo",
+      examples: [{ id: "d5589076-5a12-4fa6-bcd4-f9cfad12dba4", review_status: "approved", outcome_status: "positive" }]
+    })).resolves.toMatchObject({ createdCount: 0, skippedReason: "no_new_learning_examples" });
+    expect(openAIResponsesCreate).not.toHaveBeenCalled();
   });
 
   it("retrieves the most relevant active memory for the current stage", async () => {

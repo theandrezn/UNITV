@@ -67,7 +67,7 @@ export class IntentClassifierService {
           ],
           response_format: { type: "json_object" },
           temperature: 0,
-          max_tokens: 180
+          max_tokens: 120
         })
         );
         if (!completion) {
@@ -117,7 +117,7 @@ async function classifyWithResponsesApi(client: unknown, message: string, conver
         strict: true
       }
     },
-    max_output_tokens: 180
+    max_output_tokens: 120
   })
   );
 
