@@ -28,6 +28,15 @@ describe("daily agent audit job route", () => {
         asked_pix_count: 0,
         converted_count: 0,
         pix_requested_not_paid_count: 0,
+        sales_concluded_count: 2,
+        customer_abandoned_count: 3,
+        human_takeover_count: 1,
+        repeated_question_count: 1,
+        greeting_blocked_count: 2,
+        download_stuck_count: 1,
+        followup_cancelled_count: 4,
+        approved_specialist_examples_count: 5,
+        pending_specialist_examples_count: 2,
         short_report: "Auditoria diaria UNITV"
       })),
       sendAuditRecordToAdmin: vi.fn()
@@ -42,6 +51,12 @@ describe("daily agent audit job route", () => {
     expect(response.status).toBe(200);
     expect(json.ok).toBe(true);
     expect(json.dryRun).toBe(true);
+    expect(json.metrics).toEqual(expect.objectContaining({
+      sales_concluded_count: 2,
+      customer_abandoned_count: 3,
+      followup_cancelled_count: 4,
+      approved_specialist_examples_count: 5
+    }));
     expect(service.sendAuditRecordToAdmin).not.toHaveBeenCalled();
   });
 

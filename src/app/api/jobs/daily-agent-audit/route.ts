@@ -44,6 +44,15 @@ export async function handleDailyAgentAuditJob(
       asked_price_count: audit.asked_price_count,
       asked_pix_count: audit.asked_pix_count,
       converted_count: audit.converted_count,
+      sales_concluded_count: audit.sales_concluded_count,
+      customer_abandoned_count: audit.customer_abandoned_count,
+      human_takeover_count: audit.human_takeover_count,
+      repeated_question_count: audit.repeated_question_count,
+      greeting_blocked_count: audit.greeting_blocked_count,
+      download_stuck_count: audit.download_stuck_count,
+      followup_cancelled_count: audit.followup_cancelled_count,
+      approved_specialist_examples_count: audit.approved_specialist_examples_count,
+      pending_specialist_examples_count: audit.pending_specialist_examples_count,
       pix_requested_not_paid_count: audit.pix_requested_not_paid_count
     },
     short_report: dryRun ? audit.short_report : undefined
