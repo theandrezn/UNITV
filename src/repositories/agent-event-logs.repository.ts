@@ -12,6 +12,8 @@ export type AgentEventType =
   | "local_rule_used"
   | "human_intervention"
   | "repetition_blocked"
+  | "greeting_blocked"
+  | "followup_cancelled"
   | "followup_scheduled"
   | "followup_sent"
   | "price_asked"

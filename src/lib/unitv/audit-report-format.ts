@@ -14,6 +14,15 @@ type ReportInput = {
   asked_pix_count: number;
   sent_proof_count: number;
   converted_count: number;
+  sales_concluded_count: number;
+  customer_abandoned_count: number;
+  human_takeover_count: number;
+  repeated_question_count: number;
+  greeting_blocked_count: number;
+  download_stuck_count: number;
+  followup_cancelled_count: number;
+  approved_specialist_examples_count: number;
+  pending_specialist_examples_count: number;
   abandoned_after_price_count: number;
   abandoned_after_download_count: number;
   abandoned_after_pix_count: number;
@@ -51,6 +60,7 @@ export function formatDailyAuditShortReport(audit: ReportInput) {
     `- Pediram Pix: ${audit.asked_pix_count}`,
     `- Enviaram comprovante: ${audit.sent_proof_count}`,
     `- Convertidos: ${audit.converted_count}`,
+    `- Vendas concluidas: ${audit.sales_concluded_count}`,
     "",
     "Gargalos:",
     `- Sumiram apos valores: ${audit.abandoned_after_price_count}`,
@@ -58,6 +68,12 @@ export function formatDailyAuditShortReport(audit: ReportInput) {
     `- Pediram Pix e nao pagaram: ${audit.pix_requested_not_paid_count}`,
     `- Instalacao travada: ${audit.stuck_installation_count}`,
     `- Pediram suporte/humano: ${audit.support_requested_count}`,
+    `- Clientes abandonados: ${audit.customer_abandoned_count}`,
+    `- Humano assumiu: ${audit.human_takeover_count}`,
+    `- Perguntas repetidas bloqueadas: ${audit.repeated_question_count}`,
+    `- Saudacoes iniciais bloqueadas: ${audit.greeting_blocked_count}`,
+    `- Follow-ups cancelados por contexto: ${audit.followup_cancelled_count}`,
+    `- Exemplos do Andre aprovados/pendentes: ${audit.approved_specialist_examples_count}/${audit.pending_specialist_examples_count}`,
     "",
     "Principais objecoes:",
     ...padTopList(objections),
@@ -81,6 +97,7 @@ export function formatDailyAuditFullReport(audit: ReportInput & { previous_compa
     "",
     "Detalhes:",
     `- Sumiram apos Pix: ${audit.abandoned_after_pix_count}`,
+    `- Download travado: ${audit.download_stuck_count}`,
     `- Comparativo: ${audit.previous_comparison || "sem auditoria anterior para comparar."}`,
     "",
     "Conversas problematicas:",

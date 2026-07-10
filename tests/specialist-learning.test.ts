@@ -260,9 +260,11 @@ describe("specialist operational learning", () => {
 
   it("ranks a matching positive specialist example first and marks it as used", async () => {
     const candidates = [
-      { id: "generic", inferred_intent: "saudacao", success_signal: "neutral", customer_last_message: "oi", used_count: 0, created_at: "2026-07-06T10:00:00Z" },
+      { id: "generic", inferred_intent: "saudacao", success_signal: "neutral", review_status: "approved", outcome_status: "neutral", customer_last_message: "oi", used_count: 0, created_at: "2026-07-06T10:00:00Z" },
       { id: "downloaded", inferred_intent: "ativacao", inferred_stage: "ativacao", success_signal: "positive", customer_last_message: "Já baixei", used_count: 2, created_at: "2026-07-06T09:00:00Z" }
-    ];
+    ].map((example) => example.id === "downloaded"
+      ? { ...example, review_status: "approved", outcome_status: "positive" }
+      : example);
     const updates: unknown[] = [];
     const query: Record<string, unknown> = {};
     for (const method of ["select", "eq", "order", "limit"]) query[method] = vi.fn(() => query);
@@ -287,6 +289,8 @@ describe("specialist operational learning", () => {
         id: "generic",
         inferred_intent: "saudacao",
         success_signal: "neutral",
+        review_status: "approved",
+        outcome_status: "neutral",
         customer_last_message: "oi",
         conversation_excerpt: "Cliente: oi\nEspecialista: ola",
         used_count: 0,
@@ -297,6 +301,8 @@ describe("specialist operational learning", () => {
         inferred_intent: "instalacao",
         inferred_stage: "active_trial",
         success_signal: "positive",
+        review_status: "approved",
+        outcome_status: "positive",
         customer_last_message: "Qual e o formato da senha?",
         bot_previous_message: "Voce conseguiu?",
         specialist_message: "Coloca so numero e crie sua senha",

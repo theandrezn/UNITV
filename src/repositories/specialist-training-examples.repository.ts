@@ -37,6 +37,14 @@ export type RelevantSpecialistExamplesInput = {
   limit?: number;
 };
 
+export type ReviewSpecialistTrainingExampleInput = {
+  review_status: "approved" | "rejected";
+  outcome_status?: "positive" | "neutral" | "negative";
+  reviewed_by: string;
+  approval_reason?: string | null;
+  outcome_notes?: string | null;
+};
+
 export class SpecialistTrainingExamplesRepository {
   constructor(private readonly supabase: SupabaseClient = createSupabaseAdminClient()) {}
 
@@ -61,11 +69,15 @@ export class SpecialistTrainingExamplesRepository {
       .from("specialist_training_examples")
       .select("*")
       .eq("should_copy_style", true)
+      .eq("review_status", "approved")
       .order("created_at", { ascending: false })
       .limit(50);
 
     const rawCandidates = assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
-    const candidates = rawCandidates.filter((example) => example.success_signal !== "negative");
+    const candidates = rawCandidates.filter((example) =>
+      example.success_signal !== "negative" &&
+      (example.outcome_status === "positive" || example.outcome_status === "neutral")
+    );
     const keywords = tokenize(`${input.customerMessage || ""} ${input.recentContext || ""}`);
     const ranked = candidates
       .map((example) => ({ example, score: scoreExample(example, input, keywords) }))
@@ -85,7 +97,7 @@ export class SpecialistTrainingExamplesRepository {
   async markLatestConversationExampleSignal(conversationId: string, signal: "positive" | "neutral" | "negative") {
     const { data: latest, error: findError } = await this.supabase
       .from("specialist_training_examples")
-      .select("id, success_signal")
+      .select("id, success_signal, review_status")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -98,10 +110,23 @@ export class SpecialistTrainingExamplesRepository {
     const nextSignal = signal === "neutral" && latest.success_signal && latest.success_signal !== "unknown"
       ? latest.success_signal
       : signal;
+    const autoApprove = nextSignal === "positive" && latest.review_status === "pending_review";
+    const observedAt = new Date().toISOString();
 
     const { data, error } = await this.supabase
       .from("specialist_training_examples")
-      .update({ success_signal: nextSignal, updated_at: new Date().toISOString() })
+      .update({
+        success_signal: nextSignal,
+        outcome_status: nextSignal,
+        outcome_observed_at: observedAt,
+        ...(autoApprove ? {
+          review_status: "approved",
+          reviewed_at: observedAt,
+          reviewed_by: "automatic_outcome",
+          approval_reason: "customer_positive_signal"
+        } : {}),
+        updated_at: observedAt
+      })
       .eq("id", latest.id)
       .select("*")
       .single();
@@ -117,6 +142,39 @@ export class SpecialistTrainingExamplesRepository {
       .order("created_at", { ascending: true });
 
     return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+  }
+
+  async listReviewQueue(limit = 50) {
+    const { data, error } = await this.supabase
+      .from("specialist_training_examples")
+      .select("*")
+      .eq("review_status", "pending_review")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+  }
+
+  async reviewExample(id: string, input: ReviewSpecialistTrainingExampleInput) {
+    const reviewedAt = new Date().toISOString();
+    const { data, error } = await this.supabase
+      .from("specialist_training_examples")
+      .update({
+        review_status: input.review_status,
+        reviewed_at: reviewedAt,
+        reviewed_by: input.reviewed_by,
+        approval_reason: input.approval_reason || null,
+        outcome_status: input.outcome_status || (input.review_status === "approved" ? "neutral" : "negative"),
+        outcome_notes: input.outcome_notes || null,
+        outcome_observed_at: reviewedAt,
+        should_copy_style: input.review_status === "approved",
+        updated_at: reviewedAt
+      })
+      .eq("id", id)
+      .select("*")
+      .single();
+
+    return assertSupabaseSuccess(data, error);
   }
 
   private async markExampleUsed(id: string, usedCount: number) {

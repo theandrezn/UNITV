@@ -52,6 +52,8 @@ describe("daily agent audit aggregation", () => {
         event("conversation-1", "local_rule_used"),
         event("conversation-1", "human_intervention", { metadata: { reason: "cliente_quente" } }),
         event("conversation-1", "repetition_blocked"),
+        event("conversation-1", "greeting_blocked"),
+        event("conversation-1", "followup_cancelled"),
         event("conversation-1", "followup_sent"),
         event("conversation-1", "price_asked"),
         event("conversation-1", "download_asked"),
@@ -64,7 +66,7 @@ describe("daily agent audit aggregation", () => {
         event("conversation-1", "converted"),
         event("conversation-1", "support_requested")
       ],
-      specialistExamples: [{ human_intervention_detected: true, why_specialist_intervened: "corrigiu_bot" }],
+      specialistExamples: [{ human_intervention_detected: true, why_specialist_intervened: "corrigiu_bot", review_status: "approved", outcome_status: "positive" }],
       now: new Date("2026-07-07T02:55:00.000Z")
     });
 
@@ -86,6 +88,13 @@ describe("daily agent audit aggregation", () => {
     expect(audit.sent_proof_count).toBe(1);
     expect(audit.payment_confirmed_count).toBe(1);
     expect(audit.converted_count).toBe(1);
+    expect(audit.sales_concluded_count).toBe(1);
+    expect(audit.human_takeover_count).toBe(1);
+    expect(audit.repeated_question_count).toBe(1);
+    expect(audit.greeting_blocked_count).toBe(1);
+    expect(audit.followup_cancelled_count).toBe(1);
+    expect(audit.approved_specialist_examples_count).toBe(1);
+    expect(audit.pending_specialist_examples_count).toBe(0);
     expect(audit.objections_summary).toEqual(expect.objectContaining({ preco: expect.any(Number) }));
     expect(audit.devices_summary).toEqual(expect.objectContaining({ tvbox_android: expect.any(Number) }));
     expect(audit.stages_summary).toEqual(expect.objectContaining({ valores: expect.any(Number) }));
@@ -125,6 +134,8 @@ describe("daily agent audit aggregation", () => {
     expect(audit.abandoned_after_pix_count).toBe(1);
     expect(audit.pix_requested_not_paid_count).toBe(1);
     expect(audit.stuck_installation_count).toBeGreaterThanOrEqual(1);
+    expect(audit.customer_abandoned_count).toBeGreaterThanOrEqual(3);
+    expect(audit.download_stuck_count).toBeGreaterThanOrEqual(1);
     expect(audit.top_problem_conversations.length).toBeGreaterThan(0);
     expect(audit.recommendations.length).toBeGreaterThan(0);
   });

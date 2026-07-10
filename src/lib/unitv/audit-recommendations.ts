@@ -8,6 +8,9 @@ export type AuditRecommendationInput = {
   total_ai_calls: number;
   asked_download_count: number;
   converted_count: number;
+  greeting_blocked_count?: number;
+  followup_cancelled_count?: number;
+  pending_specialist_examples_count?: number;
 };
 
 export function buildAuditRecommendations(metrics: AuditRecommendationInput) {
@@ -27,6 +30,12 @@ export function buildAuditRecommendations(metrics: AuditRecommendationInput) {
   }
   if (metrics.total_human_interventions > 0) {
     recommendations.push("Revisar intervencoes humanas e transformar boas respostas do Andre em exemplos aprovados.");
+  }
+  if (Number(metrics.pending_specialist_examples_count || 0) > 0) {
+    recommendations.push("Revisar os exemplos pendentes do Andre; apenas exemplos aprovados e com resultado observado devem orientar a IA.");
+  }
+  if (Number(metrics.greeting_blocked_count || 0) > 0 || Number(metrics.followup_cancelled_count || 0) > 0) {
+    recommendations.push("Revisar os bloqueios de contexto: eles protegem o funil e indicam onde templates ou follow-ups antigos tentaram agir fora de hora.");
   }
   if (metrics.total_ai_calls >= 20) {
     recommendations.push("Mapear mensagens que mais acionaram IA e transformar casos repetidos em regras locais.");

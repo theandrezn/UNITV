@@ -668,6 +668,22 @@ export class WhatsappMessageService {
         brain_allows_followup: conversationBrainDecision.allowFollowup
       }
     });
+    if (commercialReply.responseRule === "conversation_brain_blocks_greeting_restart") {
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: "greeting_blocked",
+        event_source: "chat_agent",
+        intent: classification.intent,
+        stage: conversationBrainDecision.stage,
+        message_id: message.externalMessageId,
+        metadata: {
+          rule: commercialReply.responseRule,
+          reason: "active_conversation_context",
+          context_active: true
+        }
+      });
+    }
     if (commercialReply.leadProfilePatch) {
       const currentLeadProfile = readLeadProfile(conversation.metadata);
       const nextMetadata = {

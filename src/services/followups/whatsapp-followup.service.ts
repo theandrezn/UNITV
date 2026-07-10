@@ -159,6 +159,7 @@ export class WhatsappFollowupService {
       });
       if (!validation.allowed && !validation.correctedDecision) {
         skipped++;
+        await this.recordFollowupCancellation(conversation, phone, metadata, validation.reason);
         await this.conversationsRepository.updateConversationMetadata(
           conversation.id,
           buildCancelledFollowupMetadata(
@@ -210,6 +211,7 @@ export class WhatsappFollowupService {
 
       if (!policy.shouldSend) {
         skipped++;
+        await this.recordFollowupCancellation(conversation, phone, metadata, policy.reason || decision.reason);
         await this.conversationsRepository.updateConversationMetadata(
           conversation.id,
           buildCancelledFollowupMetadata(metadata, context, decision, policy.reason || decision.reason, now)
@@ -252,6 +254,7 @@ export class WhatsappFollowupService {
       });
       if (!followupText) {
         skipped++;
+        await this.recordFollowupCancellation(conversation, phone, metadata, "contextual_ai_reply_unavailable");
         await this.conversationsRepository.updateConversationMetadata(
           conversation.id,
           buildContextualAiUnavailableMetadata(metadata, context, decision, now)
@@ -273,6 +276,7 @@ export class WhatsappFollowupService {
       }
       if (isOnlyQuestionMark(followupText)) {
         skipped++;
+        await this.recordFollowupCancellation(conversation, phone, metadata, "unsafe_question_mark_followup");
         await this.conversationsRepository.updateConversationMetadata(
           conversation.id,
           buildCancelledFollowupMetadata(metadata, context, decision, "unsafe_question_mark_followup", now)
@@ -605,6 +609,28 @@ export class WhatsappFollowupService {
     } catch {
       return null;
     }
+  }
+
+  private async recordFollowupCancellation(
+    conversation: ConversationRow,
+    phone: string,
+    metadata: Record<string, unknown>,
+    reason: string
+  ) {
+    await this.safeCreateAgentEvent({
+      conversation_id: conversation.id,
+      customer_phone: phone,
+      event_type: "followup_cancelled",
+      event_source: "followup_job",
+      stage: typeof metadata.conversation_stage === "string" ? metadata.conversation_stage : null,
+      device: typeof metadata.device === "string" ? metadata.device : null,
+      plan_interest: typeof metadata.plan_interest === "string" ? metadata.plan_interest : null,
+      message_id: `followup-cancelled:${conversation.id}:${String(metadata.last_followup_stage_id || "unknown")}`,
+      metadata: {
+        followup_key: metadata.followup_key || null,
+        reason
+      }
+    });
   }
 }
 

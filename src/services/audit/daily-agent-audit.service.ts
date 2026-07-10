@@ -191,6 +191,22 @@ export function buildAuditRecord(input: {
     now: input.now
   });
   const problemCounts = countProblemTypes(problemConversations);
+  const salesConcludedConversationIds = new Set(
+    input.events
+      .filter((event) => ["converted", "payment_confirmed"].includes(String(event.event_type || "")))
+      .map((event) => String(event.conversation_id || ""))
+      .filter(Boolean)
+  );
+  const abandonedConversationIds = new Set([
+    ...input.events
+      .filter((event) => event.event_type === "customer_abandoned")
+      .map((event) => String(event.conversation_id || "")),
+    ...problemConversations
+      .filter((problem) => /^abandoned_after_/.test(String(problem.problem_key || "")))
+      .map((problem) => String(problem.conversation_id || ""))
+  ].filter(Boolean));
+  const approvedSpecialistExamples = input.specialistExamples.filter((example) => example.review_status === "approved");
+  const pendingSpecialistExamples = input.specialistExamples.filter((example) => example.review_status === "pending_review");
 
   const metrics = {
     audit_date: input.period.auditDate,
@@ -216,6 +232,15 @@ export function buildAuditRecord(input: {
     sent_proof_count: eventCounts.proof_sent || 0,
     payment_confirmed_count: eventCounts.payment_confirmed || 0,
     converted_count: eventCounts.converted || 0,
+    sales_concluded_count: salesConcludedConversationIds.size,
+    customer_abandoned_count: abandonedConversationIds.size,
+    human_takeover_count: eventCounts.human_intervention || 0,
+    repeated_question_count: eventCounts.repetition_blocked || 0,
+    greeting_blocked_count: eventCounts.greeting_blocked || 0,
+    download_stuck_count: Math.max(eventCounts.install_stuck || 0, problemCounts.install_stuck || 0),
+    followup_cancelled_count: eventCounts.followup_cancelled || 0,
+    approved_specialist_examples_count: approvedSpecialistExamples.length,
+    pending_specialist_examples_count: pendingSpecialistExamples.length,
     abandoned_after_price_count: problemCounts.abandoned_after_price || 0,
     abandoned_after_download_count: problemCounts.abandoned_after_download || 0,
     abandoned_after_pix_count: problemCounts.abandoned_after_pix || 0,
@@ -227,6 +252,14 @@ export function buildAuditRecord(input: {
     stages_summary: stagesSummary,
     ai_intents_summary: aiIntentsSummary,
     human_intervention_reasons: humanReasons,
+    lead_loss_summary: {
+      abandoned_after_price: problemCounts.abandoned_after_price || 0,
+      abandoned_after_download: problemCounts.abandoned_after_download || 0,
+      abandoned_after_pix: problemCounts.abandoned_after_pix || 0,
+      customer_abandoned: abandonedConversationIds.size,
+      download_stuck: Math.max(eventCounts.install_stuck || 0, problemCounts.install_stuck || 0),
+      followup_cancelled: eventCounts.followup_cancelled || 0
+    },
     top_problem_conversations: problemConversations.slice(0, 10)
   };
 
@@ -290,6 +323,7 @@ function buildTopProblemConversations(input: {
       problems.push({
         priority,
         problem_key: problemKey,
+        conversation_id: conversationId,
         phone,
         stage,
         last_intent: leadProfile.ultima_intencao || null,
@@ -335,7 +369,7 @@ function buildTopProblemConversations(input: {
   return problems
     .sort((a, b) => b.priority - a.priority)
     .filter((problem, index, list) => list.findIndex((item) => item.phone === problem.phone && item.problem_key === problem.problem_key) === index)
-    .map(({ priority: _priority, problem_key: _problemKey, ...problem }) => problem);
+    .map(({ priority: _priority, ...problem }) => problem);
 }
 
 function countProblemTypes(problems: Array<Record<string, unknown>>) {
