@@ -31,7 +31,7 @@ export async function handleOpenAIUsage(request: NextRequest, dependencies: Depe
 }
 
 export function summarizeUsage(rows: Array<Record<string, unknown>>) {
-  const totals = { calls: 0, input_tokens: 0, cached_input_tokens: 0, cache_write_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0, errors: 0, circuit_open: 0 };
+  const totals = emptyMetrics();
   const byCallType = new Map<string, Record<string, number>>();
   const byModel = new Map<string, Record<string, number>>();
 
@@ -54,6 +54,9 @@ function metricsFromMetadata(metadata: Record<string, unknown>) {
   const outcome = String(metadata.outcome || "unknown");
   return {
     calls: 1,
+    provider_requests: outcome === "success" || outcome === "error" ? 1 : 0,
+    successful_requests: outcome === "success" ? 1 : 0,
+    blocked_attempts: outcome === "circuit_open" ? 1 : 0,
     input_tokens: numberValue(metadata.input_tokens),
     cached_input_tokens: numberValue(metadata.cached_input_tokens),
     cache_write_tokens: numberValue(metadata.cache_write_tokens),
@@ -72,9 +75,26 @@ function addMetrics(target: Record<string, number>, source: Record<string, numbe
 }
 
 function addMetricsToMap(map: Map<string, Record<string, number>>, key: string, source: Record<string, number>) {
-  const target = map.get(key) || { calls: 0, input_tokens: 0, cached_input_tokens: 0, cache_write_tokens: 0, output_tokens: 0, reasoning_tokens: 0, total_tokens: 0, errors: 0, circuit_open: 0 };
+  const target = map.get(key) || emptyMetrics();
   addMetrics(target, source);
   map.set(key, target);
+}
+
+function emptyMetrics(): Record<string, number> {
+  return {
+    calls: 0,
+    provider_requests: 0,
+    successful_requests: 0,
+    blocked_attempts: 0,
+    input_tokens: 0,
+    cached_input_tokens: 0,
+    cache_write_tokens: 0,
+    output_tokens: 0,
+    reasoning_tokens: 0,
+    total_tokens: 0,
+    errors: 0,
+    circuit_open: 0
+  };
 }
 
 function numberValue(value: unknown) {

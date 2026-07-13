@@ -1,8 +1,29 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CustomerMessageBurstService } from "@/services/whatsapp/customer-message-burst.service";
 
 describe("CustomerMessageBurstService", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllEnvs();
+  });
+
+  it("uses a 2.5 second default window to merge consecutive WhatsApp bubbles", async () => {
+    vi.stubEnv("UNITV_MESSAGE_BURST_DEBOUNCE_MS", "");
+    vi.useFakeTimers();
+    const service = new CustomerMessageBurstService();
+    let settled = false;
+    const pending = service.isLatestMessageInBurst("default-window").then((value) => {
+      settled = true;
+      return value;
+    });
+
+    await vi.advanceTimersByTimeAsync(2499);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).resolves.toBe(true);
+  });
+
   it("lets only the last message in a short customer burst reach the AI pipeline", async () => {
     const service = new CustomerMessageBurstService(15);
 

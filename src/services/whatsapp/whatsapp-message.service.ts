@@ -779,7 +779,8 @@ export class WhatsappMessageService {
       copyText: commercialReply.copyText,
       followUpMessages: commercialReply.followUpMessages,
       menu: commercialReply.menu,
-      sendTextBeforeMenu: commercialReply.sendTextBeforeMenu
+      sendTextBeforeMenu: commercialReply.sendTextBeforeMenu,
+      responseGeneratedByAI: commercialReply.responseSource === "ai"
     });
   }
 
@@ -794,7 +795,8 @@ export class WhatsappMessageService {
     copyText,
     followUpMessages,
     menu,
-    sendTextBeforeMenu
+    sendTextBeforeMenu,
+    responseGeneratedByAI
   }: {
     webhookEventId: string;
     message: IncomingEvolutionMessage;
@@ -807,28 +809,41 @@ export class WhatsappMessageService {
     followUpMessages?: string[];
     menu?: WhatsAppMenu;
     sendTextBeforeMenu?: boolean;
+    responseGeneratedByAI?: boolean;
   }) {
     const rawResponseDirective = [reply, ...(followUpMessages || [])].filter(Boolean).join("\n\n");
     const responseDirective = copyText
       ? rawResponseDirective.split(copyText).join("[dados de pagamento enviados em mensagem separada]")
       : rawResponseDirective;
     const recentMessages = await this.listRecentConversationMessages(conversation.id);
-    const contextualReply = await this.contextualResponseAIService.generateResponse({
-      currentMessage: message.text,
-      intent: typeof classification.intent === "string" ? classification.intent : "unknown",
-      leadProfile: readLeadProfile(conversation.metadata),
-      recentMessages,
-      responseDirective,
-      operationalContext: {
-        has_media: Boolean(media),
-        has_payment_copy_payload: Boolean(copyText),
-        planned_menu_removed: Boolean(menu),
-        planned_followup_messages_merged: (followUpMessages || []).length,
-        stage: readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).commercial_stage || null
-      },
-      conversationId: conversation.id,
-      useStrongModel: false
+    const intent = typeof classification.intent === "string" ? classification.intent : "unknown";
+    const reuseUpstreamAIReply = canReuseUpstreamAIReply({
+      responseGeneratedByAI,
+      intent,
+      reply,
+      hasMedia: Boolean(media),
+      hasCopyText: Boolean(copyText),
+      hasFollowUpMessages: Boolean(followUpMessages?.length),
+      hasMenu: Boolean(menu)
     });
+    const contextualReply = reuseUpstreamAIReply
+      ? reply
+      : await this.contextualResponseAIService.generateResponse({
+        currentMessage: message.text,
+        intent,
+        leadProfile: readLeadProfile(conversation.metadata),
+        recentMessages,
+        responseDirective,
+        operationalContext: {
+          has_media: Boolean(media),
+          has_payment_copy_payload: Boolean(copyText),
+          planned_menu_removed: Boolean(menu),
+          planned_followup_messages_merged: (followUpMessages || []).length,
+          stage: readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).commercial_stage || null
+        },
+        conversationId: conversation.id,
+        useStrongModel: false
+      });
     if (!contextualReply) {
       await this.auditService.createAuditLog({
         actor_type: "system",
@@ -842,6 +857,17 @@ export class WhatsappMessageService {
         }
       });
       return { status: "ignored" as const };
+    }
+
+    const responseSource = reuseUpstreamAIReply ? "upstream_contextual_ai_reused" : "contextual_ai";
+    if (reuseUpstreamAIReply) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "contextual_ai_response_reused",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, intent, avoided_duplicate_ai_call: true }
+      });
     }
 
     reply = contextualReply;
@@ -906,7 +932,7 @@ export class WhatsappMessageService {
       metadata: {
         webhookEventId,
         classification,
-        response_source: "contextual_ai",
+        response_source: responseSource,
         knowledge_grounded: true,
         sender_type: "bot",
         content_hash: createCustomerMessageHash(safeReply),
@@ -939,7 +965,7 @@ export class WhatsappMessageService {
       intent: typeof classification.intent === "string" ? classification.intent : null,
       stage: String(readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).etapa_atual || ""),
       message_id: `assistant:${message.externalMessageId}`,
-      metadata: { webhookEventId, reply: safeReply, response_source: "contextual_ai" }
+      metadata: { webhookEventId, reply: safeReply, response_source: responseSource }
     });
 
     const now = new Date();
@@ -1613,6 +1639,22 @@ function buildContextualLeadProfilePatch(decision: ContextualDecision) {
   }
 
   return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+}
+
+export function canReuseUpstreamAIReply(input: {
+  responseGeneratedByAI?: boolean;
+  intent: string;
+  reply: string;
+  hasMedia?: boolean;
+  hasCopyText?: boolean;
+  hasFollowUpMessages?: boolean;
+  hasMenu?: boolean;
+}) {
+  if (!input.responseGeneratedByAI || !input.reply.trim()) return false;
+  if (input.hasMedia || input.hasCopyText || input.hasFollowUpMessages || input.hasMenu) return false;
+  if (/(pix|payment|pagamento|card|cartao|receipt|comprovante|activation|ativacao|code|codigo)/i.test(input.intent)) return false;
+  if (/(R\$\s*\d|https?:\/\/|pix|copia e cola|qr\s*code|pagamento|comprovante|c[oó]digo de acesso|\bUTV-|\b862585\b)/i.test(input.reply)) return false;
+  return true;
 }
 
 type ManualPaymentCommand = {

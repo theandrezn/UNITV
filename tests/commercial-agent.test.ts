@@ -23,7 +23,7 @@ afterEach(() => {
 import { ChatAgentService } from "@/services/agent/chat-agent.service";
 import { extractDeterministicDecision } from "@/services/agent/contextual-intelligence.service";
 import { PlansService } from "@/services/plans.service";
-import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
+import { canReuseUpstreamAIReply, WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
 import { MAIN_MENU } from "@/lib/whatsapp/menus";
 import {
   classifyCustomerFacingResponseIntent,
@@ -1309,6 +1309,101 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toBe("Posso te mostrar o mensal ou voce prefere um plano maior?");
     expect(result.responseRule).toBe("contextual_interpreter_single_ai_reply");
     expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it("reuses a safe knowledge-grounded AI reply but never bypasses the protected payment writer", () => {
+    expect(canReuseUpstreamAIReply({
+      responseGeneratedByAI: true,
+      intent: "unknown",
+      reply: "Me conta onde voce travou para eu te orientar por aqui."
+    })).toBe(true);
+    expect(canReuseUpstreamAIReply({
+      responseGeneratedByAI: true,
+      intent: "pix_payment",
+      reply: "Vou gerar o Pix para voce."
+    })).toBe(false);
+    expect(canReuseUpstreamAIReply({
+      responseGeneratedByAI: true,
+      intent: "ask_price",
+      reply: "O plano custa R$ 25."
+    })).toBe(false);
+  });
+
+  it("sends the safe contextual conclusion without a second OpenAI writer call", async () => {
+    vi.clearAllMocks();
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", customer_id: "customer-id", metadata: { lead_profile: { stage: "qualified" } } })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: _id, metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+      listMessagesByConversationId: vi.fn(async () => [])
+    };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ id: "provider-id" })) };
+    const contextualDecision = {
+      ...extractDeterministicDecision({
+        current_message: "me ajuda nisso",
+        recent_messages: [],
+        lead_profile: { stage: "qualified" },
+        open_order: null,
+        latest_order: null,
+        last_bot_question: "Como posso te ajudar?",
+        last_bot_message_at: null,
+        last_specialist_message_at: null,
+        followup_key: null,
+        followup_due_at: null,
+        human_hold_active: false
+      }),
+      source: "ai" as const,
+      confidence: 0.86,
+      recommended_response: "Me conta onde voce travou para eu te orientar por aqui."
+    };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", phone: "5511999998888" })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      { classify: vi.fn(async () => ({ intent: "unknown", confidence: 0.2, summary: "ambiguo", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({ reply: contextualDecision.recommended_response, responseSource: "ai" })) } as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      { findLatestOpenOrderByCustomerId: vi.fn(async () => null), findLatestOrderByCustomerId: vi.fn(async () => null) } as never,
+      {} as never,
+      {} as never,
+      undefined,
+      {} as never,
+      { safeCreateEvent: vi.fn(async () => ({})) } as never,
+      undefined,
+      { extract: vi.fn(async () => contextualDecision) } as never,
+      undefined,
+      undefined,
+      { isLatestMessageInBurst: vi.fn(async () => true) } as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "single-ai-call-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "me ajuda nisso",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(result).toMatchObject({ status: "processed", reply: contextualDecision.recommended_response });
+    expect(contextualResponseGenerate).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledTimes(1);
   });
 
   it("asks Android confirmation when the contextual answer is only celular", async () => {

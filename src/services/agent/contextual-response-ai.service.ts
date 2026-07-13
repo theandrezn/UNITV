@@ -111,7 +111,7 @@ export class ContextualResponseAIService {
             }
           },
           reasoning: { effort: "low" },
-          max_output_tokens: RESPONSE_POLICY.maxOutputTokens
+          max_output_tokens: getContextualResponseOutputBudget(input, requiredArtifacts)
         })
       );
       if (!response) {
@@ -159,6 +159,12 @@ export class ContextualResponseAIService {
       guidance: selectRelevantExcerpt(article.content || "", query, RESPONSE_POLICY.knowledgeCharacters)
     })).filter((article) => article.guidance);
   }
+}
+
+function getContextualResponseOutputBudget(input: ContextualResponseInput, requiredArtifacts: string[]) {
+  const needsMoreRoom = requiredArtifacts.length > 0 ||
+    /(technical_support|support|activation_help|card_payment|pix_payment|receipt_sent)/.test(input.intent);
+  return needsMoreRoom ? RESPONSE_POLICY.complexOutputTokens : RESPONSE_POLICY.defaultOutputTokens;
 }
 
 export function extractRequiredArtifacts(directive: string) {

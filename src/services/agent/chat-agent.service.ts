@@ -191,7 +191,7 @@ export class ChatAgentService {
     if (contextualUnderstandingReply) {
       return {
         ...contextualUnderstandingReply,
-        responseSource: "local_rule"
+        responseSource: input.contextualDecision?.source === "ai" ? "ai" : "local_rule"
       };
     }
 

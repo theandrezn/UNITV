@@ -13,13 +13,22 @@ export class AuditLogsRepository {
   }
 
   async listOpenAIUsageSince(since: string) {
-    const { data, error } = await this.supabase
-      .from("audit_logs")
-      .select("created_at, metadata")
-      .eq("action", "openai_usage")
-      .gte("created_at", since)
-      .order("created_at", { ascending: true });
+    const pageSize = 1000;
+    const rows: Array<Record<string, unknown>> = [];
+    for (let from = 0; ; from += pageSize) {
+      const { data, error } = await this.supabase
+        .from("audit_logs")
+        .select("id, created_at, metadata")
+        .eq("action", "openai_usage")
+        .gte("created_at", since)
+        .order("created_at", { ascending: true })
+        .order("id", { ascending: true })
+        .range(from, from + pageSize - 1);
+      const page = assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+      rows.push(...page);
+      if (page.length < pageSize) break;
+    }
 
-    return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
+    return rows;
   }
 }

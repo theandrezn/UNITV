@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
+import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 
 const commercialIntentSchema = z.enum([
   "activate",
@@ -146,6 +147,8 @@ const SYSTEM_PROMPT = [
   "Retorne somente JSON valido no schema solicitado.",
   "Pergunta central: o que essa pessoa quis dizer considerando o que o bot acabou de perguntar?",
   "Interprete historico, lead_profile, pedido aberto, ultima mensagem do bot e ultima pergunta do bot.",
+  "Consulte a base de conhecimento recebida para fatos, fluxo e estilo, sem copiar exemplos literalmente.",
+  "recommended_response deve ser uma resposta final original, curta, contextual e com no maximo uma pergunta.",
   "Voce NAO executa acoes, NAO confirma pagamento, NAO cria Pix, NAO entrega codigo.",
   "Precos oficiais: mensal R$25, trimestral R$70, semestral R$120, anual R$200.",
   "Se a mensagem curta depender da ultima pergunta, use o historico para inferir a intencao.",
@@ -161,6 +164,8 @@ const SYSTEM_PROMPT = [
 ].join("\n");
 
 export class ContextualIntelligenceService {
+  constructor(private readonly knowledgeService = new KnowledgeService()) {}
+
   async extract(input: { context: CommercialContext; useStrongModel?: boolean }): Promise<ContextualDecision> {
     const deterministic = extractDeterministicDecision(input.context);
     if (deterministic.confidence >= 0.92 || !process.env.OPENAI_API_KEY) {
@@ -170,13 +175,14 @@ export class ContextualIntelligenceService {
     try {
       const client = createOpenAIClient();
       const model = input.useStrongModel ? getStrongSalesAgentOpenAIModel() : getSalesAgentOpenAIModel();
+      const knowledge = await this.loadKnowledge(input.context);
       const response = await executeObservedOpenAICall(
         { callType: "context_interpretation", model, conversationId: input.context.conversation_id || null },
         () => client.responses.create({
         model,
         input: [
           { role: "system", content: [{ type: "input_text", text: SYSTEM_PROMPT }] },
-          { role: "user", content: [{ type: "input_text", text: JSON.stringify(compactCommercialContextForModel(input.context)) }] }
+          { role: "user", content: [{ type: "input_text", text: JSON.stringify(compactCommercialContextForModel(input.context, knowledge)) }] }
         ],
         text: {
           format: {
@@ -199,6 +205,27 @@ export class ContextualIntelligenceService {
     } catch {
       return { ...deterministic, source: "deterministic" };
     }
+  }
+
+  private async loadKnowledge(context: CommercialContext) {
+    const stage = String(context.lead_profile.stage || context.lead_profile.commercial_stage || "");
+    const query = [context.current_message, stage, context.last_bot_question].filter(Boolean).join(" ");
+    const [identity, neverDo, relevant] = await Promise.all([
+      this.knowledgeService.getKnowledgeByCategory("identidade_do_agente"),
+      this.knowledgeService.getKnowledgeByCategory("o_que_nunca_fazer"),
+      this.knowledgeService.searchKnowledge(query)
+    ]);
+    const unique = new Map<string, Record<string, unknown>>();
+    for (const article of [...identity, ...neverDo, ...relevant]) {
+      const key = String(article.id || article.title || article.category || "");
+      if (key && !unique.has(key)) unique.set(key, article);
+    }
+
+    return [...unique.values()].slice(0, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeArticles).map((article) => ({
+      title: String(article.title || article.category || "Conhecimento UNITV"),
+      category: String(article.category || "geral"),
+      guidance: selectKnowledgeExcerpt(String(article.content || ""), query, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeCharacters)
+    })).filter((article) => article.guidance);
   }
 }
 
@@ -483,7 +510,7 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
   return base;
 }
 
-function compactCommercialContextForModel(context: CommercialContext) {
+function compactCommercialContextForModel(context: CommercialContext, knowledge: Array<Record<string, unknown>> = []) {
   const profileKeys = [
     "stage", "etapa_atual", "commercial_stage", "ultima_intencao", "selected_plan", "plano_interesse",
     "device", "aparelho", "download_status", "install_status", "trial_status", "payment_status",
@@ -499,7 +526,7 @@ function compactCommercialContextForModel(context: CommercialContext) {
   }, {});
 
   return {
-    current_message: context.current_message.slice(-600),
+    current_message: context.current_message.slice(-450),
     recent_messages: context.recent_messages.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.recentMessages).map((message) => ({
       role: message.role || null,
       content: typeof message.content === "string"
@@ -511,8 +538,23 @@ function compactCommercialContextForModel(context: CommercialContext) {
     latest_order: context.latest_order ? { id: context.latest_order.id || null, status: context.latest_order.status || null } : null,
     last_bot_question: context.last_bot_question,
     followup_key: context.followup_key,
-    human_hold_active: context.human_hold_active
+    human_hold_active: context.human_hold_active,
+    knowledge_base: knowledge
   };
+}
+
+function selectKnowledgeExcerpt(content: string, query: string, maxLength: number) {
+  const terms = normalize(query).split(/\W+/).filter((term) => term.length >= 4).slice(0, 8);
+  const sections = content.split(/\n(?=##?\s)/).filter(Boolean);
+  const selected = sections
+    .map((section, index) => ({ section, index, score: terms.reduce((score, term) => score + (normalize(section).includes(term) ? 1 : 0), 0) }))
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, 2)
+    .map((item) => item.section)
+    .join("\n")
+    .trim();
+  const excerpt = selected || content.trim();
+  return excerpt.length > maxLength ? `${excerpt.slice(0, maxLength)}...` : excerpt;
 }
 
 function isTrialSelectionAnswer(normalized: string, lastQuestion: string) {

@@ -41,6 +41,8 @@ updates = {
     "OPENAI_MODEL_SALES_AGENT_STRONG": "gpt-5.4-mini",
     "OPENAI_MODEL_INTENT": "gpt-5.4-mini",
     "OPENAI_MODEL_AUDIT_SUMMARY": "gpt-5.4-mini",
+    "UNITV_AI_INTENT_CLASSIFIER_ENABLED": "false",
+    "UNITV_MESSAGE_BURST_DEBOUNCE_MS": "2500",
     "UNITV_DAILY_LEARNING_STRONG_MODEL_ENABLED": "false",
     "UNITV_DAILY_LEARNING_ENABLED": "false",
     "UNITV_SPECIALIST_AI_ANALYSIS_ENABLED": "false",
@@ -67,7 +69,7 @@ secret_file.unlink(missing_ok=True)
 PY
 '@
 
-  $remoteScript.Replace("/var/www/unitv", $AppDir).Replace("`r", "") |
+  ($remoteScript.Replace("/var/www/unitv", $AppDir).Replace("`r", "") + "`n# end") |
     ssh -i $KeyPath $remote "bash -s"
   if ($LASTEXITCODE -ne 0) {
     throw "Falha ao atualizar a configuracao segura no servidor."

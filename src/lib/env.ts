@@ -13,6 +13,7 @@ const serverEnvSchema = z.object({
   OPENAI_MODEL_SALES_AGENT: z.string().optional(),
   OPENAI_MODEL_SALES_AGENT_STRONG: z.string().optional(),
   OPENAI_MODEL_INTENT: z.string().optional(),
+  UNITV_AI_INTENT_CLASSIFIER_ENABLED: z.string().optional(),
   WHATSAPP_ENABLE_MAIN_MENU: z.string().optional(),
   APP_ENV: appEnvSchema.default("development"),
   APP_BASE_URL: z.string().url("APP_BASE_URL must be a valid URL").optional().or(z.literal("")),

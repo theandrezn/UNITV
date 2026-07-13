@@ -19,6 +19,6 @@ export class CustomerMessageBurstService {
 }
 
 function readDelay() {
-  const configured = Number(process.env.UNITV_MESSAGE_BURST_DEBOUNCE_MS || 1200);
-  return Number.isFinite(configured) ? Math.max(0, Math.min(configured, 5000)) : 1200;
+  const configured = Number(process.env.UNITV_MESSAGE_BURST_DEBOUNCE_MS || 2500);
+  return Number.isFinite(configured) ? Math.max(0, Math.min(configured, 5000)) : 2500;
 }

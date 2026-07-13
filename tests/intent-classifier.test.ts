@@ -1,5 +1,7 @@
 ﻿import { describe, expect, it, vi } from "vitest";
 
+import { afterEach } from "vitest";
+
 vi.mock("server-only", () => ({}));
 
 const openAIClient = {
@@ -23,6 +25,8 @@ import { createOpenAIClient } from "@/lib/openai/client";
 import { IntentClassifierService } from "@/services/agent/intent-classifier.service";
 
 describe("IntentClassifierService", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
   it.each([
     ["oi", "greeting"],
     ["Olq", "greeting"],
@@ -53,8 +57,19 @@ describe("IntentClassifierService", () => {
     expect(createOpenAIClient).not.toHaveBeenCalled();
   });
 
-  it("uses OpenAI only when the local rules cannot classify the message", async () => {
+  it("does not spend on a redundant intent call for ambiguous messages by default", async () => {
     vi.clearAllMocks();
+    const service = new IntentClassifierService();
+
+    const result = await service.classify({ message: "abc xyz sem contexto claro" });
+
+    expect(result.intent).toBe("unknown");
+    expect(createOpenAIClient).not.toHaveBeenCalled();
+  });
+
+  it("uses OpenAI for ambiguous intent only when explicitly enabled", async () => {
+    vi.clearAllMocks();
+    vi.stubEnv("UNITV_AI_INTENT_CLASSIFIER_ENABLED", "true");
     openAIClient.responses.create.mockResolvedValueOnce({
       output_text: JSON.stringify({
         intent: "unknown",
@@ -75,6 +90,7 @@ describe("IntentClassifierService", () => {
 
   it("falls back safely when OpenAI quota or network fails", async () => {
     vi.clearAllMocks();
+    vi.stubEnv("UNITV_AI_INTENT_CLASSIFIER_ENABLED", "true");
     openAIClient.responses.create.mockRejectedValueOnce(new Error("429 quota exceeded"));
     const service = new IntentClassifierService();
 
@@ -88,6 +104,7 @@ describe("IntentClassifierService", () => {
 
   it("never makes a second paid request when the economical Responses call returns empty", async () => {
     vi.clearAllMocks();
+    vi.stubEnv("UNITV_AI_INTENT_CLASSIFIER_ENABLED", "true");
     openAIClient.responses.create.mockResolvedValueOnce({ output_text: "" });
     const service = new IntentClassifierService();
 

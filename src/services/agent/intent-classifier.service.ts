@@ -46,6 +46,13 @@ export class IntentClassifierService {
       return deterministic;
     }
 
+    // The contextual interpreter already receives the persisted state and
+    // recent conversation. Keep this narrower model call opt-in so an
+    // ambiguous message is not paid for twice before the final response.
+    if (process.env.UNITV_AI_INTENT_CLASSIFIER_ENABLED !== "true") {
+      return fallbackClassification;
+    }
+
     try {
       const client = createOpenAIClient();
       const content = await classifyWithResponsesApi(client, input.message, input.conversationId);
