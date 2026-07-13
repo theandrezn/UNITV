@@ -2,6 +2,7 @@ import "server-only";
 import { z } from "zod";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
+import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 
 const commercialIntentSchema = z.enum([
   "activate",
@@ -185,7 +186,8 @@ export class ContextualIntelligenceService {
             strict: true
           }
         },
-        max_output_tokens: 240
+        reasoning: { effort: "low" },
+        max_output_tokens: OPENAI_ECONOMY_POLICY.contextualDecision.maxOutputTokens
       })
       );
       if (!response) {
@@ -497,10 +499,12 @@ function compactCommercialContextForModel(context: CommercialContext) {
   }, {});
 
   return {
-    current_message: context.current_message.slice(-900),
-    recent_messages: context.recent_messages.slice(-8).map((message) => ({
+    current_message: context.current_message.slice(-600),
+    recent_messages: context.recent_messages.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.recentMessages).map((message) => ({
       role: message.role || null,
-      content: typeof message.content === "string" ? message.content.slice(-700) : null
+      content: typeof message.content === "string"
+        ? message.content.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.messageCharacters)
+        : null
     })),
     lead_profile: leadProfile,
     open_order: context.open_order ? { id: context.open_order.id || null, status: context.open_order.status || null } : null,

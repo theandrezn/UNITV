@@ -85,4 +85,16 @@ describe("IntentClassifierService", () => {
     expect(result.suggested_reply).toContain("comprar um plano");
     expect(openAIClient.chat.completions.create).not.toHaveBeenCalled();
   });
+
+  it("never makes a second paid request when the economical Responses call returns empty", async () => {
+    vi.clearAllMocks();
+    openAIClient.responses.create.mockResolvedValueOnce({ output_text: "" });
+    const service = new IntentClassifierService();
+
+    const result = await service.classify({ message: "abc xyz sem contexto claro" });
+
+    expect(result.intent).toBe("unknown");
+    expect(openAIClient.responses.create).toHaveBeenCalledTimes(1);
+    expect(openAIClient.chat.completions.create).not.toHaveBeenCalled();
+  });
 });

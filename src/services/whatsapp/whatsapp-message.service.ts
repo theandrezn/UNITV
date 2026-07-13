@@ -22,7 +22,6 @@ import { AgentLearningMemoriesRepository } from "@/repositories/agent-learning-m
 import { buildMaskedConversationExcerpt, maskSpecialistTrainingText } from "@/lib/whatsapp/specialist-training-privacy";
 import { SpecialistInterventionAnalysisService } from "@/services/agent/specialist-intervention-analysis.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
-import { HotLeadAlertService } from "@/services/leads/hot-lead-alert.service";
 import { CustomerMessageBurstService } from "@/services/whatsapp/customer-message-burst.service";
 import {
   ContextualIntelligenceService,
@@ -66,7 +65,7 @@ export class WhatsappMessageService {
     private readonly specialistTrainingExamplesRepository?: SpecialistTrainingExamplesRepository,
     private readonly specialistInterventionAnalysis = new SpecialistInterventionAnalysisService(),
     private readonly agentEventLogService?: AgentEventLogService,
-    private readonly hotLeadAlertService?: HotLeadAlertService,
+    _removedAutomaticAdminAlertService?: unknown,
     private readonly contextualIntelligenceService = new ContextualIntelligenceService(),
     private readonly conversationBrainService = new ConversationBrainService(),
     private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository,
@@ -379,17 +378,6 @@ export class WhatsappMessageService {
     }
 
     if (conversation.metadata?.requires_human) {
-      if (isReceiptMessage(message)) {
-        const recentMessages = await this.listRecentConversationMessages(conversation.id);
-        await this.safeNotifyHotLead({
-          conversation,
-          customer,
-          message,
-          intent: "receipt_sent",
-          recentMessages
-        });
-      }
-
       if (isHumanHandoffRequest(message.text)) {
         await this.notifyHumanOwner({
           webhookEventId,
@@ -410,17 +398,6 @@ export class WhatsappMessageService {
     }
 
     if (isRecentSpecialistActivity(conversation.metadata)) {
-      if (isReceiptMessage(message)) {
-        const recentMessages = await this.listRecentConversationMessages(conversation.id);
-        await this.safeNotifyHotLead({
-          conversation,
-          customer,
-          message,
-          intent: "receipt_sent",
-          recentMessages
-        });
-      }
-
       await this.auditService.createAuditLog({
         actor_type: "ai_agent",
         action: "recent_human_activity_auto_reply_skipped",
@@ -443,14 +420,6 @@ export class WhatsappMessageService {
         event_source: "webhook",
         message_id: message.externalMessageId,
         metadata: { webhookEventId, hasMedia: message.hasMedia }
-      });
-      const recentMessages = await this.listRecentConversationMessages(conversation.id);
-      await this.safeNotifyHotLead({
-        conversation,
-        customer,
-        message,
-        intent: "receipt_sent",
-        recentMessages
       });
       const reply = await this.handleReceiptMessage({ webhookEventId, message, customer, conversation });
       return this.sendAndStoreAssistantReply({ webhookEventId, message, customer, conversation, reply, classification: { intent: "receipt_sent" } });
@@ -710,14 +679,6 @@ export class WhatsappMessageService {
       await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
       conversation.metadata = nextMetadata;
     }
-    await this.safeNotifyHotLead({
-      conversation,
-      customer,
-      message,
-      intent: classification.intent,
-      recentMessages,
-      leadProfile: readLeadProfile(conversation.metadata)
-    });
     const reply = commercialReply.reply;
 
     if (!reply) {
@@ -1010,14 +971,6 @@ export class WhatsappMessageService {
   private safeCreateAgentEvent(input: Parameters<AgentEventLogService["safeCreateEvent"]>[0]) {
     try {
       return (this.agentEventLogService || new AgentEventLogService()).safeCreateEvent(input);
-    } catch {
-      return null;
-    }
-  }
-
-  private safeNotifyHotLead(input: Parameters<HotLeadAlertService["maybeNotifyHotLead"]>[0]) {
-    try {
-      return (this.hotLeadAlertService || new HotLeadAlertService()).maybeNotifyHotLead(input);
     } catch {
       return null;
     }

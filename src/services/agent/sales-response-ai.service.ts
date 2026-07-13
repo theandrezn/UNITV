@@ -4,6 +4,7 @@ import { sanitizeCustomerMessage, validateResponseAgainstLeadProfile } from "@/l
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import { extractRequiredArtifacts } from "@/services/agent/contextual-response-ai.service";
+import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 
 type ConversationMessage = {
   role?: string;
@@ -62,6 +63,8 @@ const SYSTEM_PROMPT = [
   "Respeite sempre os fatos e bloqueios persistidos no contexto."
 ].join("\n");
 
+const SALES_POLICY = OPENAI_ECONOMY_POLICY.salesResponse;
+
 export class SalesResponseAIService {
   constructor(private readonly knowledgeService = new KnowledgeService()) {}
 
@@ -81,15 +84,15 @@ export class SalesResponseAIService {
     const knowledge = deduplicateKnowledge([...identityKnowledge, ...guardrailKnowledge, ...relevantKnowledge]);
     const requiredArtifacts = extractRequiredArtifacts(input.fallbackReply || "");
     const context = {
-      latest_customer_message: input.message,
+      latest_customer_message: truncateForModel(input.message, 600),
       detected_intent: input.intent,
       facts: compactSalesLeadProfile(input.leadProfile),
-      recent_conversation: (input.recentMessages || []).slice(-8).map((item) => ({
+      recent_conversation: (input.recentMessages || []).slice(-SALES_POLICY.recentMessages).map((item) => ({
         role: item.role,
-        content: truncateForModel(item.content, 700)
+        content: truncateForModel(item.content, SALES_POLICY.messageCharacters)
       })),
-      specialist_examples: (input.specialistExamples || []).slice(0, 2).map(compactSpecialistExample),
-      learned_operational_directives: (input.learningMemories || []).slice(0, 3).map((memory) => ({
+      specialist_examples: (input.specialistExamples || []).slice(0, 1).map(compactSpecialistExample),
+      learned_operational_directives: (input.learningMemories || []).slice(0, 2).map((memory) => ({
         intent: memory.intent || null,
         stage: memory.stage || null,
         rule: truncateForModel(memory.rule, 360),
@@ -120,6 +123,7 @@ export class SalesResponseAIService {
             strict: true
           }
         },
+        reasoning: { effort: "low" },
         max_output_tokens: getSalesResponseOutputBudget(input)
       })
       );
@@ -155,17 +159,17 @@ function deduplicateKnowledge(articles: Array<Record<string, unknown>>) {
       unique.set(key, article);
     }
   }
-  return [...unique.values()].slice(0, 8).map((article) => ({
+  return [...unique.values()].slice(0, SALES_POLICY.knowledgeArticles).map((article) => ({
     title: article.title || article.category || "Conhecimento UNITV",
     category: article.category || "geral",
-    guidance: truncateForModel(article.content, 1_400)
+    guidance: truncateForModel(article.content, SALES_POLICY.knowledgeCharacters)
   }));
 }
 
 function getSalesResponseOutputBudget(input: GenerateSalesResponseInput) {
-  if (/(technical_support|support|activation_help)/.test(input.intent)) return 180;
-  if (/(free_trial|ask_price|buy_plan|renew_plan)/.test(input.intent)) return 150;
-  return 110;
+  if (/(technical_support|support|activation_help)/.test(input.intent)) return SALES_POLICY.technicalOutputTokens;
+  if (/(free_trial|ask_price|buy_plan|renew_plan)/.test(input.intent)) return SALES_POLICY.commercialOutputTokens;
+  return SALES_POLICY.defaultOutputTokens;
 }
 
 function buildSpecialistStyleDirectives(examples: SpecialistExample[]) {

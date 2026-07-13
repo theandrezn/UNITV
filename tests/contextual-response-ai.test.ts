@@ -50,6 +50,9 @@ describe("ContextualResponseAIService", () => {
     expect(knowledgeService.searchKnowledge).toHaveBeenCalled();
     const request = openAIResponsesCreate.mock.calls[0][0];
     const userContext = JSON.parse(request.input[1].content[0].text);
+    expect(request.model).toBe("test-contextual-model");
+    expect(request.max_output_tokens).toBe(220);
+    expect(request.reasoning).toEqual({ effort: "low" });
     expect(userContext.writing_contract.programmed_copy_forbidden).toBe(true);
     expect(userContext.operational_directive_not_customer_copy).toBeUndefined();
     expect(userContext.knowledge_base.map((article: { category: string }) => article.category)).toEqual(

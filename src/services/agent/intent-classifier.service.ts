@@ -1,9 +1,10 @@
 ﻿import "server-only";
 import { z } from "zod";
-import { createOpenAIClient, getDefaultOpenAIModel, getIntentOpenAIModel } from "@/lib/openai/client";
+import { createOpenAIClient, getIntentOpenAIModel } from "@/lib/openai/client";
 import { UNITV_INTENT_JSON_SCHEMA, UNITV_INTENT_SYSTEM_PROMPT } from "./unitv-sales-ai-prompt";
 import { isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
+import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 
 export const intentSchema = z.enum([
   "greeting",
@@ -49,32 +50,7 @@ export class IntentClassifierService {
       const client = createOpenAIClient();
       const content = await classifyWithResponsesApi(client, input.message, input.conversationId);
       if (!content) {
-        const model = getDefaultOpenAIModel();
-        const completion = await executeObservedOpenAICall(
-          { callType: "intent_classification_fallback", model, conversationId: input.conversationId },
-          () => client.chat.completions.create({
-          model,
-          messages: [
-            {
-              role: "system",
-              content:
-                `${UNITV_INTENT_SYSTEM_PROMPT}\nResponda somente JSON valido com intent, confidence, summary e suggested_reply.`
-            },
-            {
-              role: "user",
-              content: input.message
-            }
-          ],
-          response_format: { type: "json_object" },
-          temperature: 0,
-          max_tokens: 120
-        })
-        );
-        if (!completion) {
-          return fallbackClassification;
-        }
-
-        return parseClassification(completion.choices[0]?.message.content);
+        return fallbackClassification;
       }
 
       return parseClassification(content);
@@ -106,7 +82,7 @@ async function classifyWithResponsesApi(client: unknown, message: string, conver
       },
       {
         role: "user",
-        content: [{ type: "input_text", text: message }]
+        content: [{ type: "input_text", text: message.slice(0, OPENAI_ECONOMY_POLICY.intent.messageCharacters) }]
       }
     ],
     text: {
@@ -117,7 +93,8 @@ async function classifyWithResponsesApi(client: unknown, message: string, conver
         strict: true
       }
     },
-    max_output_tokens: 120
+    reasoning: { effort: "low" },
+    max_output_tokens: OPENAI_ECONOMY_POLICY.intent.maxOutputTokens
   })
   );
 

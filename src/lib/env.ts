@@ -47,11 +47,8 @@ const serverEnvSchema = z.object({
   OPENAI_MODEL_AUDIT_SUMMARY: z.string().optional(),
   UNITV_MESSAGE_BURST_DEBOUNCE_MS: z.string().optional(),
   UNITV_DAILY_LEARNING_STRONG_MODEL_ENABLED: z.string().optional(),
-  UNITV_HOT_LEAD_ALERTS_ENABLED: z.string().optional(),
-  UNITV_HOT_LEAD_ALERT_DEDUPE_MINUTES: z.string().optional(),
-  UNITV_HOT_LEAD_ALERT_ADMIN_PHONE: z.string().optional(),
-  UNITV_HOT_LEAD_ALERT_MIN_TEMPERATURE: z.enum(["frio", "morno", "quente", "muito_quente"]).optional(),
-  UNITV_HOT_LEAD_ALERT_FORMAT: z.enum(["full", "compact"]).optional(),
+  UNITV_DAILY_LEARNING_ENABLED: z.string().optional(),
+  UNITV_SPECIALIST_AI_ANALYSIS_ENABLED: z.string().optional(),
   OBSIDIAN_KNOWLEDGE_BASE_PATH: z.string().optional(),
   UNITV_OBSIDIAN_KNOWLEDGE_BASE_PATH: z.string().optional()
 });
@@ -80,7 +77,7 @@ export type MetaConversionsConfig = {
 };
 
 export const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
-export const DEFAULT_STRONG_OPENAI_MODEL = "gpt-5.5";
+export const DEFAULT_STRONG_OPENAI_MODEL = DEFAULT_OPENAI_MODEL;
 
 let cachedEnv: ServerEnv | null = null;
 
@@ -195,7 +192,7 @@ export function getOpenAISalesAgentModel() {
 
 export function getOpenAIStrongSalesAgentModel() {
   const env = getServerEnv();
-  return env.OPENAI_MODEL_SALES_AGENT_STRONG || DEFAULT_STRONG_OPENAI_MODEL;
+  return env.OPENAI_MODEL_SALES_AGENT_STRONG || env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || DEFAULT_STRONG_OPENAI_MODEL;
 }
 
 export function isWhatsAppMainMenuEnabled() {
@@ -220,15 +217,4 @@ export function getDailyAuditConfig() {
 function parseIntegerEnv(value: string | undefined, fallback: number) {
   const parsed = Number.parseInt(value || "", 10);
   return Number.isFinite(parsed) ? parsed : fallback;
-}
-
-export function getHotLeadAlertConfig() {
-  const env = getServerEnv();
-  return {
-    enabled: env.UNITV_HOT_LEAD_ALERTS_ENABLED !== "false",
-    dedupeMinutes: parseIntegerEnv(env.UNITV_HOT_LEAD_ALERT_DEDUPE_MINUTES, 30),
-    adminPhone: env.UNITV_HOT_LEAD_ALERT_ADMIN_PHONE || env.UNITV_DAILY_AUDIT_ADMIN_PHONE || "558699802602",
-    minTemperature: env.UNITV_HOT_LEAD_ALERT_MIN_TEMPERATURE || "quente",
-    format: env.UNITV_HOT_LEAD_ALERT_FORMAT || "full"
-  };
 }

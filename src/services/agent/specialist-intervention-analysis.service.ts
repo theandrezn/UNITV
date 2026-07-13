@@ -1,6 +1,7 @@
 import "server-only";
 import { createOpenAIClient, getSalesAgentOpenAIModel } from "@/lib/openai/client";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
+import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 
 export type SpecialistInterventionAnalysis = {
   inferred_intent: string;
@@ -64,7 +65,7 @@ const ANALYSIS_PROMPT = [
 export class SpecialistInterventionAnalysisService {
   async analyzeSpecialistIntervention(input: AnalyzeSpecialistInterventionInput): Promise<SpecialistInterventionAnalysis> {
     const fallback = inferSpecialistInterventionLocally(input);
-    if (!process.env.OPENAI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY || process.env.UNITV_SPECIALIST_AI_ANALYSIS_ENABLED !== "true") {
       return fallback;
     }
 
@@ -86,7 +87,8 @@ export class SpecialistInterventionAnalysisService {
             strict: true
           }
         },
-        max_output_tokens: 240
+        reasoning: { effort: "low" },
+        max_output_tokens: OPENAI_ECONOMY_POLICY.specialistAnalysis.maxOutputTokens
       })
       );
       if (!response) {

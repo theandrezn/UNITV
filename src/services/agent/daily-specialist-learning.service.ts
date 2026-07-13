@@ -4,6 +4,7 @@ import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAI
 import { AgentLearningMemoriesRepository, type AgentLearningMemory } from "@/repositories/agent-learning-memories.repository";
 import { AgentLearningExampleProgressRepository } from "@/repositories/agent-learning-example-progress.repository";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
+import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 
 const directiveSchema = z.object({
   intent: z.string().nullable(),
@@ -17,7 +18,7 @@ const directiveSchema = z.object({
 
 const learningSchema = z.object({
   summary: z.string().min(1).max(600),
-  directives: z.array(directiveSchema).max(6)
+  directives: z.array(directiveSchema).max(OPENAI_ECONOMY_POLICY.dailyLearning.maxDirectives)
 });
 
 export type DailySpecialistLearningResult = {
@@ -40,8 +41,11 @@ export class DailySpecialistLearningService {
   ) {}
 
   async synthesizeDailyLearning(input: DailySpecialistLearningInput): Promise<DailySpecialistLearningResult> {
+    if (process.env.UNITV_DAILY_LEARNING_ENABLED !== "true") {
+      return { createdCount: 0, summary: "Aprendizado automatico por IA desativado para economizar tokens; o Obsidian segue como base de conhecimento.", skippedReason: "learning_disabled_by_economy_policy" };
+    }
     const eligibleExamples = input.examples.filter(isEligibleExample);
-    const examples = (await this.progressRepository.filterUnprocessedExamples(eligibleExamples)).slice(0, 18);
+    const examples = (await this.progressRepository.filterUnprocessedExamples(eligibleExamples)).slice(0, OPENAI_ECONOMY_POLICY.dailyLearning.maxExamples);
     if (!examples.length) {
       return { createdCount: 0, summary: "Nenhum exemplo novo ou revisado precisa ser sintetizado hoje.", skippedReason: "no_new_learning_examples" };
     }
@@ -127,7 +131,7 @@ export class DailySpecialistLearningService {
           }
         },
         reasoning: { effort: "low" },
-        max_output_tokens: 520
+        max_output_tokens: OPENAI_ECONOMY_POLICY.dailyLearning.maxOutputTokens
       })
       );
       if (!response) {

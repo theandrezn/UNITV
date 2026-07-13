@@ -4,6 +4,7 @@ import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAI
 import { sanitizeCustomerMessage, validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
+import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 
 type ConversationMessage = {
   role?: string | null;
@@ -52,6 +53,8 @@ const SYSTEM_PROMPT = [
   "Retorne somente JSON valido no schema solicitado."
 ].join("\n");
 
+const RESPONSE_POLICY = OPENAI_ECONOMY_POLICY.contextualResponse;
+
 export class ContextualResponseAIService {
   constructor(private readonly knowledgeService = new KnowledgeService()) {}
 
@@ -71,14 +74,14 @@ export class ContextualResponseAIService {
       .map((message) => String(message.content));
     const requiredArtifacts = extractRequiredArtifacts(input.responseDirective);
     const context = {
-      current_customer_message: truncate(input.currentMessage, 900),
+      current_customer_message: truncate(input.currentMessage, 600),
       intent: input.intent,
       state_and_known_facts: compactLeadProfile(input.leadProfile),
-      recent_conversation: (input.recentMessages || []).slice(-12).map((message) => ({
+      recent_conversation: (input.recentMessages || []).slice(-RESPONSE_POLICY.recentMessages).map((message) => ({
         role: message.role || "unknown",
-        content: truncate(message.content || "", 700)
+        content: truncate(message.content || "", RESPONSE_POLICY.messageCharacters)
       })),
-      operational_context: compactRecord(input.operationalContext || {}, 20),
+      operational_context: compactRecord(input.operationalContext || {}, 12),
       required_artifacts: requiredArtifacts,
       knowledge_base: knowledge,
       writing_contract: {
@@ -107,7 +110,8 @@ export class ContextualResponseAIService {
               strict: true
             }
           },
-          max_output_tokens: 420
+          reasoning: { effort: "low" },
+          max_output_tokens: RESPONSE_POLICY.maxOutputTokens
         })
       );
       if (!response) {
@@ -149,10 +153,10 @@ export class ContextualResponseAIService {
       }
     }
 
-    return [...unique.values()].slice(0, 8).map((article) => ({
+    return [...unique.values()].slice(0, RESPONSE_POLICY.knowledgeArticles).map((article) => ({
       title: article.title || article.category || "Conhecimento UNITV",
       category: article.category || "geral",
-      guidance: selectRelevantExcerpt(article.content || "", query, 1_600)
+      guidance: selectRelevantExcerpt(article.content || "", query, RESPONSE_POLICY.knowledgeCharacters)
     })).filter((article) => article.guidance);
   }
 }
@@ -203,7 +207,7 @@ function compactLeadProfile(profile: Record<string, unknown>) {
 function compactRecord(record: Record<string, unknown>, limit: number) {
   return Object.entries(record).slice(0, limit).reduce<Record<string, unknown>>((result, [key, value]) => {
     if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
-      result[key] = typeof value === "string" ? truncate(value, 500) : value;
+      result[key] = typeof value === "string" ? truncate(value, 300) : value;
     }
     return result;
   }, {});

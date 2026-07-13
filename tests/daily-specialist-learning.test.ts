@@ -24,7 +24,22 @@ function createLearningService(upsertMemories = vi.fn(async (memories) => memori
 }
 
 describe("daily specialist learning", () => {
-  beforeEach(() => openAIResponsesCreate.mockReset());
+  beforeEach(() => {
+    openAIResponsesCreate.mockReset();
+    process.env.UNITV_DAILY_LEARNING_ENABLED = "true";
+  });
+
+  it("does not spend tokens on automatic learning under the economy policy", async () => {
+    process.env.UNITV_DAILY_LEARNING_ENABLED = "false";
+    process.env.OPENAI_API_KEY = "test-key";
+    const { service, progressRepository } = createLearningService();
+
+    const result = await service.synthesizeDailyLearning({ auditDate: "2026-07-13", timezone: "America/Sao_Paulo", examples: [] });
+
+    expect(result.skippedReason).toBe("learning_disabled_by_economy_policy");
+    expect(progressRepository.filterUnprocessedExamples).not.toHaveBeenCalled();
+    expect(openAIResponsesCreate).not.toHaveBeenCalled();
+  });
 
   it("turns approved specialist outcomes into reusable operational directives", async () => {
     process.env.OPENAI_API_KEY = "test-key";

@@ -333,7 +333,7 @@ describe("specialist operational learning", () => {
     expect(result[0].id).toBe("password-support");
   });
 
-  it("passes no more than two compact specialist examples to the OpenAI response context", async () => {
+  it("passes only one compact specialist example under the economy policy", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     openAIResponsesCreate.mockClear();
     const examples = Array.from({ length: 5 }, (_, index) => ({
@@ -351,7 +351,7 @@ describe("specialist operational learning", () => {
 
     const request = openAIResponsesCreate.mock.calls[0][0] as { input: Array<{ role: string; content: Array<{ text: string }> }> };
     const context = JSON.parse(request.input[1].content[0].text);
-    expect(context.specialist_examples).toHaveLength(2);
+    expect(context.specialist_examples).toHaveLength(1);
   });
 
   it("passes daily operational learning as principles instead of canned replies", async () => {
