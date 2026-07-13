@@ -30,6 +30,7 @@ import {
 } from "@/services/agent/contextual-intelligence.service";
 import { ConversationBrainService } from "@/services/agent/conversation-brain.service";
 import { ContextualResponseAIService } from "@/services/agent/contextual-response-ai.service";
+import { buildSpecialistLearningGuidance, type SpecialistLearningGuidance } from "@/services/agent/specialist-learning-guidance";
 import {
   detectUnitvDevice,
   isUnitvInstallationRequest,
@@ -424,7 +425,7 @@ export class WhatsappMessageService {
       return { status: "ignored" as const };
     }
 
-    if (isReceiptMessage(message)) {
+    if (isReceiptMessage(message, conversation.metadata)) {
       await this.safeCreateAgentEvent({
         conversation_id: conversation.id,
         customer_phone: message.phone,
@@ -527,9 +528,15 @@ export class WhatsappMessageService {
       conversation,
       recentMessages
     });
+    const [specialistExamples, learningMemories] = await Promise.all([
+      this.listRelevantSpecialistExamples(conversation.metadata, message.text, recentMessages),
+      this.listRelevantLearningMemories(conversation.metadata, message.text, recentMessages)
+    ]);
+    const specialistLearning = buildSpecialistLearningGuidance(specialistExamples, learningMemories);
     const contextualDecision = await this.contextualIntelligenceService.extract({
       context: contextSnapshot,
-      useStrongModel: false
+      useStrongModel: false,
+      specialistLearning
     });
     const conversationBrainDecision = this.conversationBrainService.decide({
       context: contextSnapshot,
@@ -592,10 +599,6 @@ export class WhatsappMessageService {
         brain_evidence: conversationBrainDecision.evidence
       }
     });
-    const [specialistExamples, learningMemories] = await Promise.all([
-      this.listRelevantSpecialistExamples(conversation.metadata, message.text, recentMessages),
-      this.listRelevantLearningMemories(conversation.metadata, message.text, recentMessages)
-    ]);
     const preSaleFollowupState = buildPreSaleRechargeLaterFollowupState({
       text: message.text,
       metadata: conversation.metadata,
@@ -780,7 +783,8 @@ export class WhatsappMessageService {
       followUpMessages: commercialReply.followUpMessages,
       menu: commercialReply.menu,
       sendTextBeforeMenu: commercialReply.sendTextBeforeMenu,
-      responseGeneratedByAI: commercialReply.responseSource === "ai"
+      responseGeneratedByAI: commercialReply.responseSource === "ai",
+      specialistLearning
     });
   }
 
@@ -796,7 +800,8 @@ export class WhatsappMessageService {
     followUpMessages,
     menu,
     sendTextBeforeMenu,
-    responseGeneratedByAI
+    responseGeneratedByAI,
+    specialistLearning
   }: {
     webhookEventId: string;
     message: IncomingEvolutionMessage;
@@ -810,6 +815,7 @@ export class WhatsappMessageService {
     menu?: WhatsAppMenu;
     sendTextBeforeMenu?: boolean;
     responseGeneratedByAI?: boolean;
+    specialistLearning?: SpecialistLearningGuidance | null;
   }) {
     const rawResponseDirective = [reply, ...(followUpMessages || [])].filter(Boolean).join("\n\n");
     const responseDirective = copyText
@@ -839,7 +845,11 @@ export class WhatsappMessageService {
           has_payment_copy_payload: Boolean(copyText),
           planned_menu_removed: Boolean(menu),
           planned_followup_messages_merged: (followUpMessages || []).length,
-          stage: readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).commercial_stage || null
+          stage: readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).commercial_stage || null,
+          specialist_pattern: specialistLearning?.pattern || null,
+          specialist_action: specialistLearning?.action || null,
+          specialist_style: specialistLearning?.style || null,
+          specialist_avoid: specialistLearning?.avoid || null
         },
         conversationId: conversation.id,
         useStrongModel: false
@@ -1474,13 +1484,17 @@ export class WhatsappMessageService {
   }
 }
 
-function isReceiptMessage(message: IncomingEvolutionMessage) {
+export function isReceiptMessage(message: IncomingEvolutionMessage, metadata?: Record<string, unknown> | null) {
   const text = message.text
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
   const receiptText = /\b(comprovante|recibo|print do pagamento|transferencia)\b/.test(text);
-  const receiptMedia = message.hasMedia && ["imageMessage", "documentMessage"].includes(message.messageType);
+  const profile = readLeadProfile(metadata);
+  const stage = normalizeFreeText(String(profile.stage || profile.etapa_atual || metadata?.conversation_stage || ""));
+  const paymentContext = /(^|_)(pix|payment|pagamento|checkout|awaiting_payment|comprovante)(_|$)/.test(stage) ||
+    Boolean(profile.pediu_pix || profile.enviou_comprovante || profile.payment_method || profile.payment_status === "pending");
+  const receiptMedia = message.hasMedia && ["imageMessage", "documentMessage"].includes(message.messageType) && paymentContext;
 
   return receiptText || receiptMedia;
 }
@@ -2485,6 +2499,8 @@ function buildLeadProfilePatch(text: string, intent: string, metadata: Record<st
   }
   if (/\b(telas?|aparelhos ao mesmo tempo)\b/.test(normalized)) {
     patch.asked_screens = true;
+    const requestedScreens = extractScreensCount(normalized);
+    if (requestedScreens) patch.requested_screens = requestedScreens;
   }
   if (/\b(download|baixar|apk|downloader|instalar|instalacao)\b/.test(normalized)) {
     patch.pediu_download = true;
@@ -2608,23 +2624,23 @@ function suggestNextAction(patch: Record<string, unknown>, existing: Record<stri
 
 function inferSpecialistExampleSuccessSignal(message: string): "positive" | "neutral" | "negative" {
   const normalized = normalizeFreeText(message);
-  if (/\b(errado|nao entendeu|nao e isso|nao quero|desisto|cancelar)\b/.test(normalized)) {
+  if (/\b(errado|nao entendeu|nao e isso|nao quero|desisto|cancelar|nao consegui|nao deu|nao funcionou|continua com erro|nao chegou)\b/.test(normalized)) {
     return "negative";
   }
-  if (/\b(sim|ok|pode|quero|mensal|anual|pix|cartao|paguei|feito|consegui)\b/.test(normalized)) {
+  if (/^(sim|ok|pode|quero|mensal|anual|pix|cartao|paguei|feito|consegui)(\b|[!. ]*$)/.test(normalized) ||
+      /\b(deu certo|funcionou|muito obrigado|obrigada|consegui agora)\b/.test(normalized)) {
     return "positive";
   }
   return "neutral";
 }
 
-function buildQuickSpecialistLearningSignals(message: string, botWasOverridden: boolean) {
+function buildQuickSpecialistLearningSignals(message: string, _botWasOverridden: boolean) {
   const normalized = normalizeFreeText(message);
   const wordCount = normalized.split(/\s+/).filter(Boolean).length;
   const isShort = wordCount > 0 && wordCount <= 22;
-  const isOperationalCorrection = botWasOverridden || /\b(tente|verifique|coloca|crie|manda|abre|entra|veja|me mande|pronto|aguardando)\b/.test(normalized);
 
   return {
-    successSignal: isOperationalCorrection || isShort ? "positive" as const : "unknown" as const,
+    successSignal: "unknown" as const,
     humanStyle: isShort ? "curto_direto_uma_acao" : "direto_contextual",
     styleNotes: isShort
       ? "Especialista usa frase curta, direta e contextual. Manter 1 ou 2 frases, sem textao e com no maximo uma pergunta."

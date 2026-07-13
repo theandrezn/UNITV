@@ -75,6 +75,7 @@ export class SpecialistTrainingExamplesRepository {
 
     const rawCandidates = assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
     const candidates = rawCandidates.filter((example) =>
+      isSafeSpecialistExampleForReuse(example) &&
       example.success_signal !== "negative" &&
       (example.outcome_status === "positive" || example.outcome_status === "neutral")
     );
@@ -97,7 +98,7 @@ export class SpecialistTrainingExamplesRepository {
   async markLatestConversationExampleSignal(conversationId: string, signal: "positive" | "neutral" | "negative") {
     const { data: latest, error: findError } = await this.supabase
       .from("specialist_training_examples")
-      .select("id, success_signal, review_status")
+      .select("id, success_signal, review_status, specialist_message, inferred_intent, inferred_specialist_action, metadata")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -110,7 +111,7 @@ export class SpecialistTrainingExamplesRepository {
     const nextSignal = signal === "neutral" && latest.success_signal && latest.success_signal !== "unknown"
       ? latest.success_signal
       : signal;
-    const autoApprove = nextSignal === "positive" && latest.review_status === "pending_review";
+    const autoApprove = nextSignal === "positive" && latest.review_status === "pending_review" && isSafeSpecialistExampleForReuse(latest);
     const observedAt = new Date().toISOString();
 
     const { data, error } = await this.supabase
@@ -213,6 +214,26 @@ export class SpecialistTrainingExamplesRepository {
   }
 }
 
+export function isSafeSpecialistExampleForReuse(example: Record<string, unknown>) {
+  const specialistMessage = normalizeText(String(example.specialist_message || ""));
+  const words = specialistMessage.split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words.length > 80) return false;
+  if (/^(oi|ola|boa noite|boa tarde|bom dia|pronto|certo|andre aqui|e um prazer)[!. ]*$/.test(specialistMessage)) return false;
+  if (/(https?:\/\/|r\$|\b\d+[,.]\d{2}\b|\bpix\b|chave|codigo|\b\d{5,}\b)/.test(specialistMessage)) return false;
+
+  const metadata = example.metadata && typeof example.metadata === "object"
+    ? example.metadata as Record<string, unknown>
+    : {};
+  const learnedPattern = String(metadata.learned_pattern || metadata.learnedPattern || "");
+  const intent = String(example.inferred_intent || "");
+  const action = String(example.inferred_specialist_action || "");
+  return (
+    (intent && intent !== "outro") ||
+    (action && action !== "respondeu_duvida") ||
+    Boolean(learnedPattern && learnedPattern !== "reconhecer_contexto_e_avancar")
+  );
+}
+
 function scoreExample(example: Record<string, unknown>, input: RelevantSpecialistExamplesInput, keywords: Set<string>) {
   let score = example.success_signal === "positive" ? 55 : example.success_signal === "negative" ? -60 : 5;
   if (input.intent && example.inferred_intent === input.intent) score += 24;
@@ -242,6 +263,10 @@ function scoreExample(example: Record<string, unknown>, input: RelevantSpecialis
 
 function tokenize(value: string) {
   return new Set(value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(/\W+/).filter((word) => word.length >= 3));
+}
+
+function normalizeText(value: string) {
+  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
 function dateValue(value: unknown) {

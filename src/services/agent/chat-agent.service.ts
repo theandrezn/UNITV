@@ -2431,11 +2431,11 @@ function getSalesObjectionReply(message: string): { reply: string; menu?: WhatsA
     .replace(/[\u0300-\u036f]/g, "");
 
   if (/\b(quantas telas|2 telas|duas telas|telas?)\b/.test(normalized)) {
+    const screenCount = extractRequestedScreenCount(normalized);
     return {
-      reply:
-        "Depende do tipo de acesso e da configuração.\n\n" +
-        "Para eu te orientar certo, você quer usar em quantos aparelhos e quais seriam eles?\n\n" +
-        "Não quero te passar informação errada sobre telas.",
+      reply: screenCount
+        ? `Entendi, seriam ${screenCount} telas. Em quais aparelhos voce pretende usar?`
+        : "Consigo te orientar. Quantas telas voce precisa e em quais aparelhos pretende usar?",
       menu: CONTINUATION_MENU
     };
   }
@@ -2633,6 +2633,14 @@ function formatPixReply(order: Record<string, unknown>, qrCode: string, _ticketU
     "Se preferir, toque e segure nesta mensagem e escolha copiar.",
     "A confirmação é automática pelo Mercado Pago. Não precisa enviar comprovante."
   ].join("\n\n");
+}
+
+function extractRequestedScreenCount(normalized: string) {
+  const numeric = normalized.match(/\b(\d{1,2})\s*telas?\b/);
+  if (numeric) return Number(numeric[1]);
+  if (/\bduas telas?\b/.test(normalized)) return 2;
+  if (/\btres telas?\b/.test(normalized)) return 3;
+  return null;
 }
 
 function readManualPixAmountCents(leadProfile: Record<string, unknown>) {

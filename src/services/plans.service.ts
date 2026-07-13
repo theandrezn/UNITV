@@ -19,9 +19,10 @@ export class PlansService {
         const duration = plan.duration_days ? String(plan.duration_days) : "";
         const price = Number(plan.price_cents || 0);
         const priceNumber = price > 0 ? String(Math.round(price / 100)) : "";
-        const aliasMatches = getPlanAliases(plan).some((alias) => normalizedText.includes(alias));
-        const matchedName = Boolean(name && normalizedText.includes(name));
-        const matchedSlug = Boolean(slug && normalizedText.includes(slug));
+        const matchingAliases = getPlanAliases(plan).filter((alias) => containsNormalizedPhrase(normalizedText, alias));
+        const aliasMatches = matchingAliases.length > 0;
+        const matchedName = Boolean(name && containsNormalizedPhrase(normalizedText, name));
+        const matchedSlug = Boolean(slug && containsNormalizedPhrase(normalizedText, slug));
         const matchedDuration = Boolean(duration && normalizedText.includes(duration));
         const matchedPrice = Boolean(priceNumber && new RegExp(`\\b${priceNumber}\\b`).test(normalizedText));
 
@@ -33,7 +34,7 @@ export class PlansService {
             (matchedSlug ? slug.length + 50 : 0) +
             (matchedDuration ? 10 : 0) +
             (matchedPrice ? 80 : 0) +
-            (aliasMatches ? 70 : 0)
+            (aliasMatches ? 70 + Math.max(...matchingAliases.map((alias) => alias.length), 0) : 0)
         };
       })
       .filter((candidate) => candidate.matched)
@@ -41,6 +42,14 @@ export class PlansService {
 
     return { plan: candidates[0]?.plan || null, plans };
   }
+}
+
+function containsNormalizedPhrase(text: string, phrase: string) {
+  return new RegExp(`(?:^| )${escapeRegExp(phrase)}(?: |$)`).test(text);
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function getPlanAliases(plan: Record<string, unknown>) {

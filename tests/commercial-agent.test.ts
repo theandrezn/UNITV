@@ -2855,7 +2855,8 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("quantos aparelhos");
+    expect(result.reply).toContain("Quantas telas");
+    expect(result.reply).toContain("quais aparelhos");
     expect(result.reply).not.toContain("2 telas");
     expect(result.menu).toBeUndefined();
   });
@@ -2937,7 +2938,10 @@ describe("commercial WhatsApp agent", () => {
     const service = new WhatsappMessageService(
       { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
       {
-        findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+        findByExternalConversationId: vi.fn(async () => ({
+          id: "conversation-id",
+          metadata: { lead_profile: { stage: "awaiting_payment", payment_status: "pending" } }
+        })),
         createConversation: vi.fn(),
         touchConversation: vi.fn(async () => ({})),
         updateConversationMetadata: vi.fn()

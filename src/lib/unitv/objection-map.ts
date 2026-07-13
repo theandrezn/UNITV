@@ -23,10 +23,7 @@ const rules: ObjectionRule[] = [
     pattern: /\b(quantas telas|2 telas|duas telas|telas?)\b/,
     followupKey: "screens",
     menu: CONTINUATION_MENU,
-    buildReply: () =>
-      "Depende do tipo de acesso e da configuracao.\n\n" +
-      "Para eu te orientar certo, voce quer usar em quantos aparelhos e quais seriam eles?\n\n" +
-      "Nao quero te passar informacao errada sobre telas."
+    buildReply: () => "Consigo te orientar. Quantas telas voce precisa e em quais aparelhos pretende usar?"
   },
   {
     id: "price",
@@ -119,7 +116,7 @@ export function findUnitvObjectionReply(message: string): UnitvObjectionReply | 
 
     return {
       id: rule.id,
-      reply: rule.buildReply(),
+      reply: rule.id === "screens" ? buildScreensReply(normalized) : rule.buildReply(),
       menu: rule.menu,
       followupKey: rule.followupKey,
       needsHuman: rule.needsHuman
@@ -127,6 +124,14 @@ export function findUnitvObjectionReply(message: string): UnitvObjectionReply | 
   }
 
   return null;
+}
+
+function buildScreensReply(normalized: string) {
+  const numeric = normalized.match(/\b(\d{1,2})\s*telas?\b/);
+  const count = numeric ? Number(numeric[1]) : /\bduas telas?\b/.test(normalized) ? 2 : /\btres telas?\b/.test(normalized) ? 3 : null;
+  return count
+    ? `Entendi, seriam ${count} telas. Em quais aparelhos voce pretende usar?`
+    : "Consigo te orientar. Quantas telas voce precisa e em quais aparelhos pretende usar?";
 }
 
 function normalize(message: string) {

@@ -41,7 +41,12 @@ describe("ContextualResponseAIService", () => {
       leadProfile: { stage: "new_lead" },
       recentMessages: [{ role: "customer", content: "Oi, quero saber mais" }],
       responseDirective: "Cumprimentar e descobrir se o cliente ja usa o aplicativo.",
-      conversationId: "conversation-id"
+      conversationId: "conversation-id",
+      operationalContext: {
+        specialist_pattern: "manter_etapa_atual",
+        specialist_action: "responder_duvida_especifica",
+        specialist_style: "curto_e_contextual"
+      }
     });
 
     expect(result).toBe("Oi! Me conta se voce ja conhece a UNITV ou se quer entender como funciona primeiro.");
@@ -55,6 +60,11 @@ describe("ContextualResponseAIService", () => {
     expect(request.reasoning).toEqual({ effort: "low" });
     expect(userContext.writing_contract.programmed_copy_forbidden).toBe(true);
     expect(userContext.operational_directive_not_customer_copy).toBeUndefined();
+    expect(userContext.operational_context).toEqual(expect.objectContaining({
+      specialist_pattern: "manter_etapa_atual",
+      specialist_action: "responder_duvida_especifica",
+      specialist_style: "curto_e_contextual"
+    }));
     expect(userContext.knowledge_base.map((article: { category: string }) => article.category)).toEqual(
       expect.arrayContaining(["identidade_do_agente", "o_que_nunca_fazer", "fluxo_comercial"])
     );

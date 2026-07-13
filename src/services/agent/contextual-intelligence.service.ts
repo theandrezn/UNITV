@@ -4,6 +4,7 @@ import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAI
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
+import type { SpecialistLearningGuidance } from "@/services/agent/specialist-learning-guidance";
 
 const commercialIntentSchema = z.enum([
   "activate",
@@ -166,7 +167,7 @@ const SYSTEM_PROMPT = [
 export class ContextualIntelligenceService {
   constructor(private readonly knowledgeService = new KnowledgeService()) {}
 
-  async extract(input: { context: CommercialContext; useStrongModel?: boolean }): Promise<ContextualDecision> {
+  async extract(input: { context: CommercialContext; useStrongModel?: boolean; specialistLearning?: SpecialistLearningGuidance | null }): Promise<ContextualDecision> {
     const deterministic = extractDeterministicDecision(input.context);
     if (deterministic.confidence >= 0.92 || !process.env.OPENAI_API_KEY) {
       return { ...deterministic, source: "deterministic" };
@@ -182,7 +183,7 @@ export class ContextualIntelligenceService {
         model,
         input: [
           { role: "system", content: [{ type: "input_text", text: SYSTEM_PROMPT }] },
-          { role: "user", content: [{ type: "input_text", text: JSON.stringify(compactCommercialContextForModel(input.context, knowledge)) }] }
+          { role: "user", content: [{ type: "input_text", text: JSON.stringify(compactCommercialContextForModel(input.context, knowledge, input.specialistLearning)) }] }
         ],
         text: {
           format: {
@@ -510,7 +511,11 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
   return base;
 }
 
-function compactCommercialContextForModel(context: CommercialContext, knowledge: Array<Record<string, unknown>> = []) {
+function compactCommercialContextForModel(
+  context: CommercialContext,
+  knowledge: Array<Record<string, unknown>> = [],
+  specialistLearning?: SpecialistLearningGuidance | null
+) {
   const profileKeys = [
     "stage", "etapa_atual", "commercial_stage", "ultima_intencao", "selected_plan", "plano_interesse",
     "device", "aparelho", "download_status", "install_status", "trial_status", "payment_status",
@@ -539,7 +544,8 @@ function compactCommercialContextForModel(context: CommercialContext, knowledge:
     last_bot_question: context.last_bot_question,
     followup_key: context.followup_key,
     human_hold_active: context.human_hold_active,
-    knowledge_base: knowledge
+    knowledge_base: knowledge,
+    specialist_learning: specialistLearning || null
   };
 }
 

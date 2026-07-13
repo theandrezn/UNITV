@@ -68,6 +68,11 @@ describe("ContextualIntelligenceService economy path", () => {
         followup_key: null,
         followup_due_at: null,
         human_hold_active: false
+      },
+      specialistLearning: {
+        pattern: "cliente_ja_instalou_nao_repetir_download",
+        action: "reconhecer_contexto_e_avancar",
+        style: "Curto e com uma pergunta."
       }
     });
 
@@ -78,6 +83,11 @@ describe("ContextualIntelligenceService economy path", () => {
     const compactContext = JSON.parse(request.input[1].content[0].text);
     expect(compactContext.knowledge_base).toHaveLength(3);
     expect(compactContext.recent_messages).toHaveLength(2);
+    expect(compactContext.specialist_learning).toEqual({
+      pattern: "cliente_ja_instalou_nao_repetir_download",
+      action: "reconhecer_contexto_e_avancar",
+      style: "Curto e com uma pergunta."
+    });
     expect(knowledgeService.searchKnowledge).toHaveBeenCalledTimes(1);
   });
 });
