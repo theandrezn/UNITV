@@ -11,7 +11,8 @@ type ObsidianKnowledgeArticle = {
   metadata: Record<string, unknown>;
 };
 
-const DEFAULT_OBSIDIAN_KNOWLEDGE_BASE_PATH = "C:\\Users\\games\\Documents\\UNITV - AGENTE\\UNITV-KNOWLEDGE-BASE";
+const DEFAULT_WINDOWS_OBSIDIAN_KNOWLEDGE_BASE_PATH = "C:\\Users\\games\\Documents\\UNITV - AGENTE\\UNITV-KNOWLEDGE-BASE";
+const DEFAULT_LINUX_OBSIDIAN_KNOWLEDGE_BASE_PATH = "/var/www/unitv/obsidian/UNITV-KNOWLEDGE-BASE";
 const MAX_ACTIVE_ARTICLES = 40;
 const MAX_SEARCH_ARTICLES = 12;
 
@@ -97,7 +98,9 @@ export class ObsidianKnowledgeRepository {
 
 function getObsidianKnowledgeBasePath() {
   const configuredPath = process.env.OBSIDIAN_KNOWLEDGE_BASE_PATH || process.env.UNITV_OBSIDIAN_KNOWLEDGE_BASE_PATH;
-  return configuredPath || DEFAULT_OBSIDIAN_KNOWLEDGE_BASE_PATH;
+  return configuredPath || (process.platform === "win32"
+    ? DEFAULT_WINDOWS_OBSIDIAN_KNOWLEDGE_BASE_PATH
+    : DEFAULT_LINUX_OBSIDIAN_KNOWLEDGE_BASE_PATH);
 }
 
 function extractTitle(content: string) {

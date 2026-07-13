@@ -30,6 +30,7 @@ import {
   type ContextualDecision
 } from "@/services/agent/contextual-intelligence.service";
 import { ConversationBrainService } from "@/services/agent/conversation-brain.service";
+import { ContextualResponseAIService } from "@/services/agent/contextual-response-ai.service";
 import {
   detectUnitvDevice,
   isUnitvInstallationRequest,
@@ -69,7 +70,8 @@ export class WhatsappMessageService {
     private readonly contextualIntelligenceService = new ContextualIntelligenceService(),
     private readonly conversationBrainService = new ConversationBrainService(),
     private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository,
-    private readonly customerMessageBurstService = new CustomerMessageBurstService()
+    private readonly customerMessageBurstService = new CustomerMessageBurstService(),
+    private readonly contextualResponseAIService = new ContextualResponseAIService()
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -192,7 +194,8 @@ export class WhatsappMessageService {
           customer,
           conversation,
           webhookEventId,
-          recentMessages
+          recentMessages,
+          deferResponseWritingToContextualAI: true
         });
         await this.auditService.createAuditLog({
           actor_type: "human_admin",
@@ -672,32 +675,8 @@ export class WhatsappMessageService {
       contextualDecision,
       conversationBrainDecision,
       specialistExamples,
-      learningMemories
-    });
-    await this.safeCreateAgentEvent({
-      conversation_id: conversation.id,
-      customer_phone: message.phone,
-      event_type: commercialReply.responseSource === "ai" ? "ai_called" : "local_rule_used",
-      event_source: "chat_agent",
-      intent: classification.intent,
-      stage: String(readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).etapa_atual || ""),
-      objection: String(readLeadProfile(conversation.metadata).main_objection || readLeadProfile(conversation.metadata).objecao_principal || ""),
-      device: String(readLeadProfile(conversation.metadata).device || ""),
-      plan_interest: String(readLeadProfile(conversation.metadata).selected_plan || readLeadProfile(conversation.metadata).plano_interesse || ""),
-      message_id: message.externalMessageId,
-      metadata: {
-        webhookEventId,
-        rule: commercialReply.responseRule || "deterministic_reply",
-        confidence: classification.confidence,
-        specialist_examples_count: specialistExamples.length,
-        learning_memories_count: learningMemories.length,
-        brain_stage: conversationBrainDecision.stage,
-        brain_context_active: conversationBrainDecision.contextActive,
-        brain_response_rule: conversationBrainDecision.responseRule,
-        brain_allows_initial_greeting: conversationBrainDecision.allowInitialGreeting,
-        brain_allows_human_handoff: conversationBrainDecision.allowHumanHandoff,
-        brain_allows_followup: conversationBrainDecision.allowFollowup
-      }
+      learningMemories,
+      deferResponseWritingToContextualAI: true
     });
     if (commercialReply.responseRule === "conversation_brain_blocks_greeting_restart") {
       await this.safeCreateAgentEvent({
@@ -816,15 +795,6 @@ export class WhatsappMessageService {
       });
     }
 
-    if (commercialReply.menu) {
-      conversation.metadata = {
-        ...(conversation.metadata || {}),
-        last_menu_id: commercialReply.menu.id,
-        last_menu_sent_at: new Date().toISOString()
-      };
-      await this.conversationsRepository.updateConversationMetadata(conversation.id, conversation.metadata);
-    }
-
     return this.sendAndStoreAssistantReply({
       webhookEventId,
       message,
@@ -865,6 +835,50 @@ export class WhatsappMessageService {
     menu?: WhatsAppMenu;
     sendTextBeforeMenu?: boolean;
   }) {
+    const rawResponseDirective = [reply, ...(followUpMessages || [])].filter(Boolean).join("\n\n");
+    const responseDirective = copyText
+      ? rawResponseDirective.split(copyText).join("[dados de pagamento enviados em mensagem separada]")
+      : rawResponseDirective;
+    const recentMessages = await this.listRecentConversationMessages(conversation.id);
+    const contextualReply = await this.contextualResponseAIService.generateResponse({
+      currentMessage: message.text,
+      intent: typeof classification.intent === "string" ? classification.intent : "unknown",
+      leadProfile: readLeadProfile(conversation.metadata),
+      recentMessages,
+      responseDirective,
+      operationalContext: {
+        has_media: Boolean(media),
+        has_payment_copy_payload: Boolean(copyText),
+        planned_menu_removed: Boolean(menu),
+        planned_followup_messages_merged: (followUpMessages || []).length,
+        stage: readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).commercial_stage || null
+      },
+      conversationId: conversation.id,
+      useStrongModel: false
+    });
+    if (!contextualReply) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "contextual_ai_response_unavailable",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: {
+          webhookEventId,
+          intent: classification.intent,
+          programmed_response_blocked: true
+        }
+      });
+      return { status: "ignored" as const };
+    }
+
+    reply = contextualReply;
+    followUpMessages = [];
+    menu = undefined;
+    sendTextBeforeMenu = false;
+    if (media) {
+      media = { ...media, caption: "" };
+    }
+
     const safeReply = await this.sanitizeAndValidateCustomerText({
       text: reply,
       conversation,
@@ -881,30 +895,9 @@ export class WhatsappMessageService {
       });
       return { status: "ignored" as const };
     }
-    const safeFollowUpMessages = [];
-    for (const followUpMessage of followUpMessages || []) {
-      safeFollowUpMessages.push(
-        await this.sanitizeAndValidateCustomerText({
-          text: followUpMessage,
-          conversation,
-          webhookEventId,
-          leadProfile: readLeadProfile(conversation.metadata)
-        })
-      );
-    }
+    const safeFollowUpMessages: string[] = [];
 
-    let sendResult: unknown;
-    if (menu) {
-      if (sendTextBeforeMenu) {
-        const replyResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: safeReply });
-        const menuResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: menu.fallbackText });
-        sendResult = { text: replyResult, menu: menuResult };
-      } else {
-        sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: safeReply });
-      }
-    } else {
-      sendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: safeReply });
-    }
+    const sendResult: unknown = await this.evolutionService.sendTextMessage({ phone: message.phone, text: safeReply });
     let copyTextSendResult: unknown = null;
     if (copyText) {
       copyTextSendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: copyText });
@@ -940,6 +933,8 @@ export class WhatsappMessageService {
       metadata: {
         webhookEventId,
         classification,
+        response_source: "contextual_ai",
+        knowledge_grounded: true,
         sender_type: "bot",
         content_hash: createCustomerMessageHash(safeReply),
         sent_at: new Date().toISOString(),
@@ -950,8 +945,18 @@ export class WhatsappMessageService {
         followUpSendResults,
         mediaSendResult,
         media: media ? { mimetype: media.mimetype, fileName: media.fileName, caption: media.caption } : null,
-        menu: menu ? { id: menu.id, title: menu.title } : null
+        menu: null
       }
+    });
+    await this.safeCreateAgentEvent({
+      conversation_id: conversation.id,
+      customer_phone: message.phone,
+      event_type: "ai_called",
+      event_source: "chat_agent",
+      intent: typeof classification.intent === "string" ? classification.intent : null,
+      stage: String(readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).etapa_atual || ""),
+      message_id: `assistant:${message.externalMessageId}`,
+      metadata: { webhookEventId, reply: safeReply, knowledge_grounded: true }
     });
     await this.safeCreateAgentEvent({
       conversation_id: conversation.id,
@@ -961,7 +966,7 @@ export class WhatsappMessageService {
       intent: typeof classification.intent === "string" ? classification.intent : null,
       stage: String(readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).etapa_atual || ""),
       message_id: `assistant:${message.externalMessageId}`,
-      metadata: { webhookEventId, reply: safeReply }
+      metadata: { webhookEventId, reply: safeReply, response_source: "contextual_ai" }
     });
 
     const now = new Date();

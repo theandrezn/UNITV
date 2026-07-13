@@ -2,6 +2,8 @@ import "server-only";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
 import { sanitizeCustomerMessage, validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
+import { KnowledgeService } from "@/services/knowledge/knowledge.service";
+import { extractRequiredArtifacts } from "@/services/agent/contextual-response-ai.service";
 
 type ConversationMessage = {
   role?: string;
@@ -51,58 +53,33 @@ const RESPONSE_SCHEMA = {
 
 const SYSTEM_PROMPT = [
   "Voce e Andre, vendedor humano da UNITV no WhatsApp.",
-  "Interprete o historico e responda como um atendente experiente, natural, curto e comercial.",
-  "O especialista humano costuma responder curto. Prefira 1 ou 2 frases curtas, sem texto grande.",
-  "Nao explique demais. Uma pergunta por vez. Uma acao clara por mensagem.",
-  "Nunca repita pergunta que o cliente ja respondeu.",
-  "Se disse que ja baixou, nao pergunte se baixou.",
-  "Se disse que ja usou, considere que conhece o app.",
-  "Se disse que nao pagou, nao peca comprovante.",
-  "Nao soe desesperado para fechar. Evite pressao, urgencia falsa e frases como 'so hoje', 'fechar agora' ou 'ja mando a chave' antes do cliente confirmar.",
-  "Antes de pagamento, confirme intencao. Antes de instalacao, confirme se o app ja esta baixado/instalado.",
-  "Nunca assuma que o cliente ja vai comprar porque perguntou valor, plano ou aparelho.",
-  "Se o cliente ainda nao confirmou claramente que quer pagar, nao diga 'vamos liberar', 'vou ativar', 'vou gerar o Pix', 'vamos seguir', 'vou fazer sua recarga' ou 'vamos liberar no celular Android'.",
-  "Se o cliente disse que so fez teste, trate como primeira recarga e confirme interesse antes de falar como compra fechada.",
-  "Evite repetir emoji. Se o historico recente ja tem emoji, responda sem emoji.",
-  "Nao jogue tabela completa de preco cedo demais.",
-  "Primeiro descubra se e renovacao ou primeira vez; depois pergunte preferencia de plano sem valores.",
-  "So cite todos os valores se o cliente pedir claramente todos os valores, precos, tabela ou quais planos tem.",
-  "Se o cliente escolher um plano especifico ou citar um valor, responda somente o valor daquele plano.",
-  "Nunca reutilize uma mensagem pronta. Escreva uma resposta original para a conversa atual, com uma unica proxima acao clara.",
-  "Para valores e condicoes comerciais, respeite o plano, o estado e os dados oficiais recebidos no contexto. Nao invente nem antecipe desconto, Pix ou pagamento.",
-  "Se escolheu mensal, considere o plano mensal de R$ 25 e nao cite os outros planos.",
-  "Se informou TV Box, nao pergunte o aparelho novamente.",
-  "Faca no maximo uma pergunta e conduza ao proximo passo.",
-  "Nao mande menu. Nao cite IA, regra local, debug, sistema, schema ou backend.",
-  "Nao confirme pagamento sem validacao. Nao invente numero de telas.",
-  "Dados oficiais para usar somente quando permitido: mensal R$ 25, trimestral/3 meses R$ 70, semestral/6 meses R$ 120, anual R$ 200.",
-  "Teste gratis: 3 dias.",
-  "Downloader TV: 862585.",
-  "APK Android: https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file",
-  "APK TV Box/Android TV: https://www.mediafire.com/file_premium/tjgxo5756ftbx02/unitv_stb_4.19.apk/file",
-  "Tutorial obrigatorio de instalacao: https://www.youtube.com/watch?v=LBBAbs2-I0c",
-  "A UNITV so funciona em aparelhos Android ou baseados em Android: TV Box Android, Android TV, Google TV, celular Android, Fire Stick ou TV com Android e Play Store.",
-  "Nao envie APK Android para iPhone, Roku, Samsung ou LG sem confirmar Android ou Play Store.",
-  "Samsung e LG normalmente nao sao Android; confirme se tem Play Store ou recomende TV Box Android ou Fire Stick.",
-  "Sempre que enviar instrucao, APK ou codigo de instalacao, inclua o tutorial obrigatorio.",
-  "Se o cliente ja baixou ou instalou, nao envie download novamente; avance para teste ou ativacao.",
-  "Use exemplos reais do especialista como referencia de logica e estilo, nunca como texto para copiar cegamente.",
-  "Quando houver specialist_examples, priorize a logica, o ritmo e a forma de conduzir do especialista sobre respostas padrao.",
-  "Quando houver learned_operational_directives, aplique-as como principios de raciocinio, nunca como frases para repetir.",
-  "Se o exemplo do especialista for curto, responda curto tambem. Nao transforme resposta curta em paragrafo grande.",
-  "Evite templates genericos quando um exemplo do especialista mostrar uma abordagem mais contextual.",
-  "Nao copie safe_fallback literalmente; use apenas como contexto de seguranca se precisar.",
-  "Varie a resposta conforme o historico recente e o ultimo passo real da conversa.",
-  "Ignore preco, Pix, link ou codigo de exemplos se divergirem dos dados oficiais acima."
+  "Interprete o historico, o estado e a base de conhecimento antes de escrever.",
+  "A base de conhecimento e a fonte dos fatos comerciais, fluxos, identidade e estilo; nao existem frases prontas para copiar.",
+  "Escreva uma resposta original, natural e curta para esta conversa, com uma unica proxima acao clara.",
+  "Use exemplos do especialista como referencia de raciocinio e ritmo, nunca como texto para copiar.",
+  "Preserve os artefatos obrigatorios recebidos, mas crie a mensagem a partir do contexto e da base.",
+  "Nao invente preco, Pix, link, codigo, compatibilidade ou pagamento. Nao mencione IA, sistema, regra, template ou backend.",
+  "Respeite sempre os fatos e bloqueios persistidos no contexto."
 ].join("\n");
 
 export class SalesResponseAIService {
+  constructor(private readonly knowledgeService = new KnowledgeService()) {}
+
   async generateResponse(input: GenerateSalesResponseInput) {
     if (!process.env.OPENAI_API_KEY) {
       return null;
     }
 
     const client = createOpenAIClient();
+    const stage = String(input.leadProfile.stage || input.leadProfile.commercial_stage || "");
+    const knowledgeQuery = [input.message, input.intent, stage].filter(Boolean).join(" ");
+    const [identityKnowledge, guardrailKnowledge, relevantKnowledge] = await Promise.all([
+      this.knowledgeService.getKnowledgeByCategory("identidade_do_agente"),
+      this.knowledgeService.getKnowledgeByCategory("o_que_nunca_fazer"),
+      this.knowledgeService.searchKnowledge(knowledgeQuery)
+    ]);
+    const knowledge = deduplicateKnowledge([...identityKnowledge, ...guardrailKnowledge, ...relevantKnowledge]);
+    const requiredArtifacts = extractRequiredArtifacts(input.fallbackReply || "");
     const context = {
       latest_customer_message: input.message,
       detected_intent: input.intent,
@@ -121,7 +98,8 @@ export class SalesResponseAIService {
         confidence: memory.confidence || null
       })),
       specialist_style_directives: buildSpecialistStyleDirectives(input.specialistExamples || []),
-      safe_fallback: input.fallbackReply || null
+      required_artifacts: requiredArtifacts,
+      knowledge_base: knowledge
     };
 
     try {
@@ -154,6 +132,9 @@ export class SalesResponseAIService {
       if (sanitized.blocked || !sanitized.text) {
         return null;
       }
+      if (!requiredArtifacts.every((artifact) => sanitized.text.includes(artifact))) {
+        return null;
+      }
       const recentBotMessages = (input.recentMessages || [])
         .filter((item) => item.role === "assistant" && typeof item.content === "string")
         .slice(-5)
@@ -164,6 +145,21 @@ export class SalesResponseAIService {
       return null;
     }
   }
+}
+
+function deduplicateKnowledge(articles: Array<Record<string, unknown>>) {
+  const unique = new Map<string, Record<string, unknown>>();
+  for (const article of articles) {
+    const key = String(article.id || article.title || article.category || "");
+    if (key && !unique.has(key)) {
+      unique.set(key, article);
+    }
+  }
+  return [...unique.values()].slice(0, 8).map((article) => ({
+    title: article.title || article.category || "Conhecimento UNITV",
+    category: article.category || "geral",
+    guidance: truncateForModel(article.content, 1_400)
+  }));
 }
 
 function getSalesResponseOutputBudget(input: GenerateSalesResponseInput) {

@@ -3,6 +3,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
+const { contextualResponseGenerate } = vi.hoisted(() => ({
+  contextualResponseGenerate: vi.fn(async (input: { responseDirective: string }): Promise<string | null> => input.responseDirective)
+}));
+
+vi.mock("@/services/agent/contextual-response-ai.service", () => ({
+  extractRequiredArtifacts: () => [],
+  ContextualResponseAIService: class {
+    generateResponse(input: { responseDirective: string }) {
+      return contextualResponseGenerate(input);
+    }
+  }
+}));
+
 afterEach(() => {
   vi.unstubAllEnvs();
 });
@@ -3018,7 +3031,8 @@ describe("commercial WhatsApp agent", () => {
     expect(result.status).toBe("processed");
   });
 
-  it("interprets a clicked menu row before AI and sends a universal text menu", async () => {
+  it("interprets a clicked menu row but sends only contextual AI copy", async () => {
+    contextualResponseGenerate.mockResolvedValueOnce("Posso te ajudar a escolher um plano. Voce procura algo mensal ou por mais tempo?");
     const customersRepository = {
       upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", email: null }))
     };
@@ -3082,17 +3096,72 @@ describe("commercial WhatsApp agent", () => {
     );
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
-      text: MAIN_MENU.fallbackText
+      text: "Posso te ajudar a escolher um plano. Voce procura algo mensal ou por mais tempo?"
     });
     expect(evolutionService.sendButtonMessage).not.toHaveBeenCalled();
     expect(evolutionService.sendListMessage).not.toHaveBeenCalled();
-    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+    expect(conversationsRepository.updateConversationMetadata).not.toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({ last_menu_id: "main" })
     );
   });
 
-  it("sends the numbered menu directly instead of unsupported interactive messages", async () => {
+  it("never sends the programmed directive when contextual AI is unavailable", async () => {
+    contextualResponseGenerate.mockResolvedValueOnce(null);
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+    const auditService = { createAuditLog: vi.fn(async () => ({})) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+        createConversation: vi.fn(),
+        updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+        touchConversation: vi.fn(async () => ({}))
+      } as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      { classify: vi.fn(async () => ({ intent: "greeting", confidence: 1, summary: "oi", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({ reply: "Oi, tudo bem? Voce ja usa o aplicativo?" })) } as never,
+      evolutionService as never,
+      auditService as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-no-ai",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "no-ai-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "oi",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(result.status).toBe("ignored");
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(auditService.createAuditLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "contextual_ai_response_unavailable",
+        metadata: expect.objectContaining({ programmed_response_blocked: true })
+      })
+    );
+  });
+
+  it("does not send a programmed numbered menu", async () => {
+    contextualResponseGenerate.mockResolvedValueOnce("Oi! Me conta se voce quer conhecer o app, testar ou renovar seu acesso.");
     const conversationsRepository = {
       findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
       createConversation: vi.fn(),
@@ -3144,6 +3213,10 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "Oi! Me conta se voce quer conhecer o app, testar ou renovar seu acesso."
+    });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalledWith({
       phone: "5511999998888",
       text: MAIN_MENU.fallbackText
     });

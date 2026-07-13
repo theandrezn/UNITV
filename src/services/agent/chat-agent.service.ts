@@ -11,7 +11,7 @@ import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import { OrdersService } from "@/services/orders.service";
 import { MercadoPagoService } from "@/services/payments/mercadopago.service";
 import { PlansService } from "@/services/plans.service";
-import { buildNoAccessCodeAvailableMessage, buildPostPurchaseMessages } from "@/lib/unitv/post-purchase-messages";
+import { buildNoAccessCodeAvailableMessage } from "@/lib/unitv/post-purchase-messages";
 import { findUnitvObjectionReply } from "@/lib/unitv/objection-map";
 import { isWhatsAppMainMenuEnabled } from "@/lib/env";
 import {
@@ -86,6 +86,7 @@ type CommercialReplyInput = {
     avoid?: string[] | null;
     confidence?: number | null;
   }>;
+  deferResponseWritingToContextualAI?: boolean;
 };
 
 type CommercialReplyResult = {
@@ -204,7 +205,9 @@ export class ChatAgentService {
     }
 
     const contextualReply = getContextualCommercialReply(message, leadProfile);
-    const contextualAiReply = await this.generateContextualCommercialAIReply(input, message, intent, leadProfile, contextualReply?.reply || null);
+    const contextualAiReply = input.deferResponseWritingToContextualAI
+      ? null
+      : await this.generateContextualCommercialAIReply(input, message, intent, leadProfile, contextualReply?.reply || null);
     if (contextualAiReply) {
       return contextualAiReply;
     }
@@ -233,7 +236,7 @@ export class ChatAgentService {
       return this.generateCardPayment(input, knowledge);
     }
 
-    if (shouldUseAIResponse({
+    if (!input.deferResponseWritingToContextualAI && shouldUseAIResponse({
       message,
       intent,
       leadProfile,
@@ -906,11 +909,15 @@ export class ChatAgentService {
       metadata: { webhookEventId: input.webhookEventId, code_id: codeIds[0], code_ids: codeIds, code_count: codeIds.length }
     });
 
-    const postPurchaseMessages = buildPostPurchaseMessages(reservedCodes.map((code) => String(code.code)));
+    const accessCodes = reservedCodes.map((code) => String(code.code));
     return {
       order: sentOrder,
-      reply: postPurchaseMessages[0],
-      followUpMessages: postPurchaseMessages.slice(1)
+      reply: [
+        "Acao autorizada pelo backend: pagamento confirmado e acesso liberado.",
+        accessCodes.length === 1 ? "Seu codigo de acesso:" : "Seus codigos de acesso:",
+        ...accessCodes.map((code, index) => accessCodes.length === 1 ? code : `${index + 1}. ${code}`),
+        "Crie uma entrega curta, humana e contextual. Nao acrescente promocao ou mensagem de comunidade automaticamente."
+      ].join("\n")
     };
   }
 
