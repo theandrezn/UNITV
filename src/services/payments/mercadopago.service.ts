@@ -54,6 +54,7 @@ type CreateOrderPreferenceInput = {
 
 type CreatePixPaymentInput = CreateOrderPreferenceInput & {
   payer: { email: string };
+  description?: string;
 };
 
 export class MercadoPagoService {
@@ -104,7 +105,7 @@ export class MercadoPagoService {
         headers: { "x-idempotency-key": input.order.id },
         body: JSON.stringify({
           transaction_amount: input.order.amount_cents / 100,
-          description: `UNiTV - ${input.plan.name}`,
+          description: input.description || `UNiTV - ${input.plan.name}`,
           payment_method_id: "pix",
           external_reference: input.order.order_number,
           notification_url: this.webhookUrl,

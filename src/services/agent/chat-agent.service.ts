@@ -927,13 +927,17 @@ export class ChatAgentService {
   ): Promise<CommercialReplyResult> {
     const leadProfile = readLeadProfile(input.conversation.metadata);
     const metaAttribution = buildMetaAttributionOrderMetadata(input.conversation.metadata);
-    const promoAccepted = isSpecialPromoAccepted(leadProfile);
-    let order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+    const manualPixAmountCents = readManualPixAmountCents(leadProfile);
+    const manualPixCommand = manualPixAmountCents !== null;
+    const promoAccepted = !manualPixCommand && isSpecialPromoAccepted(leadProfile);
+    let order = manualPixCommand ? null : await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
     if (!order) {
       const plans = await this.plansService.listActivePlans();
-      const selectedPlan = promoAccepted ? findMonthlyPlan(plans) : findPlanFromLeadProfile(plans, leadProfile);
+      const selectedPlan = promoAccepted
+        ? findMonthlyPlan(plans)
+        : findPlanFromLeadProfile(plans, leadProfile) || (manualPixCommand ? findMonthlyPlan(plans) : null);
       if (selectedPlan) {
-        const amountCents = promoAccepted ? SPECIAL_PROMO_MONTHLY_PRICE_CENTS : Number(selectedPlan.price_cents);
+        const amountCents = manualPixAmountCents ?? (promoAccepted ? SPECIAL_PROMO_MONTHLY_PRICE_CENTS : Number(selectedPlan.price_cents));
         order = await this.ordersService.createOrder({
           customer_id: input.customer.id,
           product_id: String(selectedPlan.product_id),
@@ -942,10 +946,18 @@ export class ChatAgentService {
           amount_cents: amountCents,
           currency: String(selectedPlan.currency || "BRL"),
           metadata: {
-            source: "whatsapp_agent",
+            source: manualPixCommand ? "whatsapp_specialist_manual_pix" : "whatsapp_agent",
             webhookEventId: input.webhookEventId,
-            created_from_context: true,
+            created_from_context: !manualPixCommand,
             selected_plan_from_lead_profile: leadProfile.selected_plan || leadProfile.plano_interesse || null,
+            ...(manualPixCommand
+              ? {
+                  manual_payment_command: true,
+                  manual_payment_amount_cents: amountCents,
+                  manual_payment_command_message_id: leadProfile.manual_payment_command_message_id || null,
+                  manual_payment_requires_human_review: leadProfile.manual_payment_requires_human_review === true
+                }
+              : {}),
             ...metaAttribution,
             ...(promoAccepted
               ? {
@@ -1032,7 +1044,8 @@ export class ChatAgentService {
           currency: String(paymentOrder.currency || "BRL")
         },
         plan,
-        payer: { email: buildMercadoPagoPixEmail(order, input.customer.id) }
+        payer: { email: buildMercadoPagoPixEmail(order, input.customer.id) },
+        ...(manualPixCommand ? { description: "UNITV - cobranca manual do especialista" } : {})
       });
 
       await this.ordersService.updateOrder(String(order.id), {
@@ -2613,12 +2626,26 @@ function formatPixReply(order: Record<string, unknown>, qrCode: string, _ticketU
   }
 
   return [
+    `Gerei o Pix de ${formatAmountInBRL(Number(order.amount_cents))} pelo Mercado Pago.`,
     `PIX do pedido ${String(order.order_number)}`,
     "Pix Copia e Cola:",
     qrCode,
     "Se preferir, toque e segure nesta mensagem e escolha copiar.",
     "A confirmação é automática pelo Mercado Pago. Não precisa enviar comprovante."
   ].join("\n\n");
+}
+
+function readManualPixAmountCents(leadProfile: Record<string, unknown>) {
+  if (leadProfile.manual_payment_command !== true || leadProfile.payment_method !== "pix") {
+    return null;
+  }
+
+  const amount = Number(leadProfile.manual_payment_amount_cents);
+  return Number.isInteger(amount) && amount >= 1 && amount <= 99_999_999 ? amount : null;
+}
+
+function formatAmountInBRL(amountCents: number) {
+  return new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(amountCents / 100);
 }
 
 function formatCardReply(checkoutUrl: string) {

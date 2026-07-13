@@ -99,6 +99,17 @@ export class PaymentConfirmationService {
         return { status: "manual_review" as const, orderId };
       }
 
+      if (requiresHumanReviewAfterManualPix(order)) {
+        await this.ordersService.transitionStatus(
+          orderId,
+          ["pending_payment", "receipt_under_review", "manual_review"],
+          "manual_review",
+          { payment_provider: "mercado_pago", payment_reference: payment.id }
+        );
+        await this.audit(orderId, "manual_pix_payment_confirmed_requires_human_review", order, payment);
+        return { status: "manual_review" as const, orderId };
+      }
+
       const transitioned = await this.ordersService.transitionToPaid(
         orderId,
         normalizeMercadoPagoApprovedAt(payment.approvedAt) || new Date().toISOString(),
@@ -325,6 +336,11 @@ function mapPaymentStatus(status: string) {
 function readMetadataString(metadata: Record<string, unknown>, key: string) {
   const value = metadata[key];
   return typeof value === "string" && value ? value : null;
+}
+
+function requiresHumanReviewAfterManualPix(order: Record<string, unknown>) {
+  const metadata = isRecord(order.metadata) ? order.metadata : {};
+  return metadata.manual_payment_command === true && metadata.manual_payment_requires_human_review === true;
 }
 
 function readOrderCustomerPhone(order: Record<string, unknown>) {

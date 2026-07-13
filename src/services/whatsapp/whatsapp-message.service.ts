@@ -156,6 +156,14 @@ export class WhatsappMessageService {
       const existingLeadProfile = readLeadProfile(conversation.metadata);
       const manualPaymentCommand = parseManualPaymentCommand(message.text);
       if (manualPaymentCommand) {
+        const hasPlanAlreadySelected = Boolean(
+          extractManualPaymentPlan(
+            normalizeCommandText(String(existingLeadProfile.selected_plan || existingLeadProfile.plano_interesse || "")),
+            null
+          )
+        );
+        const manualPaymentRequiresHumanReview =
+          manualPaymentCommand.method === "pix" && !manualPaymentCommand.plan && !hasPlanAlreadySelected;
         const commandMetadata = {
           ...(conversation.metadata || {}),
           requires_human: false,
@@ -166,12 +174,15 @@ export class WhatsappMessageService {
             method: manualPaymentCommand.method,
             plan: manualPaymentCommand.plan,
             amount_cents: manualPaymentCommand.amountCents,
+            requires_human_review: manualPaymentRequiresHumanReview,
             message_id: message.externalMessageId,
             created_at: messageAt
           },
           lead_profile: {
             ...existingLeadProfile,
             ...manualPaymentCommand.leadProfilePatch,
+            manual_payment_requires_human_review: manualPaymentRequiresHumanReview,
+            manual_payment_command_message_id: message.externalMessageId,
             last_specialist_message_at: messageAt,
             learned_from_specialist: true,
             updated_at: messageAt
@@ -206,7 +217,8 @@ export class WhatsappMessageService {
             externalMessageId: message.externalMessageId,
             method: manualPaymentCommand.method,
             plan: manualPaymentCommand.plan,
-            amount_cents: manualPaymentCommand.amountCents
+            amount_cents: manualPaymentCommand.amountCents,
+            requires_human_review: manualPaymentRequiresHumanReview
           }
         });
 
@@ -1606,7 +1618,7 @@ function buildContextualLeadProfilePatch(decision: ContextualDecision) {
 type ManualPaymentCommand = {
   method: "pix" | "card";
   intent: "pix_payment" | "card_payment";
-  plan: "mensal" | "trimestral" | "semestral" | "anual";
+  plan: "mensal" | "trimestral" | "semestral" | "anual" | null;
   amountCents: number | null;
   effectiveMessage: string;
   summary: string;
@@ -1615,7 +1627,7 @@ type ManualPaymentCommand = {
 
 function parseManualPaymentCommand(text: string): ManualPaymentCommand | null {
   const normalized = normalizeCommandText(text);
-  const match = normalized.match(/^gerar\s+(pix|cartao)\b/);
+  const match = normalized.match(/^(?:gerar\s+)?(pix|cartao)\b/);
   if (!match) {
     return null;
   }
@@ -1623,14 +1635,11 @@ function parseManualPaymentCommand(text: string): ManualPaymentCommand | null {
   const method = match[1] === "pix" ? "pix" : "card";
   const amountCents = extractManualPaymentAmountCents(normalized);
   const plan = extractManualPaymentPlan(normalized, amountCents);
-  if (!plan) {
+  if ((method === "pix" && amountCents === null) || (method === "card" && !plan)) {
     return null;
   }
 
-  const isMonthlyPromo = plan === "mensal" && amountCents === 1999;
-  const effectiveMessage = isMonthlyPromo
-    ? `mensal ${method} promocao`
-    : `${plan} ${method}`;
+  const effectiveMessage = plan ? `${plan} ${method}` : `manual ${method}`;
   const paymentMethod = method === "pix" ? "pix" : "card";
 
   return {
@@ -1639,10 +1648,9 @@ function parseManualPaymentCommand(text: string): ManualPaymentCommand | null {
     plan,
     amountCents,
     effectiveMessage,
-    summary: `Comando manual do especialista para gerar ${method === "pix" ? "Pix" : "cartao"} do plano ${plan}.`,
+    summary: `Comando manual do especialista para gerar ${method === "pix" ? "Pix" : "cartao"}${plan ? ` do plano ${plan}` : " com valor livre"}.`,
     leadProfilePatch: {
-      selected_plan: plan,
-      plano_interesse: plan,
+      ...(plan ? { selected_plan: plan, plano_interesse: plan } : {}),
       payment_method: paymentMethod,
       last_customer_intent: method === "pix" ? "request_pix" : "request_card_payment",
       next_expected_reply: "payment_proof",
@@ -1650,13 +1658,7 @@ function parseManualPaymentCommand(text: string): ManualPaymentCommand | null {
       stage: "checkout",
       manual_payment_command: true,
       manual_payment_amount_cents: amountCents,
-      ...(isMonthlyPromo
-        ? {
-            accepted_special_promo: true,
-            special_promo_offer: "mensal_19_99_first_2_months",
-            special_promo_price_cents: 1999
-          }
-        : {})
+      manual_payment_requires_human_review: method === "pix" && !plan
     }
   };
 }
@@ -1674,14 +1676,16 @@ function extractManualPaymentPlan(normalized: string, amountCents: number | null
 }
 
 function extractManualPaymentAmountCents(normalized: string) {
-  const matches = [...normalized.matchAll(/(?:r\$\s*)?(\d{2,3})(?:[,.](\d{1,2}))?\b/g)];
+  const commandValue = normalized.replace(/^(?:gerar\s+)?(?:pix|cartao)\b\s*/, "");
+  const matches = [...commandValue.matchAll(/(?:r\$\s*)?(\d{1,6})(?:[,.](\d{1,2}))?\b/g)];
   for (const match of matches) {
     const integer = Number(match[1]);
     const decimal = match[2] ? Number(match[2].padEnd(2, "0").slice(0, 2)) : 0;
-    if (!Number.isFinite(integer) || integer < 10) {
+    const amountCents = integer * 100 + decimal;
+    if (!Number.isFinite(integer) || amountCents < 1 || amountCents > 99_999_999) {
       continue;
     }
-    return integer * 100 + decimal;
+    return amountCents;
   }
   return null;
 }

@@ -281,6 +281,34 @@ describe("PaymentConfirmationService", () => {
     expect(result).toEqual({ status: "manual_review", orderId: baseOrder.id });
   });
 
+  it("holds an approved free-value specialist Pix for human review before code delivery", async () => {
+    const harness = createHarness();
+    const manualOrder = {
+      ...baseOrder,
+      amount_cents: 2090,
+      metadata: {
+        ...baseOrder.metadata,
+        manual_payment_command: true,
+        manual_payment_requires_human_review: true
+      }
+    };
+    harness.ordersService.findOrderByOrderNumber.mockResolvedValueOnce(manualOrder);
+    harness.mercadoPagoService.getPayment.mockResolvedValueOnce({ ...basePayment, amountCents: 2090 });
+
+    const result = await harness.service.process({ webhookEventId: "webhook-id", paymentId: "987654" });
+
+    expect(harness.ordersService.transitionToPaid).not.toHaveBeenCalled();
+    expect(harness.ordersService.transitionStatus).toHaveBeenCalledWith(
+      baseOrder.id,
+      ["pending_payment", "receipt_under_review", "manual_review"],
+      "manual_review",
+      expect.objectContaining({ payment_reference: "987654" })
+    );
+    expect(harness.activationCodesService.reserveCode).not.toHaveBeenCalled();
+    expect(harness.evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(result).toEqual({ status: "manual_review", orderId: baseOrder.id });
+  });
+
   it("uses metadata order number when external reference is missing", async () => {
     const harness = createHarness();
     harness.mercadoPagoService.getPayment.mockResolvedValueOnce({

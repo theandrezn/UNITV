@@ -2286,6 +2286,60 @@ describe("commercial WhatsApp agent", () => {
     expect(result.copyText).toBe("000201-pix-copy-paste");
   });
 
+  it("creates an exact specialist Pix charge for a selected plan", async () => {
+    const { service, ordersService, mercadoPagoService } = createChatAgent();
+    ordersService.createOrder.mockResolvedValueOnce({
+      id: "33333333-3333-4333-8333-333333333333",
+      order_number: "UTV-20260704-000020",
+      customer_id: "44444444-4444-4444-8444-444444444444",
+      product_id: plan.product_id,
+      plan_id: plan.id,
+      amount_cents: 2090,
+      currency: "BRL",
+      status: "pending_payment",
+      metadata: { manual_payment_command: true },
+      plans: { name: plan.name, slug: plan.slug }
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "mensal pix",
+      classification: { intent: "pix_payment", confidence: 1, summary: "manual pix", suggested_reply: "" },
+      customer: { id: "44444444-4444-4444-8444-444444444444", email: null },
+      conversation: {
+        id: "55555555-5555-4555-8555-555555555555",
+        metadata: {
+          lead_profile: {
+            selected_plan: "mensal",
+            plano_interesse: "mensal",
+            payment_method: "pix",
+            manual_payment_command: true,
+            manual_payment_amount_cents: 2090,
+            manual_payment_requires_human_review: false,
+            manual_payment_command_message_id: "manual-pix-20-90"
+          }
+        }
+      },
+      webhookEventId: "webhook-id",
+      deferResponseWritingToContextualAI: true
+    });
+
+    expect(ordersService.findLatestOpenOrderByCustomerId).not.toHaveBeenCalled();
+    expect(ordersService.createOrder).toHaveBeenCalledWith(expect.objectContaining({
+      amount_cents: 2090,
+      metadata: expect.objectContaining({
+        source: "whatsapp_specialist_manual_pix",
+        manual_payment_command: true,
+        manual_payment_requires_human_review: false
+      })
+    }));
+    expect(mercadoPagoService.createPixPayment).toHaveBeenCalledWith(expect.objectContaining({
+      order: expect.objectContaining({ amount_cents: 2090 }),
+      description: "UNITV - cobranca manual do especialista"
+    }));
+    expect(result.reply).toMatch(/20,90/);
+    expect(result.copyText).toBe("000201-pix-copy-paste");
+  });
+
   it("does not create an order when Pix is requested without a selected plan", async () => {
     const { service, ordersService, mercadoPagoService } = createChatAgent();
     ordersService.findLatestOpenOrderByCustomerId.mockResolvedValueOnce(null);
@@ -3594,15 +3648,15 @@ describe("commercial WhatsApp agent", () => {
 
     expect(chatAgent.generateCommercialReply).toHaveBeenCalledWith(
       expect.objectContaining({
-        message: "mensal pix promocao",
+        message: "mensal pix",
         classification: expect.objectContaining({ intent: "pix_payment", confidence: 1 }),
         conversation: expect.objectContaining({
           metadata: expect.objectContaining({
             requires_human: false,
             lead_profile: expect.objectContaining({
               selected_plan: "mensal",
-              accepted_special_promo: true,
-              special_promo_price_cents: 1999,
+              manual_payment_amount_cents: 1999,
+              manual_payment_requires_human_review: false,
               payment_method: "pix"
             })
           })
@@ -3621,6 +3675,64 @@ describe("commercial WhatsApp agent", () => {
       })
     );
     expect(result.status).toBe("processed");
+  });
+
+  it("accepts a specialist Pix command with no plan and preserves its exact amount for review", async () => {
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const chatAgent = { generateCommercialReply: vi.fn(async () => ({ reply: "Pix criado." })) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", email: null })) } as never,
+      conversationsRepository as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        listMessagesByConversationId: vi.fn(async () => []),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      { classify: vi.fn() } as never,
+      chatAgent as never,
+      { sendTextMessage: vi.fn(async () => ({ sent: true })) } as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    await service.processIncomingMessage({
+      webhookEventId: "webhook-id",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "manual-pix-20-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "pix 20",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: true,
+        isGroup: false
+      }
+    });
+
+    expect(chatAgent.generateCommercialReply).toHaveBeenCalledWith(expect.objectContaining({
+      message: "manual pix",
+      conversation: expect.objectContaining({
+        metadata: expect.objectContaining({
+          manual_payment_command: expect.objectContaining({ amount_cents: 2000, requires_human_review: true }),
+          lead_profile: expect.objectContaining({
+            manual_payment_amount_cents: 2000,
+            manual_payment_requires_human_review: true
+          })
+        })
+      })
+    }));
   });
 
   it("executes a specialist manual card command", async () => {

@@ -123,7 +123,8 @@ describe("MercadoPagoService", () => {
         currency: "BRL"
       },
       plan: { name: "Mensal", slug: "mensal" },
-      payer: { email: "cliente@example.com" }
+      payer: { email: "cliente@example.com" },
+      description: "UNITV - cobranca manual do especialista"
     });
 
     expect(client.requestJson).toHaveBeenCalledWith(
@@ -138,6 +139,7 @@ describe("MercadoPagoService", () => {
     const body = JSON.parse(String(request?.body));
     expect(body).toMatchObject({
       transaction_amount: 25,
+      description: "UNITV - cobranca manual do especialista",
       payment_method_id: "pix",
       external_reference: "UTV-20260704-000100",
       notification_url: "https://unitv.example/api/webhooks/mercadopago",
