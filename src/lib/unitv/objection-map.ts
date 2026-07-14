@@ -18,6 +18,8 @@ const ESPN_AVAILABILITY_REPLY =
 const PREMIERE_AVAILABILITY_REPLY = "Tem sim. A UNITV possui Premiere.";
 
 const SPANISH_CATALOG_REPLY = "Tem sim. A UNITV possui canais e filmes em espanhol.";
+const CHANNEL_CATALOG_REPLY =
+  "Temos mais de 400 canais disponiveis e voce pode fazer o teste gratis de 3 dias. Em qual aparelho seria?";
 
 type ObjectionRule = {
   id: string;
@@ -142,6 +144,14 @@ export function findUnitvAuthoritativeKnowledgeReply(message: string): UnitvObje
       id: "reseller_handoff",
       reply: RESELLER_HANDOFF_REPLY,
       needsHuman: true
+    };
+  }
+
+  if (/\b(quais|quantos|lista|ver)\b.{0,30}\b(canal|canais)\b|\b(canal|canais)\b.{0,30}\b(disponivel|disponiveis|tem)\b/.test(normalized)) {
+    return {
+      id: "channel_catalog_overview",
+      reply: CHANNEL_CATALOG_REPLY,
+      followupKey: "test"
     };
   }
 

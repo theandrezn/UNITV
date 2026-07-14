@@ -7,6 +7,7 @@ import {
   validateFollowupWithConversationBrain
 } from "@/services/agent/conversation-brain.service";
 import { extractDeterministicDecision, type CommercialContext } from "@/services/agent/contextual-intelligence.service";
+import { UNITV_FIXED_INITIAL_GREETING } from "@/lib/unitv/agent-identity";
 
 function context(input: Partial<CommercialContext> = {}): CommercialContext {
   return {
@@ -285,6 +286,48 @@ describe("ConversationBrainService", () => {
     expect(decision.allowInitialGreeting).toBe(false);
     expect(decision.responseRule).toBe("conversation_brain_blocks_greeting_restart");
     expect(decision.directReply).not.toContain("Seja bem-vindo");
+  });
+
+  it("makes the final action authority reject a greeting candidate after conversation started", () => {
+    const commercialContext = context({
+      current_message: "Sim",
+      last_bot_question: "Como posso ajudar?",
+      recent_messages: [{ role: "assistant", content: UNITV_FIXED_INITIAL_GREETING }],
+      lead_profile: {
+        conversation_state: "welcome_sent",
+        stage: "welcome_sent",
+        saudacao_enviada: true
+      }
+    });
+    const contextual = extractDeterministicDecision(commercialContext);
+    const preliminary = resolveConversationBrain({
+      context: commercialContext,
+      contextualDecision: contextual,
+      classificationIntent: "unknown",
+      directHumanRequest: false
+    });
+
+    expect(preliminary.allowInitialGreeting).toBe(false);
+
+    const final = finalizeConversationAction({
+      preliminary,
+      contextualDecision: contextual,
+      candidate: {
+        reply: UNITV_FIXED_INITIAL_GREETING,
+        responseRule: "blocked_low_risk_handoff_awaiting_customer",
+        leadProfilePatch: { stage: "welcome_sent" }
+      }
+    });
+
+    expect(final).toEqual({
+      action: "silent",
+      next_state: "welcome_sent",
+      reason: "initial_greeting_forbidden_after_conversation_started",
+      reply: null,
+      followup_action: { type: "cancel", key: null, dueAt: null },
+      backend_artifact: null,
+      response_rule: "conversation_brain_blocks_greeting_restart"
+    });
   });
 
   it("finalizes every turn into the single action contract", () => {

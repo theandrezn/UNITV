@@ -23,6 +23,7 @@ afterEach(() => {
 import { ChatAgentService, INITIAL_UNITV_REPLY } from "@/services/agent/chat-agent.service";
 import { AudioTranscriptionError } from "@/services/audio/audio-transcription.service";
 import { extractDeterministicDecision } from "@/services/agent/contextual-intelligence.service";
+import { resolveConversationBrain } from "@/services/agent/conversation-brain.service";
 import { PlansService } from "@/services/plans.service";
 import {
   canReuseUpstreamAIReply,
@@ -173,7 +174,8 @@ describe("commercial WhatsApp agent", () => {
   it.each([
     ["Tem canais e filmes em espanhol?", "canais e filmes em espanhol"],
     ["Tem ESPN?", "nao possui ESPN como canal fixo"],
-    ["Tem Premiere?", "possui Premiere"]
+    ["Tem Premiere?", "possui Premiere"],
+    ["Quais canais disponiveis?", "mais de 400 canais"]
   ])("answers authoritative catalog question %s locally", async (message, expected) => {
     const salesResponseAIService = { generateResponse: vi.fn(async () => "resposta incorreta da IA") };
     const { service } = createChatAgent({ salesResponseAIService });
@@ -1643,6 +1645,92 @@ describe("commercial WhatsApp agent", () => {
     }));
   });
 
+  it("never lets the protected greeting bypass a newer customer message", async () => {
+    const messages = [
+      { role: "assistant", content: INITIAL_UNITV_REPLY, external_message_id: "assistant-greeting" },
+      { role: "customer", content: "Sim", external_message_id: "customer-sim" },
+      { role: "customer", content: "Quais canais disponiveis?", external_message_id: "customer-channels" }
+    ];
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ id: "provider-id" })) };
+    const auditService = { createAuditLog: vi.fn(async () => ({})) };
+    const service = new WhatsappMessageService(
+      {} as never,
+      {} as never,
+      {
+        listMessagesByConversationId: vi.fn(async () => messages),
+        createMessage: vi.fn()
+      } as never,
+      {} as never,
+      {} as never,
+      evolutionService as never,
+      auditService as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await (service as unknown as {
+      sendAndStoreAssistantReply: (input: Record<string, unknown>) => Promise<{ status: string }>;
+    }).sendAndStoreAssistantReply({
+      webhookEventId: "webhook-sim",
+      message: { externalMessageId: "customer-sim", phone: "5511999998888", text: "Sim" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: { stage: "welcome_sent", saudacao_enviada: true } } },
+      reply: INITIAL_UNITV_REPLY,
+      classification: { intent: "unknown" }
+    });
+
+    expect(result.status).toBe("ignored");
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(auditService.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "superseded_customer_reply_suppressed",
+      metadata: expect.objectContaining({ checkpoint: "before_whatsapp_send" })
+    }));
+  });
+
+  it("blocks a duplicate greeting at the final send boundary even with a stale marker", async () => {
+    const messages = [
+      { role: "customer", content: "Ola! Posso ter mais informacoes?", external_message_id: "customer-first" },
+      { role: "assistant", content: INITIAL_UNITV_REPLY, external_message_id: "assistant-greeting" },
+      { role: "customer", content: "Sim", external_message_id: "customer-sim" }
+    ];
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ id: "provider-id" })) };
+    const auditService = { createAuditLog: vi.fn(async () => ({})) };
+    const service = new WhatsappMessageService(
+      {} as never,
+      {} as never,
+      {
+        listMessagesByConversationId: vi.fn(async () => messages),
+        createMessage: vi.fn()
+      } as never,
+      {} as never,
+      {} as never,
+      evolutionService as never,
+      auditService as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await (service as unknown as {
+      sendAndStoreAssistantReply: (input: Record<string, unknown>) => Promise<{ status: string }>;
+    }).sendAndStoreAssistantReply({
+      webhookEventId: "webhook-sim",
+      message: { externalMessageId: "customer-sim", phone: "5511999998888", text: "Sim" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: { stage: "welcome_sent", saudacao_enviada: false } } },
+      reply: INITIAL_UNITV_REPLY,
+      classification: { intent: "unknown" }
+    });
+
+    expect(result.status).toBe("ignored");
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(auditService.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "fixed_initial_greeting_blocked_before_send",
+      metadata: expect.objectContaining({ reason: "prior_agent_message_exists" })
+    }));
+  });
+
   it("sends the safe contextual conclusion without a second OpenAI writer call", async () => {
     vi.clearAllMocks();
     const conversationsRepository = {
@@ -2057,6 +2145,54 @@ describe("commercial WhatsApp agent", () => {
     expect(result.requiresHuman).not.toBe(true);
     expect(result.reply).toContain("comecar pelo teste");
     expect(result.reply).not.toContain("Voce ja faz o uso do app");
+  });
+
+  it("does not turn a low-confidence Sim after the official greeting into another greeting", async () => {
+    const { service } = createChatAgent();
+    const commercialContext = {
+      current_message: "Sim",
+      recent_messages: [{ role: "assistant" as const, content: INITIAL_UNITV_REPLY }],
+      lead_profile: {
+        conversation_state: "welcome_sent",
+        stage: "welcome_sent",
+        saudacao_enviada: true,
+        last_bot_question: "Como posso ajudar?"
+      },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: "Como posso ajudar?",
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    };
+    const contextualDecision = extractDeterministicDecision(commercialContext);
+    const conversationBrainDecision = resolveConversationBrain({
+      context: commercialContext,
+      contextualDecision,
+      classificationIntent: "unknown",
+      directHumanRequest: false
+    });
+
+    const result = await service.generateCommercialReply({
+      message: "Sim",
+      classification: { intent: "unknown", confidence: 0.2, summary: "resposta curta", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: { lead_profile: commercialContext.lead_profile }
+      },
+      recentMessages: commercialContext.recent_messages,
+      contextualDecision,
+      conversationBrainDecision,
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toBe("Pode me dizer o que voce gostaria de saber?");
+    expect(result.reply).not.toBe(INITIAL_UNITV_REPLY);
+    expect(result.reply).not.toContain("Seja bem-vindo");
+    expect(result.leadProfilePatch).toMatchObject({ stage: "welcome_sent" });
   });
 
   it("keeps pre-sale recharge context when the customer says they will do it later", async () => {

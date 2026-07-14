@@ -60,6 +60,7 @@ const CONTEXTUAL_TRIAL_DEVICE_REPLY =
   "Perfeito. Em qual aparelho voce quer fazer o teste gratis de 3 dias?";
 const ANDROID_PHONE_CONFIRMATION_REPLY = "So me confirma: esse celular e Android?";
 const DOWNLOAD_PROBLEM_CONTEXT_REPLY = "Tudo bem, me fala onde travou: no link, no Downloader ou na instalacao?";
+const LOW_RISK_CONTEXT_PROMPT = "Pode me dizer o que voce gostaria de saber?";
 
 // Kept only to honor payment flows that were accepted before the fixed-price change.
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
@@ -1730,7 +1731,7 @@ function buildLowRiskRecoveryReply(context: ConversationIntelligenceLayer) {
     return "Sem problema. SÃ³ me confirma o aparelho que vocÃª vai usar: celular Android, TV Box Android, Android TV ou Fire Stick?";
   }
 
-  return INITIAL_UNITV_REPLY;
+  return LOW_RISK_CONTEXT_PROMPT;
 }
 
 function buildLowRiskRecoveryPatch(context: ConversationIntelligenceLayer) {
@@ -1785,12 +1786,18 @@ function buildLowRiskRecoveryPatch(context: ConversationIntelligenceLayer) {
     };
   }
 
+  const currentStage = String(
+    context.leadProfile.conversation_state ||
+    context.leadProfile.stage ||
+    context.leadProfile.commercial_stage ||
+    "qualified"
+  );
   return {
-    commercial_stage: "welcome_activation",
-    stage: "welcome_activation",
+    commercial_stage: currentStage,
+    stage: currentStage,
     last_customer_intent: context.detectedIntent,
-    next_expected_reply: "activation_or_renewal",
-    last_bot_question: INITIAL_UNITV_REPLY
+    next_expected_reply: context.leadProfile.next_expected_reply || "customer_need",
+    last_bot_question: LOW_RISK_CONTEXT_PROMPT
   };
 }
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_hash": "9c841eb0975a095428d4eab3c4b589805ccf6b8276036f8cd2d1d6f5a921ec90",
-  "generated_at": "2026-07-14T18:08:22.965Z",
+  "source_hash": "4b71c7f54b1bf93ee2c5b864f502a418826e00fddbb6b8c9490c57d5430e7a80",
+  "generated_at": "2026-07-14T18:26:08.491Z",
   "facts": [
     {
       "id": "13eb990749a776a19eba",
@@ -3315,6 +3315,34 @@
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "O que nunca fazer",
       "stages": []
+    },
+    {
+      "id": "b59b24aaa8411d59a1b0",
+      "text": "Nunca usar a saudacao oficial como fallback de baixa confianca.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "789c60f0e33e6f28a93a",
+      "text": "Nunca permitir que uma mensagem protegida ignore a chegada de uma mensagem mais nova.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "e7f531e56e0b297f3ed1",
+      "text": "Nunca confiar apenas no marcador de saudacao; bloquear tambem quando ja existir qualquer mensagem do agente ou do especialista.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "0727c528e4d08ad29e16",
+      "text": "Nunca registrar \"saudacao enviada\" antes do envio real ao WhatsApp.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
     }
   ],
   "handoff_conditions": [
@@ -3680,6 +3708,13 @@
       "text": "A revenda da UNITV e tratada diretamente pelo especialista. Vou direcionar seu atendimento para ele continuar com voce.",
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "e7f531e56e0b297f3ed1",
+      "text": "Nunca confiar apenas no marcador de saudacao; bloquear tambem quando ja existir qualquer mensagem do agente ou do especialista.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
       "stages": []
     }
   ],
@@ -4449,6 +4484,13 @@
     {
       "id": "84d1aec0918d72ceb4a0",
       "text": "Resolver por regra local agradecimento, saudacao real, preco, plano, Pix, catalogo, aparelho, compatibilidade, ativacao e recarga.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "8c6aac4b7d4420b44f65",
+      "text": "A autoridade final deve converter qualquer tentativa de saudacao com `allowInitialGreeting=false` em `silent`.",
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "O que fazer",
       "stages": []

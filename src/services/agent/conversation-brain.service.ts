@@ -6,6 +6,7 @@ import {
   UNITV_TUTORIAL_URL,
   UNITV_TV_APK_URL
 } from "@/lib/unitv/device-compatibility";
+import { UNITV_FIXED_INITIAL_GREETING } from "@/lib/unitv/agent-identity";
 
 export type AgentActionKind = "reply" | "silent" | "wait" | "handoff" | "backend_action";
 
@@ -416,6 +417,17 @@ export function finalizeConversationAction(input: FinalizeConversationActionInpu
   ) || preliminary.next_state || normalizeConversationState(input.contextualDecision.next_state || input.contextualDecision.stage) || "new_lead";
   const reply = String(candidate.reply || "").trim() || null;
   const responseRule = candidate.responseRule || preliminary.responseRule || "conversation_brain_finalized";
+  if (!preliminary.allowInitialGreeting && reply === UNITV_FIXED_INITIAL_GREETING) {
+    return {
+      action: "silent",
+      next_state: preliminary.next_state,
+      reason: "initial_greeting_forbidden_after_conversation_started",
+      reply: null,
+      followup_action: { type: "cancel", key: null, dueAt: null },
+      backend_artifact: null,
+      response_rule: "conversation_brain_blocks_greeting_restart"
+    };
+  }
   if (candidate.requiresHuman) {
     return {
       action: "handoff",

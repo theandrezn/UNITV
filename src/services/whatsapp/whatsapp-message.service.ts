@@ -1134,15 +1134,7 @@ export class WhatsappMessageService {
       : reuseUpstreamAIReply
         ? "upstream_contextual_ai_reused"
         : "contextual_ai";
-    if (useFixedInitialGreeting) {
-      await this.auditService.createAuditLog({
-        actor_type: "system",
-        action: "fixed_initial_greeting_sent_without_ai",
-        entity_type: "conversations",
-        entity_id: conversation.id,
-        metadata: { webhookEventId, intent, avoided_openai_call: true }
-      });
-    } else if (useProtectedBackendArtifact) {
+    if (useProtectedBackendArtifact) {
       await this.auditService.createAuditLog({
         actor_type: "system",
         action: "protected_backend_artifact_delivery_used",
@@ -1206,7 +1198,7 @@ export class WhatsappMessageService {
       return { status: "ignored" as const };
     }
     if (
-      !useProtectedOperationalReply &&
+      (!useProtectedOperationalReply || useFixedInitialGreeting) &&
       await this.isCustomerMessageSuperseded(conversation.id, message.externalMessageId)
     ) {
       await this.auditSupersededCustomerReply(conversation.id, webhookEventId, message.externalMessageId, "before_whatsapp_send");
@@ -1214,7 +1206,43 @@ export class WhatsappMessageService {
     }
     const safeFollowUpMessages: string[] = [];
 
+    if (useFixedInitialGreeting) {
+      const latestMessages = await this.listRecentConversationMessages(conversation.id);
+      const greetingAlreadyExists = latestMessages.some((item) => item.role === "assistant" || item.role === "human_agent");
+      const greetingAlreadyMarked = readLeadProfile(conversation.metadata).saudacao_enviada === true;
+      if (greetingAlreadyExists || greetingAlreadyMarked) {
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "fixed_initial_greeting_blocked_before_send",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: {
+            webhookEventId,
+            reason: greetingAlreadyMarked ? "greeting_marker_already_set" : "prior_agent_message_exists"
+          }
+        });
+        await this.safeCreateAgentEvent({
+          conversation_id: conversation.id,
+          customer_phone: message.phone,
+          event_type: "greeting_blocked",
+          event_source: "system",
+          message_id: message.externalMessageId,
+          metadata: { webhookEventId, checkpoint: "pre_send_guard", reason: "initial_greeting_already_delivered" }
+        });
+        return { status: "ignored" as const };
+      }
+    }
+
     const sendResult: unknown = await this.evolutionService.sendTextMessage({ phone: message.phone, text: safeReply });
+    if (useFixedInitialGreeting) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "fixed_initial_greeting_sent_without_ai",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, intent, avoided_openai_call: true }
+      });
+    }
     let copyTextSendResult: unknown = null;
     if (copyText) {
       copyTextSendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: copyText });
