@@ -4,6 +4,11 @@ import { ConversationsRepository } from "@/repositories/conversations.repository
 import { MessagesRepository } from "@/repositories/messages.repository";
 import { AuditService } from "@/services/audit.service";
 import { ChatAgentService, INITIAL_UNITV_REPLY } from "@/services/agent/chat-agent.service";
+import {
+  OFFICIAL_ALL_PLAN_PRICES_TEXT,
+  OFFICIAL_MONTHLY_MAX_SCREENS,
+  OFFICIAL_MONTHLY_OFFER_TEXT
+} from "@/lib/unitv/official-catalog";
 import { IntentClassifierService, type IntentClassification } from "@/services/agent/intent-classifier.service";
 import { AgentActionsService } from "@/services/agent-actions.service";
 import { EvolutionService } from "@/services/evolution/evolution.service";
@@ -629,7 +634,8 @@ export class WhatsappMessageService {
           updated_at: new Date().toISOString()
         }
       };
-      await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
+      // Keep the decision available to the current turn, but do not advance
+      // the durable commercial state until its reply is actually delivered.
       conversation.metadata = nextMetadata;
     }
     const policy = applyContextualPolicy({
@@ -816,9 +822,10 @@ export class WhatsappMessageService {
           updated_at: new Date().toISOString()
         }
       };
-      // Delivery states backed by an operational artifact must only become
-      // durable after Evolution accepts the actual WhatsApp send.
-      if (!finalAgentAction.backend_artifact?.present) {
+      // A state produced by a reply must only become durable after Evolution
+      // accepts that reply. Silent/wait/handoff decisions have no delivery to
+      // wait for and must still persist their context immediately.
+      if (["silent", "wait", "handoff"].includes(finalAgentAction.action)) {
         await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
       }
       conversation.metadata = nextMetadata;
@@ -913,6 +920,7 @@ export class WhatsappMessageService {
       menu: commercialReply.menu,
       sendTextBeforeMenu: commercialReply.sendTextBeforeMenu,
       responseGeneratedByAI: commercialReply.responseSource === "ai",
+      responseRule: finalAgentAction.response_rule,
       specialistLearning,
       backendArtifact: finalAgentAction.backend_artifact,
       protectedOperationalReply:
@@ -1039,6 +1047,7 @@ export class WhatsappMessageService {
     menu,
     sendTextBeforeMenu,
     responseGeneratedByAI,
+    responseRule,
     specialistLearning,
     backendArtifact,
     protectedOperationalReply
@@ -1060,6 +1069,7 @@ export class WhatsappMessageService {
     menu?: WhatsAppMenu;
     sendTextBeforeMenu?: boolean;
     responseGeneratedByAI?: boolean;
+    responseRule?: string;
     specialistLearning?: SpecialistLearningGuidance | null;
     backendArtifact?: AgentBackendArtifact | null;
     protectedOperationalReply?: boolean;
@@ -1086,9 +1096,16 @@ export class WhatsappMessageService {
       hasFollowUpMessages: Boolean(followUpMessages?.length),
       hasMenu: Boolean(menu)
     });
+    const useAuthoritativeLocalReply = canDeliverAuthoritativeLocalReply({
+      responseGeneratedByAI,
+      responseRule,
+      reply
+    });
     const contextualReply = useProtectedOperationalReply
       ? reply
       : reuseUpstreamAIReply
+      ? reply
+      : useAuthoritativeLocalReply
       ? reply
       : await this.contextualResponseAIService.generateResponse({
         currentMessage: message.text,
@@ -1133,6 +1150,8 @@ export class WhatsappMessageService {
       ? "protected_payment_backend"
       : reuseUpstreamAIReply
         ? "upstream_contextual_ai_reused"
+        : useAuthoritativeLocalReply
+          ? "authoritative_local_rule"
         : "contextual_ai";
     if (useProtectedBackendArtifact) {
       await this.auditService.createAuditLog({
@@ -1168,6 +1187,14 @@ export class WhatsappMessageService {
         entity_type: "conversations",
         entity_id: conversation.id,
         metadata: { webhookEventId, intent, avoided_duplicate_ai_call: true }
+      });
+    } else if (useAuthoritativeLocalReply) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "authoritative_local_response_used",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, intent, response_rule: responseRule || null, avoided_openai_call: true }
       });
     }
 
@@ -2065,6 +2092,26 @@ function buildContextualLeadProfilePatch(decision: ContextualDecision) {
   }
 
   return Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined));
+}
+
+const AUTHORITATIVE_LOCAL_RESPONSE_RULES = new Set([
+  "contextual_understanding_generic_price_monthly",
+  "contextual_understanding_monthly_screen_coverage",
+  "channel_catalog_overview"
+]);
+
+export function canDeliverAuthoritativeLocalReply(input: {
+  responseGeneratedByAI?: boolean;
+  responseRule?: string;
+  reply: string;
+}) {
+  if (input.responseGeneratedByAI || !input.reply.trim()) return false;
+  const reply = input.reply.trim();
+  const responseRule = String(input.responseRule || "");
+  if (reply === OFFICIAL_MONTHLY_OFFER_TEXT || reply === OFFICIAL_ALL_PLAN_PRICES_TEXT) return true;
+  if (reply === `O plano mensal cobre ate ${OFFICIAL_MONTHLY_MAX_SCREENS} telas.`) return true;
+  if (AUTHORITATIVE_LOCAL_RESPONSE_RULES.has(responseRule)) return true;
+  return /^authoritative_(?:espn|premiere|spanish_catalog)(?:_|$)/.test(responseRule);
 }
 
 export function canReuseUpstreamAIReply(input: {

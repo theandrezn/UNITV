@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_hash": "4b71c7f54b1bf93ee2c5b864f502a418826e00fddbb6b8c9490c57d5430e7a80",
-  "generated_at": "2026-07-14T18:26:08.491Z",
+  "source_hash": "366f9c38a04fe0b40f6782e355cf54390be16a7080212cd50553972b654202a1",
+  "generated_at": "2026-07-14T19:14:10.223Z",
   "facts": [
     {
       "id": "13eb990749a776a19eba",
@@ -953,10 +953,31 @@
         "stages": [
           "monthly_offer_pending"
         ]
+      },
+      {
+        "id": "4873e8aa28832c79c92b",
+        "text": "Nunca marcar `plan_selected`, `monthly_offer_pending` ou etapa equivalente antes da mensagem correspondente ser entregue.",
+        "source_file": "15_MELHORIA_CONTINUA.md",
+        "heading": "O que nunca fazer",
+        "stages": [
+          "monthly_offer_pending",
+          "plan_selected"
+        ]
       }
     ],
     "plan_preference": [],
-    "plan_selected": [],
+    "plan_selected": [
+      {
+        "id": "4873e8aa28832c79c92b",
+        "text": "Nunca marcar `plan_selected`, `monthly_offer_pending` ou etapa equivalente antes da mensagem correspondente ser entregue.",
+        "source_file": "15_MELHORIA_CONTINUA.md",
+        "heading": "O que nunca fazer",
+        "stages": [
+          "monthly_offer_pending",
+          "plan_selected"
+        ]
+      }
+    ],
     "pre_sale_recharge_intent": [
       {
         "id": "20643fb5069d0c708f76",
@@ -3340,6 +3361,37 @@
     {
       "id": "0727c528e4d08ad29e16",
       "text": "Nunca registrar \"saudacao enviada\" antes do envio real ao WhatsApp.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "37d5f1c544058c2a8e32",
+      "text": "Nunca deixar uma IA opcional vetar um fato comercial oficial ja validado.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "f1b972514ee674e3cfb5",
+      "text": "Nunca gastar uma segunda chamada para reescrever `R$ 20,90` ou outro fato oficial.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "4873e8aa28832c79c92b",
+      "text": "Nunca marcar `plan_selected`, `monthly_offer_pending` ou etapa equivalente antes da mensagem correspondente ser entregue.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": [
+        "monthly_offer_pending",
+        "plan_selected"
+      ]
+    },
+    {
+      "id": "853d962fa7c4edabd3bc",
+      "text": "Nunca registrar sucesso de resposta quando o envio nao aconteceu.",
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "O que nunca fazer",
       "stages": []

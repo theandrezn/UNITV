@@ -26,10 +26,12 @@ import { extractDeterministicDecision } from "@/services/agent/contextual-intell
 import { resolveConversationBrain } from "@/services/agent/conversation-brain.service";
 import { PlansService } from "@/services/plans.service";
 import {
+  canDeliverAuthoritativeLocalReply,
   canReuseUpstreamAIReply,
   isCustomerMessageSuperseded,
   WhatsappMessageService
 } from "@/services/whatsapp/whatsapp-message.service";
+import { OFFICIAL_MONTHLY_OFFER_TEXT } from "@/lib/unitv/official-catalog";
 import { MAIN_MENU } from "@/lib/whatsapp/menus";
 import {
   classifyCustomerFacingResponseIntent,
@@ -1596,6 +1598,24 @@ describe("commercial WhatsApp agent", () => {
       responseGeneratedByAI: true,
       intent: "ask_price",
       reply: "O plano custa R$ 25."
+    })).toBe(false);
+  });
+
+  it("delivers only authoritative local facts without opening a second AI writer", () => {
+    expect(canDeliverAuthoritativeLocalReply({
+      responseGeneratedByAI: false,
+      responseRule: "contextual_understanding_generic_price_monthly",
+      reply: OFFICIAL_MONTHLY_OFFER_TEXT
+    })).toBe(true);
+    expect(canDeliverAuthoritativeLocalReply({
+      responseGeneratedByAI: false,
+      responseRule: "contextual_reply",
+      reply: "Oi, tudo bem? Voce ja usa o aplicativo?"
+    })).toBe(false);
+    expect(canDeliverAuthoritativeLocalReply({
+      responseGeneratedByAI: true,
+      responseRule: "contextual_understanding_generic_price_monthly",
+      reply: OFFICIAL_MONTHLY_OFFER_TEXT
     })).toBe(false);
   });
 
@@ -4003,16 +4023,111 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
+  it("answers Qual valor with the official monthly offer without a second AI call", async () => {
+    contextualResponseGenerate.mockClear();
+    let priceReplySent = false;
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({
+        id: "conversation-id",
+        customer_id: "customer-id",
+        conversation_state: "welcome_sent",
+        metadata: {
+          lead_profile: {
+            conversation_state: "welcome_sent",
+            stage: "welcome_sent",
+            saudacao_enviada: true,
+            last_bot_question: "Como posso ajudar?"
+          }
+        }
+      })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => {
+        if (["plan_selected", "monthly_offer_pending"].includes(String(metadata?.lead_profile?.stage || ""))) {
+          expect(priceReplySent).toBe(true);
+        }
+        return { id: "conversation-id", metadata };
+      }),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      listMessagesByConversationId: vi.fn(async () => ([
+        { role: "assistant", content: INITIAL_UNITV_REPLY, external_message_id: "assistant-greeting" }
+      ])),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+    };
+    const evolutionService = {
+      sendTextMessage: vi.fn(async () => {
+        priceReplySent = true;
+        return { id: "provider-id" };
+      })
+    };
+    const auditService = { createAuditLog: vi.fn(async () => ({})) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", name: "Cliente" })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      { classify: vi.fn(async () => ({ intent: "ask_price", confidence: 0.99, summary: "valor", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({
+        reply: OFFICIAL_MONTHLY_OFFER_TEXT,
+        responseSource: "local_rule",
+        responseRule: "contextual_understanding_generic_price_monthly",
+        leadProfilePatch: {
+          selected_plan: "mensal",
+          stage: "monthly_offer_pending",
+          commercial_stage: "monthly_offer_pending",
+          next_expected_reply: "monthly_offer_interest"
+        }
+      })) } as never,
+      evolutionService as never,
+      auditService as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-price",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "customer-price",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Qual valor",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(result).toMatchObject({ status: "processed", reply: OFFICIAL_MONTHLY_OFFER_TEXT });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: OFFICIAL_MONTHLY_OFFER_TEXT
+    });
+    expect(contextualResponseGenerate).not.toHaveBeenCalled();
+    expect(auditService.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "authoritative_local_response_used",
+      metadata: expect.objectContaining({ avoided_openai_call: true })
+    }));
+  });
+
   it("never sends the programmed directive when contextual AI is unavailable", async () => {
     contextualResponseGenerate.mockResolvedValueOnce(null);
     const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
     const auditService = { createAuditLog: vi.fn(async () => ({})) };
+    const updateConversationMetadata = vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata }));
     const service = new WhatsappMessageService(
       { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
       {
         findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
         createConversation: vi.fn(),
-        updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+        updateConversationMetadata,
         touchConversation: vi.fn(async () => ({}))
       } as never,
       {
@@ -4020,7 +4135,10 @@ describe("commercial WhatsApp agent", () => {
         createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
       } as never,
       { classify: vi.fn(async () => ({ intent: "greeting", confidence: 1, summary: "oi", suggested_reply: "" })) } as never,
-      { generateCommercialReply: vi.fn(async () => ({ reply: "Oi, tudo bem? Voce ja usa o aplicativo?" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({
+        reply: "Oi, tudo bem? Voce ja usa o aplicativo?",
+        leadProfilePatch: { stage: "plan_selected", commercial_stage: "plan_selected" }
+      })) } as never,
       evolutionService as never,
       auditService as never,
       {} as never,
@@ -4054,6 +4172,10 @@ describe("commercial WhatsApp agent", () => {
         action: "contextual_ai_response_unavailable",
         metadata: expect.objectContaining({ programmed_response_blocked: true })
       })
+    );
+    expect(updateConversationMetadata).not.toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({ lead_profile: expect.objectContaining({ stage: "plan_selected" }) })
     );
   });
 
