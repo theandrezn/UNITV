@@ -21,6 +21,7 @@ afterEach(() => {
 });
 
 import { ChatAgentService } from "@/services/agent/chat-agent.service";
+import { AudioTranscriptionError } from "@/services/audio/audio-transcription.service";
 import { extractDeterministicDecision } from "@/services/agent/contextual-intelligence.service";
 import { PlansService } from "@/services/plans.service";
 import { canReuseUpstreamAIReply, WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
@@ -1406,6 +1407,215 @@ describe("commercial WhatsApp agent", () => {
     expect(result).toMatchObject({ status: "processed", reply: contextualDecision.recommended_response });
     expect(contextualResponseGenerate).not.toHaveBeenCalled();
     expect(evolutionService.sendTextMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("transcribes customer audio and keeps the active installation context", async () => {
+    vi.clearAllMocks();
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({
+        id: "conversation-id",
+        customer_id: "customer-id",
+        metadata: {
+          lead_profile: {
+            stage: "awaiting_download_installation",
+            commercial_stage: "awaiting_download_installation",
+            last_bot_question: "Conseguiu instalar?"
+          }
+        }
+      })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: _id, metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+      listMessagesByConversationId: vi.fn(async () => [])
+    };
+    const intentClassifier = {
+      classify: vi.fn(async () => ({ intent: "technical_support", confidence: 0.98, summary: "falha ao instalar", suggested_reply: "" }))
+    };
+    const reply = "Entendi. O que apareceu na tela quando voce tentou instalar?";
+    const chatAgent = { generateCommercialReply: vi.fn(async () => ({ reply, responseSource: "ai" })) };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ id: "provider-id" })) };
+    const contextualDecision = {
+      ...extractDeterministicDecision({
+        current_message: "nao consegui instalar",
+        recent_messages: [],
+        lead_profile: { stage: "awaiting_download_installation", last_bot_question: "Conseguiu instalar?" },
+        open_order: null,
+        latest_order: null,
+        last_bot_question: "Conseguiu instalar?",
+        last_bot_message_at: null,
+        last_specialist_message_at: null,
+        followup_key: null,
+        followup_due_at: null,
+        human_hold_active: false
+      }),
+      source: "ai" as const,
+      confidence: 0.95,
+      recommended_response: reply
+    };
+    const audioTranscriptionService = {
+      transcribeWhatsAppAudio: vi.fn(async () => ({
+        text: "nao consegui instalar",
+        model: "gpt-4o-mini-transcribe",
+        bytes: 4_096,
+        mimeType: "audio/ogg",
+        truncated: false
+      }))
+    };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", phone: "5511999998888", name: "Cliente" })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      { findLatestOpenOrderByCustomerId: vi.fn(async () => null), findLatestOrderByCustomerId: vi.fn(async () => null) } as never,
+      {} as never,
+      {} as never,
+      undefined,
+      {} as never,
+      { safeCreateEvent: vi.fn(async () => ({})) } as never,
+      undefined,
+      { extract: vi.fn(async () => contextualDecision) } as never,
+      undefined,
+      undefined,
+      { isLatestMessageInBurst: vi.fn(async () => true) } as never,
+      { generateResponse: vi.fn() } as never,
+      audioTranscriptionService as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-audio",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "audio-message-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "",
+        messageType: "audioMessage",
+        hasMedia: true,
+        media: { mimeType: "audio/ogg; codecs=opus", url: "https://media.example.com/encrypted" },
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(audioTranscriptionService.transcribeWhatsAppAudio).toHaveBeenCalledWith(expect.objectContaining({
+      externalMessageId: "audio-message-id",
+      conversationId: "conversation-id"
+    }));
+    expect(intentClassifier.classify).toHaveBeenCalledWith({ message: "nao consegui instalar", conversationId: "conversation-id" });
+    expect(chatAgent.generateCommercialReply).toHaveBeenCalledWith(expect.objectContaining({ message: "nao consegui instalar" }));
+    expect(messagesRepository.createMessage).toHaveBeenCalledWith(expect.objectContaining({
+      role: "customer",
+      content: "nao consegui instalar",
+      content_type: "audioMessage",
+      metadata: expect.objectContaining({
+        media: { mimeType: "audio/ogg; codecs=opus", fileName: null },
+        audio_transcription: expect.objectContaining({ status: "completed", model: "gpt-4o-mini-transcribe" })
+      })
+    }));
+    expect(result).toMatchObject({ status: "processed", reply });
+    expect(result.status === "processed" ? result.reply : "").not.toContain("Oi, tudo bem?");
+  });
+
+  it("asks for audio resend without changing the commercial stage when transcription fails", async () => {
+    vi.clearAllMocks();
+    const originalMetadata = {
+      response_due_at: "2026-07-14T00:00:00.000Z",
+      followup_due_at: "2026-07-14T01:00:00.000Z",
+      lead_profile: { stage: "awaiting_payment", commercial_stage: "awaiting_payment", payment_status: "pending" }
+    };
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", customer_id: "customer-id", metadata: originalMetadata })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: _id, metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+    };
+    const intentClassifier = { classify: vi.fn() };
+    const chatAgent = { generateCommercialReply: vi.fn() };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ id: "provider-id" })) };
+    const audioTranscriptionService = {
+      transcribeWhatsAppAudio: vi.fn(async () => {
+        throw new AudioTranscriptionError("audio_no_speech", "No speech detected");
+      })
+    };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      undefined,
+      {} as never,
+      { safeCreateEvent: vi.fn(async () => ({})) } as never,
+      undefined,
+      {} as never,
+      undefined,
+      undefined,
+      {} as never,
+      {} as never,
+      audioTranscriptionService as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-audio-failure",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "silent-audio-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "",
+        messageType: "audioMessage",
+        hasMedia: true,
+        media: { mimeType: "audio/ogg", url: "https://media.example.com/encrypted" },
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(intentClassifier.classify).not.toHaveBeenCalled();
+    expect(chatAgent.generateCommercialReply).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
+      text: expect.stringContaining("Pode enviar novamente")
+    }));
+    expect(messagesRepository.createMessage).toHaveBeenCalledWith(expect.objectContaining({
+      role: "customer",
+      content: null,
+      metadata: expect.objectContaining({
+        media: { mimeType: "audio/ogg", fileName: null },
+        audio_transcription: { status: "failed", error_code: "audio_no_speech" }
+      })
+    }));
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_due_at: null,
+        response_due_at: null,
+        lead_profile: expect.objectContaining({ stage: "awaiting_payment", payment_status: "pending" })
+      })
+    );
+    expect(result).toMatchObject({ status: "processed" });
+    expect(result.status === "processed" ? result.reply : "").not.toContain("Oi, tudo bem?");
   });
 
   it("asks Android confirmation when the contextual answer is only celular", async () => {

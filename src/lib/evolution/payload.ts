@@ -40,6 +40,10 @@ export const incomingEvolutionMessageSchema = z.object({
 
 export type IncomingEvolutionMessage = z.infer<typeof incomingEvolutionMessageSchema>;
 
+export function isIncomingAudioMessage(message: IncomingEvolutionMessage) {
+  return message.messageType === "audioMessage" || String(message.media.mimeType || "").toLowerCase().startsWith("audio/");
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }

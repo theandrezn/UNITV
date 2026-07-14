@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractIncomingMessageFromWebhook,
   getEvolutionIdempotencyKey,
+  isIncomingAudioMessage,
   normalizePhone
 } from "@/lib/evolution/payload";
 import { sanitizeReply } from "@/lib/agent/reply-safety";
@@ -103,6 +104,27 @@ describe("Evolution webhook helpers", () => {
     payload.data.message.conversation = "";
 
     expect(extractIncomingMessageFromWebhook(payload)?.text).toBe("");
+  });
+
+  it("recognizes a textless WhatsApp voice message for transcription", () => {
+    const payload = structuredClone(fixture) as Record<string, any>;
+    payload.data.message = {
+      audioMessage: {
+        url: "https://media.example.com/encrypted-audio",
+        mimetype: "audio/ogg; codecs=opus"
+      }
+    };
+    payload.data.messageType = "audioMessage";
+
+    const message = extractIncomingMessageFromWebhook(payload);
+
+    expect(message).toMatchObject({
+      text: "",
+      messageType: "audioMessage",
+      hasMedia: true,
+      media: { mimeType: "audio/ogg; codecs=opus" }
+    });
+    expect(message && isIncomingAudioMessage(message)).toBe(true);
   });
 
   it("does not allow activation codes in generated replies at this phase", () => {

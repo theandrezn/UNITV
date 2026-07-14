@@ -3,10 +3,11 @@ import {
   extractIncomingMessageFromWebhook,
   getEvolutionIdempotencyKey,
   normalizePhone,
+  isIncomingAudioMessage,
   type IncomingEvolutionMessage
 } from "@/lib/evolution/payload";
 
-export { extractIncomingMessageFromWebhook, getEvolutionIdempotencyKey, normalizePhone };
+export { extractIncomingMessageFromWebhook, getEvolutionIdempotencyKey, isIncomingAudioMessage, normalizePhone };
 export type { IncomingEvolutionMessage };
 
 type EvolutionClientOptions = {
@@ -48,6 +49,10 @@ type SendButtonMessageInput = {
   buttons: Array<{ id: string; displayText: string }>;
 };
 
+type GetMediaBase64Input = {
+  externalMessageId: string;
+};
+
 export class EvolutionClient {
   private readonly apiUrl: string;
   private readonly apiKey: string;
@@ -87,6 +92,38 @@ export class EvolutionClient {
     }
 
     return response.json().catch(() => ({}));
+  }
+
+  async getMediaBase64({ externalMessageId }: GetMediaBase64Input) {
+    const response = await fetch(`${this.apiUrl}/chat/getBase64FromMediaMessage/${encodeURIComponent(this.instanceName)}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: this.apiKey
+      },
+      body: JSON.stringify({
+        message: { key: { id: externalMessageId } },
+        convertToMp4: false
+      }),
+      signal: AbortSignal.timeout(20_000)
+    });
+
+    if (!response.ok) {
+      throw new Error(`Evolution getMediaBase64 failed with status ${response.status}.`);
+    }
+
+    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+    const data = payload.data && typeof payload.data === "object" ? payload.data as Record<string, unknown> : {};
+    const base64 = firstNonEmptyString(payload.base64, data.base64);
+    if (!base64) {
+      throw new Error("Evolution getMediaBase64 returned no media data.");
+    }
+
+    return {
+      base64,
+      mimeType: firstNonEmptyString(payload.mimetype, payload.mimeType, data.mimetype, data.mimeType) || null,
+      fileName: firstNonEmptyString(payload.fileName, data.fileName) || null
+    };
   }
 
   async sendMediaMessage({ phone, base64, mimetype, fileName, caption }: SendMediaMessageInput) {
@@ -182,4 +219,8 @@ export class EvolutionClient {
 
     return response.json().catch(() => ({}));
   }
+}
+
+function firstNonEmptyString(...values: unknown[]) {
+  return values.find((value): value is string => typeof value === "string" && Boolean(value.trim()))?.trim() || "";
 }

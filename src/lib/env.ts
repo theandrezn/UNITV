@@ -13,6 +13,10 @@ const serverEnvSchema = z.object({
   OPENAI_MODEL_SALES_AGENT: z.string().optional(),
   OPENAI_MODEL_SALES_AGENT_STRONG: z.string().optional(),
   OPENAI_MODEL_INTENT: z.string().optional(),
+  OPENAI_MODEL_TRANSCRIPTION: z.string().optional(),
+  UNITV_AUDIO_TRANSCRIPTION_ENABLED: z.string().optional(),
+  UNITV_AUDIO_MAX_BYTES: z.string().optional(),
+  UNITV_AUDIO_TRANSCRIPT_MAX_CHARS: z.string().optional(),
   UNITV_AI_INTENT_CLASSIFIER_ENABLED: z.string().optional(),
   WHATSAPP_ENABLE_MAIN_MENU: z.string().optional(),
   APP_ENV: appEnvSchema.default("development"),
@@ -79,6 +83,7 @@ export type MetaConversionsConfig = {
 
 export const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
 export const DEFAULT_STRONG_OPENAI_MODEL = DEFAULT_OPENAI_MODEL;
+export const DEFAULT_OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
 
 let cachedEnv: ServerEnv | null = null;
 
@@ -196,6 +201,16 @@ export function getOpenAIStrongSalesAgentModel() {
   return env.OPENAI_MODEL_SALES_AGENT_STRONG || env.OPENAI_MODEL_SALES_AGENT || env.OPENAI_MODEL || DEFAULT_STRONG_OPENAI_MODEL;
 }
 
+export function getAudioTranscriptionConfig() {
+  const env = getServerEnv();
+  return {
+    enabled: env.UNITV_AUDIO_TRANSCRIPTION_ENABLED !== "false" && env.UNITV_AUDIO_TRANSCRIPTION_ENABLED !== "0",
+    model: env.OPENAI_MODEL_TRANSCRIPTION || DEFAULT_OPENAI_TRANSCRIPTION_MODEL,
+    maxBytes: clamp(parseIntegerEnv(env.UNITV_AUDIO_MAX_BYTES, 8 * 1024 * 1024), 64 * 1024, 25 * 1024 * 1024),
+    maxCharacters: clamp(parseIntegerEnv(env.UNITV_AUDIO_TRANSCRIPT_MAX_CHARS, 2_000), 200, 4_000)
+  };
+}
+
 export function isWhatsAppMainMenuEnabled() {
   const value = process.env.WHATSAPP_ENABLE_MAIN_MENU;
   return value === "true" || value === "1";
@@ -218,4 +233,8 @@ export function getDailyAuditConfig() {
 function parseIntegerEnv(value: string | undefined, fallback: number) {
   const parsed = Number.parseInt(value || "", 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function clamp(value: number, minimum: number, maximum: number) {
+  return Math.min(maximum, Math.max(minimum, value));
 }

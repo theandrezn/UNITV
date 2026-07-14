@@ -9,7 +9,7 @@ import { AgentActionsService } from "@/services/agent-actions.service";
 import { EvolutionService } from "@/services/evolution/evolution.service";
 import { OrdersService } from "@/services/orders.service";
 import { ReceiptsService } from "@/services/receipts.service";
-import type { IncomingEvolutionMessage } from "@/lib/evolution/client";
+import { isIncomingAudioMessage, type IncomingEvolutionMessage } from "@/lib/evolution/client";
 import { resolveMenuSelection, type WhatsAppMenu } from "@/lib/whatsapp/menus";
 import {
   classifyCustomerFacingResponseIntent,
@@ -31,6 +31,11 @@ import {
 import { ConversationBrainService } from "@/services/agent/conversation-brain.service";
 import { ContextualResponseAIService } from "@/services/agent/contextual-response-ai.service";
 import { buildSpecialistLearningGuidance, type SpecialistLearningGuidance } from "@/services/agent/specialist-learning-guidance";
+import {
+  AudioTranscriptionService,
+  readAudioTranscriptionErrorCode,
+  type AudioTranscriptionResult
+} from "@/services/audio/audio-transcription.service";
 import {
   detectUnitvDevice,
   isUnitvInstallationRequest,
@@ -70,7 +75,8 @@ export class WhatsappMessageService {
     private readonly conversationBrainService = new ConversationBrainService(),
     private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository,
     private readonly customerMessageBurstService = new CustomerMessageBurstService(),
-    private readonly contextualResponseAIService = new ContextualResponseAIService()
+    private readonly contextualResponseAIService = new ContextualResponseAIService(),
+    private readonly audioTranscriptionService?: AudioTranscriptionService
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -111,6 +117,40 @@ export class WhatsappMessageService {
         last_message_at: new Date().toISOString(),
         metadata: { instance: message.instance, ...metaReferralPatch }
       }));
+
+    let audioTranscription: AudioTranscriptionResult | null = null;
+    if (!message.fromMe && isIncomingAudioMessage(message)) {
+      try {
+        audioTranscription = await (this.audioTranscriptionService || new AudioTranscriptionService()).transcribeWhatsAppAudio({
+          externalMessageId: message.externalMessageId,
+          conversationId: conversation.id,
+          declaredMimeType: message.media.mimeType,
+          declaredFileName: message.media.fileName
+        });
+        message = { ...message, text: audioTranscription.text };
+        await this.auditService.createAuditLog({
+          actor_type: "ai_agent",
+          action: "audio_transcription_completed",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: {
+            webhookEventId,
+            model: audioTranscription.model,
+            bytes: audioTranscription.bytes,
+            transcript_characters: audioTranscription.text.length,
+            truncated: audioTranscription.truncated
+          }
+        });
+      } catch (error) {
+        return this.handleAudioTranscriptionFailure({
+          webhookEventId,
+          message,
+          customer,
+          conversation,
+          errorCode: readAudioTranscriptionErrorCode(error)
+        });
+      }
+    }
 
     if (message.fromMe) {
       const messageAt = getMessageDate(message).toISOString();
@@ -320,11 +360,23 @@ export class WhatsappMessageService {
       external_message_id: message.externalMessageId,
       metadata: {
         remoteJid: message.remoteJid,
-        media: message.media,
+        media: audioTranscription
+          ? { mimeType: message.media.mimeType || audioTranscription.mimeType, fileName: message.media.fileName || null }
+          : message.media,
         metaReferral: message.metaReferral || null,
         hasMedia: message.hasMedia,
         timestamp: message.timestamp,
-        webhookEventId
+        webhookEventId,
+        ...(audioTranscription
+          ? {
+              audio_transcription: {
+                status: "completed",
+                model: audioTranscription.model,
+                bytes: audioTranscription.bytes,
+                truncated: audioTranscription.truncated
+              }
+            }
+          : {})
       }
     });
     await this.safeCreateAgentEvent({
@@ -333,7 +385,12 @@ export class WhatsappMessageService {
       event_type: "customer_message",
       event_source: "webhook",
       message_id: message.externalMessageId,
-      metadata: { webhookEventId, text: message.text, messageType: message.messageType }
+      metadata: {
+        webhookEventId,
+        text: message.text,
+        messageType: message.messageType,
+        transcribed_audio: Boolean(audioTranscription)
+      }
     });
     await this.updateSpecialistExampleSuccessSignal(conversation.id, message.text, conversation.metadata);
       const customerMessageAt = getMessageDate(message).toISOString();
@@ -789,6 +846,111 @@ export class WhatsappMessageService {
         classification.intent === "pix_payment" &&
         (Boolean(commercialReply.copyText) || commercialReply.requiresHuman === true)
     });
+  }
+
+  private async handleAudioTranscriptionFailure({
+    webhookEventId,
+    message,
+    customer,
+    conversation,
+    errorCode
+  }: {
+    webhookEventId: string;
+    message: IncomingEvolutionMessage;
+    customer: { id: string };
+    conversation: { id: string; metadata?: Record<string, unknown> | null };
+    errorCode: string;
+  }) {
+    const reply = "Nao consegui entender esse audio. Pode enviar novamente ou escrever a mensagem para eu continuar de onde paramos?";
+    const customerMessageAt = getMessageDate(message).toISOString();
+    const sentAt = new Date().toISOString();
+
+    await this.messagesRepository.createMessage({
+      conversation_id: conversation.id,
+      customer_id: customer.id,
+      role: "customer",
+      content: null,
+      content_type: message.messageType,
+      external_message_id: message.externalMessageId,
+      metadata: {
+        remoteJid: message.remoteJid,
+        media: { mimeType: message.media.mimeType || null, fileName: message.media.fileName || null },
+        hasMedia: true,
+        timestamp: message.timestamp,
+        webhookEventId,
+        audio_transcription: { status: "failed", error_code: errorCode }
+      }
+    });
+    await this.safeCreateAgentEvent({
+      conversation_id: conversation.id,
+      customer_phone: message.phone,
+      event_type: "customer_message",
+      event_source: "webhook",
+      message_id: message.externalMessageId,
+      metadata: { webhookEventId, messageType: message.messageType, transcribed_audio: false, error_code: errorCode }
+    });
+    await this.auditService.createAuditLog({
+      actor_type: "ai_agent",
+      action: "audio_transcription_failed",
+      entity_type: "conversations",
+      entity_id: conversation.id,
+      metadata: { webhookEventId, error_code: errorCode }
+    });
+
+    const sendResult: unknown = await this.evolutionService.sendTextMessage({ phone: message.phone, text: reply });
+    await this.messagesRepository.createMessage({
+      conversation_id: conversation.id,
+      customer_id: customer.id,
+      role: "assistant",
+      content: reply,
+      content_type: "text",
+      external_message_id: `assistant:${message.externalMessageId}`,
+      metadata: {
+        webhookEventId,
+        response_source: "audio_transcription_fallback",
+        sender_type: "bot",
+        content_hash: createCustomerMessageHash(reply),
+        sent_at: sentAt,
+        sent_by_system: true,
+        provider_message_id: extractEvolutionProviderMessageId(sendResult),
+        sendResult
+      }
+    });
+    await this.safeCreateAgentEvent({
+      conversation_id: conversation.id,
+      customer_phone: message.phone,
+      event_type: "bot_message",
+      event_source: "system",
+      message_id: `assistant:${message.externalMessageId}`,
+      metadata: { webhookEventId, response_source: "audio_transcription_fallback" }
+    });
+
+    const leadProfile = readLeadProfile(conversation.metadata);
+    const nextMetadata = {
+      ...(conversation.metadata || {}),
+      last_customer_message_at: customerMessageAt,
+      last_customer_message_id: message.externalMessageId,
+      last_bot_message_at: sentAt,
+      followup_due_at: null,
+      response_due_at: null,
+      awaiting_customer_action: null,
+      lead_profile: {
+        ...leadProfile,
+        last_bot_question: reply,
+        updated_at: sentAt
+      }
+    };
+    await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
+    await this.conversationsRepository.touchConversation(conversation.id, sentAt);
+    await this.auditService.createAuditLog({
+      actor_type: "system",
+      action: "audio_transcription_fallback_sent",
+      entity_type: "conversations",
+      entity_id: conversation.id,
+      metadata: { webhookEventId, error_code: errorCode }
+    });
+
+    return { status: "processed" as const, reply };
   }
 
   private async sendAndStoreAssistantReply({

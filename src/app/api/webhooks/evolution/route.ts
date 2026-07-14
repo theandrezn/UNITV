@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractIncomingMessageFromWebhook, getEvolutionIdempotencyKey } from "@/lib/evolution/client";
+import { extractIncomingMessageFromWebhook, getEvolutionIdempotencyKey, isIncomingAudioMessage } from "@/lib/evolution/client";
 import { getServerEnv } from "@/lib/env";
 import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
 import { WebhooksService } from "@/services/webhooks.service";
@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: "ok", result: "ignored_group" });
     }
 
-    if (!incomingMessage.fromMe && !incomingMessage.text.trim()) {
+    if (!incomingMessage.fromMe && !incomingMessage.text.trim() && !isIncomingAudioMessage(incomingMessage)) {
       await webhooksService.markWebhookIgnored(currentWebhookEventId);
       return NextResponse.json({ status: "ok", result: "ignored_empty_message" });
     }

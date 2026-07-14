@@ -8,6 +8,10 @@ export class EvolutionService {
     return this.evolutionClient.sendTextMessage(input);
   }
 
+  getMediaBase64(input: { externalMessageId: string }) {
+    return this.evolutionClient.getMediaBase64(input);
+  }
+
   sendMediaMessage(input: {
     phone: string;
     base64: string;

@@ -46,6 +46,10 @@ OPENAI_MODEL=gpt-5.4-mini
 OPENAI_MODEL_SALES_AGENT=gpt-5.4-mini
 OPENAI_MODEL_SALES_AGENT_STRONG=gpt-5.5
 OPENAI_MODEL_INTENT=gpt-5.4-mini
+OPENAI_MODEL_TRANSCRIPTION=gpt-4o-mini-transcribe
+UNITV_AUDIO_TRANSCRIPTION_ENABLED=true
+UNITV_AUDIO_MAX_BYTES=8388608
+UNITV_AUDIO_TRANSCRIPT_MAX_CHARS=2000
 
 APP_ENV=development
 APP_BASE_URL=
@@ -122,6 +126,10 @@ Endpoint:
 ```text
 POST /api/webhooks/evolution
 ```
+
+Mensagens de voz recebidas como `audioMessage` sao baixadas pelo endpoint seguro `getBase64FromMediaMessage` da Evolution, transcritas em portugues com `gpt-4o-mini-transcribe` e processadas pelo mesmo fluxo contextual das mensagens de texto. O audio bruto e o base64 nao sao persistidos; somente a transcricao e metadados tecnicos limitados entram no historico.
+
+Os limites padrao aceitam ate 8 MB por audio e enviam no maximo 2.000 caracteres transcritos ao agente. Se a transcricao falhar ou nao detectar fala, o cliente recebe uma solicitacao curta para reenviar o audio ou escrever a mensagem, sem alterar a etapa comercial atual.
 
 Para testar localmente:
 

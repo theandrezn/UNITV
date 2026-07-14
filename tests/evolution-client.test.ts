@@ -41,6 +41,36 @@ describe("EvolutionClient", () => {
     );
   });
 
+  it("downloads incoming audio as base64 through the authenticated Evolution endpoint", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      base64: "data:audio/ogg;base64,T2dnUw==",
+      mimetype: "audio/ogg; codecs=opus",
+      fileName: "voice.ogg"
+    }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new EvolutionClient({
+      apiUrl: "https://evolution.example.com",
+      apiKey: "evolution-key",
+      instanceName: "unitv"
+    });
+
+    const result = await client.getMediaBase64({ externalMessageId: "audio-message-id" });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://evolution.example.com/chat/getBase64FromMediaMessage/unitv",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: "evolution-key" },
+        body: JSON.stringify({ message: { key: { id: "audio-message-id" } }, convertToMp4: false })
+      })
+    );
+    expect(result).toEqual({
+      base64: "data:audio/ogg;base64,T2dnUw==",
+      mimeType: "audio/ogg; codecs=opus",
+      fileName: "voice.ogg"
+    });
+  });
+
   it("sends a selectable WhatsApp list through Evolution sendList", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ key: { id: "list-message-id" } }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);
