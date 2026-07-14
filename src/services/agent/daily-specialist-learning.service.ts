@@ -41,8 +41,11 @@ export class DailySpecialistLearningService {
   ) {}
 
   async synthesizeDailyLearning(input: DailySpecialistLearningInput): Promise<DailySpecialistLearningResult> {
-    if (process.env.UNITV_DAILY_LEARNING_ENABLED !== "true") {
-      return { createdCount: 0, summary: "Aprendizado automatico por IA desativado para economizar tokens; o Obsidian segue como base de conhecimento.", skippedReason: "learning_disabled_by_economy_policy" };
+    if (
+      process.env.UNITV_DAILY_LEARNING_ENABLED !== "true" ||
+      process.env.UNITV_DAILY_LEARNING_QUALITY_GATE_ENABLED !== "true"
+    ) {
+      return { createdCount: 0, summary: "Aprendizado automatico por IA desativado; exemplos permanecem candidatos ate revisao e evidencia positiva acumulada.", skippedReason: "learning_disabled_by_quality_gate" };
     }
     const eligibleExamples = input.examples.filter(isEligibleExample);
     const examples = (await this.progressRepository.filterUnprocessedExamples(eligibleExamples)).slice(0, OPENAI_ECONOMY_POLICY.dailyLearning.maxExamples);
@@ -174,7 +177,9 @@ function learningFailureSummary(reason: string | undefined) {
 }
 
 function isEligibleExample(example: Record<string, unknown>) {
-  return example.review_status === "approved" && ["positive", "neutral"].includes(String(example.outcome_status || example.success_signal || ""));
+  return example.review_status === "approved" &&
+    example.quality_gate_status === "qualified" &&
+    String(example.outcome_status || example.success_signal || "") === "positive";
 }
 
 function isSafeDirective(directive: z.infer<typeof directiveSchema>, eligibleExampleIds: Set<string>) {
@@ -201,7 +206,13 @@ function toMemory(
     evidence_count: directive.source_example_ids.length,
     confidence: directive.confidence,
     source_example_ids: directive.source_example_ids,
-    metadata: { source: "daily_specialist_learning", approved_examples_count: examples.length }
+    status: directive.source_example_ids.length >= 3 ? "active" : "candidate",
+    metadata: {
+      source: "daily_specialist_learning",
+      approved_examples_count: examples.length,
+      minimum_positive_examples: 3,
+      quality_gate: directive.source_example_ids.length >= 3 ? "active" : "candidate"
+    }
   };
 }
 

@@ -70,6 +70,7 @@ export class SpecialistTrainingExamplesRepository {
       .select("*")
       .eq("should_copy_style", true)
       .eq("review_status", "approved")
+      .eq("quality_gate_status", "qualified")
       .order("created_at", { ascending: false })
       .limit(50);
 
@@ -98,7 +99,7 @@ export class SpecialistTrainingExamplesRepository {
   async markLatestConversationExampleSignal(conversationId: string, signal: "positive" | "neutral" | "negative") {
     const { data: latest, error: findError } = await this.supabase
       .from("specialist_training_examples")
-      .select("id, success_signal, review_status, specialist_message, inferred_intent, inferred_specialist_action, metadata")
+      .select("id, success_signal, review_status, specialist_message, inferred_intent, inferred_specialist_action, metadata, outcome_evidence, quality_gate_status")
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: false })
       .limit(1)
@@ -111,8 +112,10 @@ export class SpecialistTrainingExamplesRepository {
     const nextSignal = signal === "neutral" && latest.success_signal && latest.success_signal !== "unknown"
       ? latest.success_signal
       : signal;
-    const autoApprove = nextSignal === "positive" && latest.review_status === "pending_review" && isSafeSpecialistExampleForReuse(latest);
     const observedAt = new Date().toISOString();
+    const previousEvidence = latest.outcome_evidence && typeof latest.outcome_evidence === "object"
+      ? latest.outcome_evidence as Record<string, unknown>
+      : {};
 
     const { data, error } = await this.supabase
       .from("specialist_training_examples")
@@ -120,12 +123,14 @@ export class SpecialistTrainingExamplesRepository {
         success_signal: nextSignal,
         outcome_status: nextSignal,
         outcome_observed_at: observedAt,
-        ...(autoApprove ? {
-          review_status: "approved",
-          reviewed_at: observedAt,
-          reviewed_by: "automatic_outcome",
-          approval_reason: "customer_positive_signal"
-        } : {}),
+        quality_gate_status: nextSignal === "negative" ? "rejected" : "candidate",
+        outcome_evidence: {
+          ...previousEvidence,
+          latest_signal: nextSignal,
+          observed_at: observedAt,
+          requires_human_review: true,
+          automatic_approval_disabled: true
+        },
         updated_at: observedAt
       })
       .eq("id", latest.id)
@@ -150,7 +155,8 @@ export class SpecialistTrainingExamplesRepository {
       .from("specialist_training_examples")
       .select("*")
       .eq("review_status", "approved")
-      .in("outcome_status", ["positive", "neutral"])
+      .eq("outcome_status", "positive")
+      .eq("quality_gate_status", "qualified")
       .gte("updated_at", periodStart)
       .lte("updated_at", periodEnd)
       .order("updated_at", { ascending: true });
@@ -163,7 +169,8 @@ export class SpecialistTrainingExamplesRepository {
       .from("specialist_training_examples")
       .select("*")
       .eq("review_status", "approved")
-      .in("outcome_status", ["positive", "neutral"])
+      .eq("outcome_status", "positive")
+      .eq("quality_gate_status", "qualified")
       .order("updated_at", { ascending: true })
       .limit(limit);
 
@@ -193,7 +200,12 @@ export class SpecialistTrainingExamplesRepository {
         outcome_status: input.outcome_status || (input.review_status === "approved" ? "neutral" : "negative"),
         outcome_notes: input.outcome_notes || null,
         outcome_observed_at: reviewedAt,
-        should_copy_style: input.review_status === "approved",
+        quality_gate_status: input.review_status === "rejected" || input.outcome_status === "negative"
+          ? "rejected"
+          : input.review_status === "approved" && input.outcome_status === "positive"
+            ? "qualified"
+            : "candidate",
+        should_copy_style: input.review_status === "approved" && input.outcome_status === "positive",
         updated_at: reviewedAt
       })
       .eq("id", id)

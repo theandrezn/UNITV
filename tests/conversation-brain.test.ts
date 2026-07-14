@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 import {
+  finalizeConversationAction,
   resolveConversationBrain,
   validateFollowupWithConversationBrain
 } from "@/services/agent/conversation-brain.service";
@@ -284,5 +285,38 @@ describe("ConversationBrainService", () => {
     expect(decision.allowInitialGreeting).toBe(false);
     expect(decision.responseRule).toBe("conversation_brain_blocks_greeting_restart");
     expect(decision.directReply).not.toContain("Seja bem-vindo");
+  });
+
+  it("finalizes every turn into the single action contract", () => {
+    const commercialContext = context({
+      current_message: "Valor",
+      lead_profile: { conversation_state: "price_discovery", stage: "price_discovery" }
+    });
+    const contextual = extractDeterministicDecision(commercialContext);
+    const preliminary = resolveConversationBrain({
+      context: commercialContext,
+      contextualDecision: contextual,
+      classificationIntent: "ask_price",
+      directHumanRequest: false
+    });
+    const final = finalizeConversationAction({
+      preliminary,
+      contextualDecision: contextual,
+      candidate: {
+        reply: "O plano mensal esta saindo por R$ 20,90. Voce tem interesse pra hoje?",
+        responseRule: "monthly_offer",
+        leadProfilePatch: { stage: "monthly_offer_pending" }
+      }
+    });
+
+    expect(final).toEqual({
+      action: "reply",
+      next_state: "monthly_offer_pending",
+      reason: "monthly_offer",
+      reply: "O plano mensal esta saindo por R$ 20,90. Voce tem interesse pra hoje?",
+      followup_action: { type: "none", key: null, dueAt: null },
+      backend_artifact: null,
+      response_rule: "monthly_offer"
+    });
   });
 });

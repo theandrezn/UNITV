@@ -1,4 +1,5 @@
 import "server-only";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { AuditService } from "@/services/audit.service";
 
 type OpenAIUsage = {
@@ -17,11 +18,42 @@ type OpenAICallInput = {
 
 const QUOTA_COOLDOWN_MS = 30 * 60 * 1000;
 let circuitOpenUntil = 0;
+const TURN_LIMITED_CALL_TYPES = new Set(["intent_classification", "context_interpretation", "sales_response", "contextual_response"]);
+type OpenAITurnBudget = { turnId: string; maximumDecisionCalls: number; usedDecisionCalls: number };
+const turnBudgetStorage = new AsyncLocalStorage<OpenAITurnBudget>();
+
+export function withOpenAITurnBudget<T>(
+  input: { turnId: string; maximumDecisionCalls?: number },
+  operation: () => Promise<T>
+) {
+  return turnBudgetStorage.run({
+    turnId: input.turnId,
+    maximumDecisionCalls: input.maximumDecisionCalls ?? 1,
+    usedDecisionCalls: 0
+  }, operation);
+}
+
+export function getOpenAITurnBudgetSnapshot() {
+  const budget = turnBudgetStorage.getStore();
+  return budget ? { ...budget } : null;
+}
 
 export async function executeObservedOpenAICall<T>(
   input: OpenAICallInput,
   operation: () => Promise<T>
 ): Promise<T | null> {
+  const turnBudget = turnBudgetStorage.getStore();
+  if (turnBudget && TURN_LIMITED_CALL_TYPES.has(input.callType)) {
+    if (turnBudget.usedDecisionCalls >= turnBudget.maximumDecisionCalls) {
+      void recordOpenAICall(input, {
+        outcome: "turn_budget_blocked",
+        turn_id: turnBudget.turnId,
+        turn_decision_calls: turnBudget.usedDecisionCalls
+      });
+      return null;
+    }
+    turnBudget.usedDecisionCalls += 1;
+  }
   if (Date.now() < circuitOpenUntil) {
     void recordOpenAICall(input, { outcome: "circuit_open" });
     return null;
@@ -67,11 +99,13 @@ function readUsage(response: unknown): OpenAIUsage | null {
 async function recordOpenAICall(
   input: OpenAICallInput,
   result: {
-    outcome: "success" | "error" | "circuit_open";
+    outcome: "success" | "error" | "circuit_open" | "turn_budget_blocked";
     usage?: OpenAIUsage | null;
     status?: number | null;
     code?: string | null;
     error_type?: string | null;
+    turn_id?: string | null;
+    turn_decision_calls?: number | null;
   }
 ) {
   try {
@@ -92,7 +126,9 @@ async function recordOpenAICall(
         total_tokens: Number(result.usage?.total_tokens || 0),
         error_status: result.status || null,
         error_code: result.code || null,
-        error_type: result.error_type || null
+        error_type: result.error_type || null,
+        turn_id: result.turn_id || turnBudgetStorage.getStore()?.turnId || null,
+        turn_decision_calls: result.turn_decision_calls ?? turnBudgetStorage.getStore()?.usedDecisionCalls ?? null
       }
     });
   } catch {

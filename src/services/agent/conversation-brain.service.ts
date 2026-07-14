@@ -1,6 +1,30 @@
 import type { CommercialContext, ContextualDecision } from "./contextual-intelligence.service";
+import { normalizeConversationState, type ConversationState } from "@/lib/conversation-state";
 
-export type ConversationBrainDecision = {
+export type AgentActionKind = "reply" | "silent" | "wait" | "handoff" | "backend_action";
+
+export type AgentFollowupAction = {
+  type: "none" | "schedule" | "cancel" | "shadow";
+  key: string | null;
+  dueAt: string | null;
+};
+
+export type AgentBackendArtifact = {
+  type: "pix" | "payment_check" | "activation_code" | "download" | "menu";
+  present: boolean;
+};
+
+export type ConversationAgentAction = {
+  action: AgentActionKind;
+  next_state: ConversationState;
+  reason: string;
+  reply: string | null;
+  followup_action: AgentFollowupAction;
+  backend_artifact: AgentBackendArtifact | null;
+  response_rule: string;
+};
+
+export type ConversationBrainDecision = ConversationAgentAction & {
   stage: string;
   contextActive: boolean;
   allowInitialGreeting: boolean;
@@ -84,7 +108,25 @@ export class ConversationBrainService {
   decide(input: ConversationBrainInput): ConversationBrainDecision {
     return resolveConversationBrain(input);
   }
+
+  finalize(input: FinalizeConversationActionInput): ConversationAgentAction {
+    return finalizeConversationAction(input);
+  }
 }
+
+export type FinalizeConversationActionInput = {
+  preliminary: ConversationBrainDecision;
+  contextualDecision: ContextualDecision;
+  candidate: {
+    reply?: string | null;
+    requiresHuman?: boolean;
+    responseRule?: string;
+    leadProfilePatch?: Record<string, unknown>;
+    copyText?: string;
+    media?: unknown;
+    menu?: unknown;
+  };
+};
 
 export function resolveConversationBrain(input: ConversationBrainInput): ConversationBrainDecision {
   const profile = input.context.lead_profile || {};
@@ -102,6 +144,13 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
     input.context.followup_key ? `followup_key=${input.context.followup_key}` : "followup_key=none"
   ];
   const base = (overrides: Partial<ConversationBrainDecision> = {}): ConversationBrainDecision => ({
+    action: "wait",
+    next_state: normalizeConversationState(stage) || "new_lead",
+    reason: "Aguardando a proposta contextual antes da arbitragem final.",
+    reply: null,
+    followup_action: { type: "none", key: null, dueAt: null },
+    backend_artifact: null,
+    response_rule: "conversation_brain_continue",
     stage: stage || "new_lead",
     contextActive: active,
     allowInitialGreeting: !active,
@@ -117,6 +166,9 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
 
   if (input.context.human_hold_active) {
     return base({
+      action: "wait",
+      reason: "Especialista humano esta conduzindo a conversa.",
+      response_rule: "conversation_brain_human_hold",
       shouldReply: false,
       allowInitialGreeting: false,
       allowHumanHandoff: false,
@@ -127,6 +179,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
 
   if (isLegacyLgWithoutCompatibleSystem(message)) {
     return base({
+      action: "silent",
+      next_state: "incompatible_device",
+      reason: "Aparelho incompatível ja confirmado; insistir na instalacao pioraria o atendimento.",
+      response_rule: "conversation_brain_legacy_lg_incompatible_silent",
       stage: "incompatible_device",
       contextActive: true,
       allowInitialGreeting: false,
@@ -140,6 +196,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
 
   if (isConfirmedIncompatibleDevice(profile, stage) && isDownloadProblem(message, lastQuestion)) {
     return base({
+      action: "silent",
+      next_state: "incompatible_device",
+      reason: "Falha de instalacao ocorreu em aparelho ja confirmado como incompativel.",
+      response_rule: "conversation_brain_incompatible_installation_failure_silent",
       stage: "incompatible_device",
       contextActive: true,
       allowInitialGreeting: false,
@@ -156,6 +216,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
 
   if (stage === "pre_sale_recharge_intent" && isClosingAcknowledgement(message)) {
     return base({
+      action: "silent",
+      next_state: "pre_sale_recharge_intent",
+      reason: "Agradecimento encerra o turno sem exigir nova mensagem.",
+      response_rule: "conversation_brain_pre_sale_acknowledgement_silent",
       contextActive: true,
       allowInitialGreeting: false,
       allowHumanHandoff: false,
@@ -173,6 +237,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
   if (downloadActive) {
     if (isDownloadProblem(message, lastQuestion)) {
       return base({
+        action: "reply",
+        reason: "Cliente informou dificuldade durante o fluxo ativo de download.",
+        reply: DOWNLOAD_HELP_REPLY,
+        response_rule: "conversation_brain_download_help",
         directReply: DOWNLOAD_HELP_REPLY,
         responseRule: "conversation_brain_download_help",
         leadProfilePatch: downloadPatch("download_support", {
@@ -186,6 +254,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
 
     if (isDownloaded(message, lastQuestion)) {
       return base({
+        action: "reply",
+        reason: "Cliente confirmou o download e deve avancar para abertura do aplicativo.",
+        reply: DOWNLOAD_CONFIRMED_REPLY,
+        response_rule: "conversation_brain_download_confirmed",
         directReply: DOWNLOAD_CONFIRMED_REPLY,
         responseRule: "conversation_brain_download_confirmed",
         leadProfilePatch: downloadPatch("awaiting_download_installation", {
@@ -201,6 +273,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
 
     if (mentionsAndroid(message)) {
       return base({
+        action: "reply",
+        reason: "Cliente confirmou Android dentro do fluxo de download ativo.",
+        reply: DOWNLOAD_ANDROID_CONFIRMATION_REPLY,
+        response_rule: "conversation_brain_download_android_confirmation",
         directReply: DOWNLOAD_ANDROID_CONFIRMATION_REPLY,
         responseRule: "conversation_brain_download_android_confirmation",
         leadProfilePatch: downloadPatch("awaiting_download_installation", {
@@ -221,6 +297,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
     input.contextualDecision.next_action === "ask_device_for_trial"
   ) {
     return base({
+      action: "reply",
+      reason: "Pedido de teste precisa avancar para qualificacao do aparelho.",
+      reply: safeReply(input.contextualDecision.recommended_response, TRIAL_DEVICE_REPLY),
+      response_rule: "conversation_brain_free_trial_device",
       directReply: safeReply(input.contextualDecision.recommended_response, TRIAL_DEVICE_REPLY),
       responseRule: "conversation_brain_free_trial_device",
       leadProfilePatch: awaitingPatch("device_qualification", {
@@ -238,6 +318,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
     input.contextualDecision.next_action === "confirm_android_phone"
   ) {
     return base({
+      action: "reply",
+      reason: "Celular informado sem confirmacao do sistema operacional.",
+      reply: safeReply(input.contextualDecision.recommended_response, ANDROID_PHONE_CONFIRMATION_REPLY),
+      response_rule: "conversation_brain_confirm_android_phone",
       directReply: safeReply(input.contextualDecision.recommended_response, ANDROID_PHONE_CONFIRMATION_REPLY),
       responseRule: "conversation_brain_confirm_android_phone",
       leadProfilePatch: awaitingPatch("device_qualification", {
@@ -251,6 +335,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
 
   if (isFirstTimeNo(message) && asksFirstTimeOrTrial(lastQuestion)) {
     return base({
+      action: "reply",
+      reason: "Resposta curta foi interpretada pela ultima pergunta sobre primeira utilizacao.",
+      reply: FIRST_TIME_NO_REPLY,
+      response_rule: "conversation_brain_first_time_short_no",
       directReply: FIRST_TIME_NO_REPLY,
       responseRule: "conversation_brain_first_time_short_no",
       leadProfilePatch: awaitingPatch("device_qualification", {
@@ -265,6 +353,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
 
   if (isFirstTimeNo(message) && asksDevice(lastQuestion)) {
     return base({
+      action: "reply",
+      reason: "Cliente ainda nao informou o aparelho solicitado.",
+      reply: ASK_DEVICE_AGAIN_REPLY,
+      response_rule: "conversation_brain_device_not_provided",
       directReply: ASK_DEVICE_AGAIN_REPLY,
       responseRule: "conversation_brain_device_not_provided",
       leadProfilePatch: awaitingPatch("device_qualification", {
@@ -278,6 +370,10 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
 
   if (active && isGreeting(input.classificationIntent, message)) {
     return base({
+      action: "reply",
+      reason: "Saudacao em conversa ativa deve continuar do ponto atual, sem reiniciar o funil.",
+      reply: activeGreetingReply(stage, lastQuestion),
+      response_rule: "conversation_brain_blocks_greeting_restart",
       directReply: activeGreetingReply(stage, lastQuestion),
       responseRule: "conversation_brain_blocks_greeting_restart",
       leadProfilePatch: {
@@ -289,6 +385,96 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
   }
 
   return base();
+}
+
+export function finalizeConversationAction(input: FinalizeConversationActionInput): ConversationAgentAction {
+  const preliminary = input.preliminary;
+  const candidate = input.candidate;
+  const explicitStop = preliminary.action === "silent" ||
+    (preliminary.action === "wait" && preliminary.responseRule !== "conversation_brain_continue");
+  if (explicitStop) {
+    return {
+      action: preliminary.action,
+      next_state: preliminary.next_state,
+      reason: preliminary.reason,
+      reply: null,
+      followup_action: { type: "cancel", key: null, dueAt: null },
+      backend_artifact: null,
+      response_rule: preliminary.response_rule
+    };
+  }
+
+  const patch = candidate.leadProfilePatch || {};
+  const nextState = normalizeConversationState(
+    patch.conversation_state || patch.stage || patch.commercial_stage
+  ) || preliminary.next_state || normalizeConversationState(input.contextualDecision.next_state || input.contextualDecision.stage) || "new_lead";
+  const reply = String(candidate.reply || "").trim() || null;
+  const responseRule = candidate.responseRule || preliminary.responseRule || "conversation_brain_finalized";
+  if (candidate.requiresHuman) {
+    return {
+      action: "handoff",
+      next_state: "human_handoff",
+      reason: responseRule,
+      reply,
+      followup_action: { type: "cancel", key: null, dueAt: null },
+      backend_artifact: null,
+      response_rule: responseRule
+    };
+  }
+
+  const backendArtifact = detectBackendArtifact(candidate, input.contextualDecision);
+  if (backendArtifact) {
+    return {
+      action: "backend_action",
+      next_state: nextState,
+      reason: responseRule,
+      reply,
+      followup_action: followupFromPatch(patch),
+      backend_artifact: backendArtifact,
+      response_rule: responseRule
+    };
+  }
+
+  if (!reply) {
+    return {
+      action: input.contextualDecision.should_reply === false ? "silent" : "wait",
+      next_state: nextState,
+      reason: responseRule,
+      reply: null,
+      followup_action: { type: "none", key: null, dueAt: null },
+      backend_artifact: null,
+      response_rule: responseRule
+    };
+  }
+
+  return {
+    action: "reply",
+    next_state: nextState,
+    reason: responseRule,
+    reply,
+    followup_action: followupFromPatch(patch),
+    backend_artifact: null,
+    response_rule: responseRule
+  };
+}
+
+function detectBackendArtifact(
+  candidate: FinalizeConversationActionInput["candidate"],
+  decision: ContextualDecision
+): AgentBackendArtifact | null {
+  if (candidate.copyText || (decision.should_generate_pix && candidate.reply)) return { type: "pix", present: Boolean(candidate.copyText) };
+  if (decision.next_action === "verify_payment") return { type: "payment_check", present: true };
+  if (candidate.media) return { type: decision.should_send_download ? "download" : "menu", present: true };
+  if (candidate.menu) return { type: "menu", present: true };
+  return null;
+}
+
+function followupFromPatch(patch: Record<string, unknown>): AgentFollowupAction {
+  const key = typeof patch.followup_key === "string" ? patch.followup_key : null;
+  const dueAt = typeof patch.followup_due_at === "string" ? patch.followup_due_at : null;
+  return key || dueAt
+    ? { type: "schedule", key, dueAt }
+    : { type: "none", key: null, dueAt: null };
 }
 
 export function validateFollowupWithConversationBrain(input: {
@@ -343,6 +529,9 @@ function incompatibleDevicePatch(device: string, label: string) {
     device,
     aparelho: label,
     device_compatible: false,
+    compatibility_status: "incompatible",
+    installation_attempt_status: "failed",
+    android_confirmed: false,
     install_status: "failed",
     download_status: "failed",
     last_customer_intent: "incompatible_device_confirmed",
@@ -421,7 +610,7 @@ function isConfirmedIncompatibleDevice(profile: Record<string, unknown>, stage: 
 }
 
 function isClosingAcknowledgement(message: string) {
-  return /^(sim(?: sim)?(?: obrigado| obrigada)?|obrigado|obrigada|valeu|ta bom|tudo bem|beleza|blz|ok)[!?.\s]*$/.test(message);
+  return /^(sim(?:[,\s]+sim)?(?:[,\s]+obrigado|[,\s]+obrigada)?|obrigado|obrigada|valeu|ta bom|tudo bem|beleza|blz|ok)[!?,.\s]*$/.test(message);
 }
 
 function isDownloaded(message: string, lastQuestion: string) {

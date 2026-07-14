@@ -19,6 +19,7 @@ import {
   type FollowupDecision
 } from "@/services/followups/contextual-followup-decision.service";
 import { resolveConversationState, withCanonicalConversationState } from "@/lib/conversation-state";
+import { ShadowDecisionService } from "@/services/agent/shadow-decision.service";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
 const MAX_LEAD_RECOVERY_FOLLOWUPS = 3;
@@ -46,6 +47,7 @@ type FollowupResult = {
   checked: number;
   sent: number;
   skipped: number;
+  shadowed?: number;
 };
 
 const inProcessDedupeKeys = new Set<string>();
@@ -60,10 +62,11 @@ export class WhatsappFollowupService {
     private readonly salesResponseAIService = new SalesResponseAIService(),
     private readonly ordersService = new OrdersService(),
     _contextualFollowupDecisionService = new ContextualFollowupDecisionService(),
-    private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository
+    private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository,
+    private readonly shadowDecisionService?: ShadowDecisionService
   ) {}
 
-  async processDueFollowups(now = new Date()): Promise<FollowupResult> {
+  async processDueFollowups(now = new Date(), options: { mode?: "send" | "shadow" } = {}): Promise<FollowupResult> {
     const repository = this.conversationsRepository as ConversationsRepository & {
       listFollowupCandidates?: (now: Date, limit?: number) => Promise<ConversationRow[]>;
     };
@@ -72,6 +75,8 @@ export class WhatsappFollowupService {
       : await this.conversationsRepository.listOpenConversations(200)) as ConversationRow[];
     let sent = 0;
     let skipped = 0;
+    let shadowed = 0;
+    const shadowMode = options.mode === "shadow";
     inProcessDedupeKeys.clear();
     const phonesSentThisRun = new Set<string>();
 
@@ -252,6 +257,10 @@ export class WhatsappFollowupService {
       });
 
       if (!policy.shouldSend) {
+        if (shadowMode) {
+          await this.safeRecordShadowFollowup(conversation, context, decision, false, true, policy.reason || decision.reason);
+          shadowed++;
+        }
         skipped++;
         await this.recordFollowupCancellation(conversation, phone, metadata, policy.reason || decision.reason);
         await this.conversationsRepository.updateConversationMetadata(
@@ -289,6 +298,11 @@ export class WhatsappFollowupService {
         : promoRecovery
           ? buildPromoRecoveryFollowupText(metadata, conversation)
           : buildFollowupText(metadata));
+      if (shadowMode) {
+        await this.safeRecordShadowFollowup(conversation, context, decision, true, true, policy.reason || decision.reason, fallbackFollowupText);
+        shadowed++;
+        continue;
+      }
       const followupText = await this.buildContextualFollowupText({
         context,
         decision,
@@ -501,7 +515,38 @@ export class WhatsappFollowupService {
       sent++;
     }
 
-    return { checked: conversations.length, sent, skipped };
+    return {
+      checked: conversations.length,
+      sent,
+      skipped,
+      ...(shadowMode ? { shadowed } : {})
+    };
+  }
+
+  private async safeRecordShadowFollowup(
+    conversation: ConversationRow,
+    context: FollowupContext,
+    decision: FollowupDecision,
+    wouldSend: boolean,
+    blockedBeforeAI: boolean,
+    reason: string,
+    preview?: string
+  ) {
+    try {
+      const shadowDecisionService = this.shadowDecisionService || new ShadowDecisionService();
+      await shadowDecisionService.recordFollowup({
+        conversationId: conversation.id,
+        decisionKey: String(context.metadata.last_followup_stage_id || decision.new_followup_key || context.followup_key || "candidate"),
+        currentState: String(context.lead_profile.conversation_state || context.lead_profile.stage || "new_lead"),
+        wouldSend,
+        blockedBeforeAI,
+        reason,
+        followupType: decision.followup_type,
+        contextHash: context.last_followup_context_hash || hashText(preview || reason)
+      });
+    } catch {
+      // Shadow persistence must never turn into a customer-facing failure.
+    }
   }
 
   private async buildUnansweredCustomerFollowupText(conversation: ConversationRow, metadata: Record<string, unknown>) {

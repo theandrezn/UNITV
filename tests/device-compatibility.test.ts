@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectUnitvDevice,
   getUnitvInstallationGuidance,
+  resolveUnitvDeviceContext,
   UNITV_ANDROID_APK_URL,
   UNITV_DOWNLOADER_CODE,
   UNITV_TUTORIAL_URL,
@@ -103,7 +104,26 @@ describe("UNITV device compatibility", () => {
       device: "lg_tv",
       device_compatible: false,
       stage: "incompatible_device",
-      install_status: "failed"
+      install_status: "failed",
+      compatibility_status: "incompatible",
+      installation_attempt_status: "failed"
+    });
+  });
+
+  it("qualifies TVs by capabilities instead of brand alone", () => {
+    expect(resolveUnitvDeviceContext("Minha Samsung tem Play Store e Android TV")).toMatchObject({
+      device_brand: "samsung",
+      device_type: "tv",
+      operating_system: "android_tv",
+      has_play_store: true,
+      android_confirmed: true,
+      compatibility_status: "compatible"
+    });
+    expect(resolveUnitvDeviceContext("Minha TV HQ nao tem Android nem Play Store")).toMatchObject({
+      device_brand: "hq",
+      device_type: "tv",
+      android_confirmed: false,
+      compatibility_status: "incompatible"
     });
   });
 });

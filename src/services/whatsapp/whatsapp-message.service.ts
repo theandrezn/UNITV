@@ -42,6 +42,7 @@ import {
   UNITV_DEVICE_COMPATIBILITY
 } from "@/lib/unitv/device-compatibility";
 import { resolveConversationState, withCanonicalConversationState } from "@/lib/conversation-state";
+import { ShadowDecisionService } from "@/services/agent/shadow-decision.service";
 
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
@@ -80,7 +81,8 @@ export class WhatsappMessageService {
       process.env.NODE_ENV === "test" ? 0 : undefined
     ),
     private readonly contextualResponseAIService = new ContextualResponseAIService(),
-    private readonly audioTranscriptionService?: AudioTranscriptionService
+    private readonly audioTranscriptionService?: AudioTranscriptionService,
+    private readonly shadowDecisionService?: ShadowDecisionService
   ) {}
 
   async processIncomingMessage({ webhookEventId, message }: ProcessIncomingMessageInput) {
@@ -727,6 +729,56 @@ export class WhatsappMessageService {
       learningMemories,
       deferResponseWritingToContextualAI: true
     });
+    const legacyCandidate = {
+      ...commercialReply,
+      leadProfilePatch: { ...(commercialReply.leadProfilePatch || {}) }
+    };
+    const finalAgentAction = this.conversationBrainService.finalize({
+      preliminary: conversationBrainDecision,
+      contextualDecision,
+      candidate: commercialReply
+    });
+    commercialReply.reply = finalAgentAction.reply || "";
+    commercialReply.requiresHuman = finalAgentAction.action === "handoff";
+    commercialReply.responseRule = finalAgentAction.response_rule;
+    commercialReply.leadProfilePatch = {
+      ...(commercialReply.leadProfilePatch || {}),
+      conversation_state: finalAgentAction.next_state,
+      stage: finalAgentAction.next_state,
+      commercial_stage: finalAgentAction.next_state,
+      final_agent_action: finalAgentAction.action,
+      final_agent_action_reason: finalAgentAction.reason
+    };
+    await this.auditService.createAuditLog({
+      actor_type: "system",
+      action: "agent_action_finalized",
+      entity_type: "conversations",
+      entity_id: conversation.id,
+      metadata: {
+        webhookEventId,
+        action: finalAgentAction.action,
+        next_state: finalAgentAction.next_state,
+        reason: finalAgentAction.reason,
+        response_rule: finalAgentAction.response_rule,
+        followup_action: finalAgentAction.followup_action,
+        backend_artifact: finalAgentAction.backend_artifact,
+        has_reply: Boolean(finalAgentAction.reply)
+      }
+    });
+    if (this.shadowDecisionService || process.env.NODE_ENV !== "test") {
+      try {
+        const shadowDecisionService = this.shadowDecisionService || new ShadowDecisionService();
+        await shadowDecisionService.compareReply({
+          conversationId: conversation.id,
+          messageId: message.externalMessageId,
+          currentState: String(contextSnapshot.lead_profile.conversation_state || contextSnapshot.lead_profile.stage || "new_lead"),
+          legacyCandidate,
+          unifiedAction: finalAgentAction
+        });
+      } catch {
+        // Shadow telemetry must never block the customer turn.
+      }
+    }
     if (commercialReply.responseRule === "conversation_brain_blocks_greeting_restart") {
       await this.safeCreateAgentEvent({
         conversation_id: conversation.id,
@@ -759,7 +811,7 @@ export class WhatsappMessageService {
       await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
       conversation.metadata = nextMetadata;
     }
-    const reply = commercialReply.reply;
+    const reply = finalAgentAction.reply || "";
 
     if (!reply) {
       if (commercialReply.requiresHuman) {

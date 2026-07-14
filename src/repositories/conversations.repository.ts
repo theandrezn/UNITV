@@ -39,6 +39,7 @@ export class ConversationsRepository {
         metadata: statePersistence.metadata,
         conversation_state: statePersistence.state,
         conversation_state_changed_at: new Date().toISOString(),
+        ...extractDeviceContextFields(statePersistence.metadata),
         ...extractAgentDueFields(statePersistence.metadata)
       })
       .select("*")
@@ -64,6 +65,7 @@ export class ConversationsRepository {
       .update({
         metadata: statePersistence.metadata,
         conversation_state: statePersistence.state,
+        ...extractDeviceContextFields(statePersistence.metadata),
         ...extractAgentDueFields(statePersistence.metadata)
       })
       .eq("id", id)
@@ -128,6 +130,25 @@ export class ConversationsRepository {
 
     return assertSupabaseSuccess(data || [], error) as Array<Record<string, unknown>>;
   }
+}
+
+function extractDeviceContextFields(metadata: Record<string, unknown>) {
+  const profile = metadata.lead_profile && typeof metadata.lead_profile === "object" && !Array.isArray(metadata.lead_profile)
+    ? metadata.lead_profile as Record<string, unknown>
+    : {};
+  const keys = [
+    "device_brand",
+    "device_type",
+    "operating_system",
+    "has_play_store",
+    "android_confirmed",
+    "compatibility_status",
+    "installation_attempt_status"
+  ] as const;
+  return keys.reduce<Record<string, unknown>>((result, key) => {
+    if (profile[key] !== undefined) result[key] = profile[key];
+    return result;
+  }, {});
 }
 
 function extractAgentDueFields(metadata: Record<string, unknown> | undefined) {

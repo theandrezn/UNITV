@@ -30,6 +30,7 @@ function createService(
     aiReply?: string | null;
     openOrder?: Record<string, unknown> | null;
     latestOrder?: Record<string, unknown> | null;
+    shadowDecisionService?: { recordFollowup: ReturnType<typeof vi.fn> };
   } = {}
 ) {
   const conversationsRepository = {
@@ -70,7 +71,10 @@ function createService(
       auditService as never,
       undefined,
       salesResponseAIService as never,
-      ordersService as never
+      ordersService as never,
+      undefined,
+      undefined,
+      options.shadowDecisionService as never
     ),
     conversationsRepository,
     messagesRepository,
@@ -121,6 +125,38 @@ describe("WhatsappFollowupService", () => {
     await expect(service.processDueFollowups(new Date("2026-07-10T20:00:00.000Z"))).resolves.toEqual({ checked: 0, sent: 0, skipped: 0 });
     expect(conversationsRepository.listFollowupCandidates).toHaveBeenCalledWith(new Date("2026-07-10T20:00:00.000Z"), 200);
     expect(conversationsRepository.listOpenConversations).not.toHaveBeenCalled();
+  });
+
+  it("runs due follow-ups in shadow mode without sending or spending an AI call", async () => {
+    const shadowDecisionService = { recordFollowup: vi.fn(async () => ({})) };
+    const { service, evolutionService, salesResponseAIService } = createService([{
+      id: "conversation-shadow",
+      customer_id: "customer-id",
+      customers: { id: "customer-id", phone: "5511999998888" },
+      metadata: {
+        followup_key: "values",
+        followup_due_at: "2026-07-06T11:59:00.000Z",
+        last_bot_message_at: "2026-07-06T11:54:00.000Z",
+        last_customer_message_at: "2026-07-06T11:53:00.000Z",
+        last_followup_stage_id: "shadow:values:1",
+        followup_count: 0,
+        lead_profile: { conversation_state: "price_discovery", stage: "price_discovery" }
+      }
+    }], { shadowDecisionService });
+
+    const result = await service.processDueFollowups(
+      new Date("2026-07-06T12:00:00.000Z"),
+      { mode: "shadow" }
+    );
+
+    expect(result).toMatchObject({ checked: 1, sent: 0, skipped: 0, shadowed: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+    expect(shadowDecisionService.recordFollowup).toHaveBeenCalledWith(expect.objectContaining({
+      conversationId: "conversation-shadow",
+      wouldSend: true,
+      blockedBeforeAI: true
+    }));
   });
 
   it("sends Android download follow-up only after the 10 minute due time", async () => {

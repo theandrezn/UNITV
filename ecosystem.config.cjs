@@ -9,7 +9,11 @@ module.exports = {
       exec_mode: "fork",
       env: {
         NODE_ENV: "production",
-        PORT: "3000"
+        PORT: "3000",
+        UNITV_AI_INTENT_CLASSIFIER_ENABLED: "false",
+        UNITV_DAILY_LEARNING_ENABLED: "false",
+        UNITV_DAILY_LEARNING_QUALITY_GATE_ENABLED: "false",
+        UNITV_FOLLOWUP_SEND_ENABLED: "false"
       }
     },
     {
@@ -26,7 +30,9 @@ module.exports = {
         DAILY_AUDIT_JOB_URL: "http://127.0.0.1:3000/api/jobs/daily-agent-audit",
         FOLLOWUPS_WORKER_INTERVAL_MS: "60000",
         FOLLOWUPS_WORKER_START_DELAY_MS: "15000",
-        FOLLOWUPS_WORKER_REQUEST_TIMEOUT_MS: "50000"
+        FOLLOWUPS_WORKER_REQUEST_TIMEOUT_MS: "50000",
+        UNITV_FOLLOWUP_MODE: "shadow",
+        UNITV_DAILY_AUDIT_ENABLED: "false"
       }
     }
   ]

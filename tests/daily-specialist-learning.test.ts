@@ -27,6 +27,7 @@ describe("daily specialist learning", () => {
   beforeEach(() => {
     openAIResponsesCreate.mockReset();
     process.env.UNITV_DAILY_LEARNING_ENABLED = "true";
+    process.env.UNITV_DAILY_LEARNING_QUALITY_GATE_ENABLED = "true";
   });
 
   it("does not spend tokens on automatic learning under the economy policy", async () => {
@@ -36,12 +37,12 @@ describe("daily specialist learning", () => {
 
     const result = await service.synthesizeDailyLearning({ auditDate: "2026-07-13", timezone: "America/Sao_Paulo", examples: [] });
 
-    expect(result.skippedReason).toBe("learning_disabled_by_economy_policy");
+    expect(result.skippedReason).toBe("learning_disabled_by_quality_gate");
     expect(progressRepository.filterUnprocessedExamples).not.toHaveBeenCalled();
     expect(openAIResponsesCreate).not.toHaveBeenCalled();
   });
 
-  it("turns approved specialist outcomes into reusable operational directives", async () => {
+  it("keeps a new directive as candidate until multiple positive examples support it", async () => {
     process.env.OPENAI_API_KEY = "test-key";
     openAIResponsesCreate.mockResolvedValueOnce({
       output_text: JSON.stringify({
@@ -68,6 +69,7 @@ describe("daily specialist learning", () => {
       examples: [{
         id: "d5589076-5a12-4fa6-bcd4-f9cfad12dba4",
         review_status: "approved",
+        quality_gate_status: "qualified",
         outcome_status: "positive",
         inferred_intent: "technical_support",
         inferred_stage: "awaiting_download_installation",
@@ -81,10 +83,50 @@ describe("daily specialist learning", () => {
       expect.objectContaining({
         intent: "technical_support",
         stage: "awaiting_download_installation",
-        source_example_ids: ["d5589076-5a12-4fa6-bcd4-f9cfad12dba4"]
+        source_example_ids: ["d5589076-5a12-4fa6-bcd4-f9cfad12dba4"],
+        status: "candidate"
       })
     ]);
     expect(progressRepository.markExamplesProcessed).toHaveBeenCalledWith(expect.any(Array), 1);
+  });
+
+  it("activates a directive only when three reviewed positive examples support it", async () => {
+    process.env.OPENAI_API_KEY = "test-key";
+    const sourceIds = [
+      "11111111-1111-4111-8111-111111111111",
+      "22222222-2222-4222-8222-222222222222",
+      "33333333-3333-4333-8333-333333333333"
+    ];
+    openAIResponsesCreate.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        summary: "Tres resultados positivos sustentam a mesma orientacao contextual.",
+        directives: [{
+          intent: "technical_support",
+          stage: "awaiting_download_installation",
+          rule: "Interpretar respostas curtas pela ultima pergunta e manter o proximo passo da instalacao.",
+          style_directive: "Responder em uma unica mensagem curta e contextual.",
+          avoid: ["reiniciar a conversa"],
+          confidence: 0.95,
+          source_example_ids: sourceIds
+        }]
+      })
+    });
+    const upsertMemories = vi.fn(async (memories) => memories);
+    const { service } = createLearningService(upsertMemories);
+    const examples = sourceIds.map((id) => ({
+      id,
+      review_status: "approved",
+      quality_gate_status: "qualified",
+      outcome_status: "positive",
+      inferred_intent: "technical_support",
+      inferred_stage: "awaiting_download_installation"
+    }));
+
+    await service.synthesizeDailyLearning({ auditDate: "2026-07-14", timezone: "America/Sao_Paulo", examples });
+
+    expect(upsertMemories).toHaveBeenCalledWith([
+      expect.objectContaining({ evidence_count: 3, source_example_ids: sourceIds, status: "active" })
+    ]);
   });
 
   it("does not persist directives containing mutable commercial facts", async () => {
@@ -109,7 +151,7 @@ describe("daily specialist learning", () => {
     const result = await service.synthesizeDailyLearning({
       auditDate: "2026-07-10",
       timezone: "America/Sao_Paulo",
-      examples: [{ id: "d5589076-5a12-4fa6-bcd4-f9cfad12dba4", review_status: "approved", outcome_status: "positive" }]
+      examples: [{ id: "d5589076-5a12-4fa6-bcd4-f9cfad12dba4", review_status: "approved", outcome_status: "positive", quality_gate_status: "qualified" }]
     });
 
     expect(result).toMatchObject({ createdCount: 0, skippedReason: "no_safe_directives" });
@@ -129,7 +171,7 @@ describe("daily specialist learning", () => {
     const result = await service.synthesizeDailyLearning({
       auditDate: "2026-07-10",
       timezone: "America/Sao_Paulo",
-      examples: [{ id: "d5589076-5a12-4fa6-bcd4-f9cfad12dba4", review_status: "approved", outcome_status: "positive" }]
+      examples: [{ id: "d5589076-5a12-4fa6-bcd4-f9cfad12dba4", review_status: "approved", outcome_status: "positive", quality_gate_status: "qualified" }]
     });
 
     expect(result).toMatchObject({ createdCount: 0, skippedReason: "learning_model_quota_exhausted" });
@@ -149,7 +191,7 @@ describe("daily specialist learning", () => {
     await expect(service.synthesizeDailyLearning({
       auditDate: "2026-07-10",
       timezone: "America/Sao_Paulo",
-      examples: [{ id: "d5589076-5a12-4fa6-bcd4-f9cfad12dba4", review_status: "approved", outcome_status: "positive" }]
+      examples: [{ id: "d5589076-5a12-4fa6-bcd4-f9cfad12dba4", review_status: "approved", outcome_status: "positive", quality_gate_status: "qualified" }]
     })).resolves.toMatchObject({ createdCount: 0, skippedReason: "no_new_learning_examples" });
     expect(openAIResponsesCreate).not.toHaveBeenCalled();
   });

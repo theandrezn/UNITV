@@ -3,6 +3,7 @@ import { extractIncomingMessageFromWebhook, getEvolutionIdempotencyKey, isIncomi
 import { getServerEnv } from "@/lib/env";
 import { WhatsappMessageService } from "@/services/whatsapp/whatsapp-message.service";
 import { WebhooksService } from "@/services/webhooks.service";
+import { withOpenAITurnBudget } from "@/services/ai/openai-call-observer";
 
 export const dynamic = "force-dynamic";
 
@@ -75,10 +76,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ status: "ok", result: "ignored_empty_message" });
     }
 
-    const result = await whatsappMessageService.processIncomingMessage({
-      webhookEventId: currentWebhookEventId,
-      message: incomingMessage
-    });
+    const result = await withOpenAITurnBudget(
+      { turnId: incomingMessage.externalMessageId, maximumDecisionCalls: 1 },
+      () => whatsappMessageService.processIncomingMessage({
+        webhookEventId: currentWebhookEventId,
+        message: incomingMessage
+      })
+    );
 
     if (result.status === "processed") {
       await webhooksService.markWebhookProcessed(currentWebhookEventId);

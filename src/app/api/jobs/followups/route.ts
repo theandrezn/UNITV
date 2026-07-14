@@ -23,8 +23,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ status: "error", message: "unauthorized" }, { status: 401 });
   }
 
-  const result = await new WhatsappFollowupService().processDueFollowups();
-  return NextResponse.json({ status: "ok", result });
+  const requestedMode = request.headers.get("x-unitv-followup-mode");
+  const sendExplicitlyEnabled = process.env.UNITV_FOLLOWUP_SEND_ENABLED === "true";
+  const mode = requestedMode === "send" && sendExplicitlyEnabled ? "send" : "shadow";
+  const result = await new WhatsappFollowupService().processDueFollowups(new Date(), { mode });
+  return NextResponse.json({ status: "ok", mode, result });
 }
 
 export async function GET(request: NextRequest) {

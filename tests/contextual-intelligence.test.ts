@@ -27,6 +27,8 @@ describe("ContextualIntelligenceService economy path", () => {
   it("uses one knowledge-grounded contextual call and returns a final reusable reply", async () => {
     openAIResponsesCreate.mockResolvedValueOnce({
       output_text: JSON.stringify({
+        action: "reply",
+        next_state: "price_discovery",
         intent: "unknown",
         detected_intent: "UNKNOWN_BUT_CLARIFIABLE",
         stage: "qualified",
@@ -85,8 +87,8 @@ describe("ContextualIntelligenceService economy path", () => {
     expect(request.max_output_tokens).toBe(200);
     expect(compactContext.knowledge_base).toHaveLength(2);
     expect(compactContext.knowledge_base.map((article: { category: string }) => article.category)).toEqual([
-      "suporte",
-      "o_que_nunca_fazer"
+      "compiled_operational_knowledge",
+      "suporte"
     ]);
     expect(compactContext.recent_messages).toHaveLength(2);
     expect(compactContext.specialist_learning).toEqual({

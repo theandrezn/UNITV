@@ -56,7 +56,7 @@ function metricsFromMetadata(metadata: Record<string, unknown>) {
     calls: 1,
     provider_requests: outcome === "success" || outcome === "error" ? 1 : 0,
     successful_requests: outcome === "success" ? 1 : 0,
-    blocked_attempts: outcome === "circuit_open" ? 1 : 0,
+    blocked_attempts: outcome === "circuit_open" || outcome === "turn_budget_blocked" ? 1 : 0,
     input_tokens: numberValue(metadata.input_tokens),
     cached_input_tokens: numberValue(metadata.cached_input_tokens),
     cache_write_tokens: numberValue(metadata.cache_write_tokens),
@@ -64,7 +64,8 @@ function metricsFromMetadata(metadata: Record<string, unknown>) {
     reasoning_tokens: numberValue(metadata.reasoning_tokens),
     total_tokens: numberValue(metadata.total_tokens),
     errors: outcome === "error" ? 1 : 0,
-    circuit_open: outcome === "circuit_open" ? 1 : 0
+    circuit_open: outcome === "circuit_open" ? 1 : 0,
+    turn_budget_blocked: outcome === "turn_budget_blocked" ? 1 : 0
   };
 }
 
@@ -93,7 +94,8 @@ function emptyMetrics(): Record<string, number> {
     reasoning_tokens: 0,
     total_tokens: 0,
     errors: 0,
-    circuit_open: 0
+    circuit_open: 0,
+    turn_budget_blocked: 0
   };
 }
 

@@ -13,6 +13,7 @@ const DAILY_AUDIT_TIMEZONE = process.env.UNITV_AUDIT_TIMEZONE || "America/Sao_Pa
 const DAILY_AUDIT_HOUR = Number(process.env.UNITV_DAILY_AUDIT_HOUR || 23);
 const DAILY_AUDIT_MINUTE = Number(process.env.UNITV_DAILY_AUDIT_MINUTE || 55);
 const DAILY_AUDIT_ENABLED = process.env.UNITV_DAILY_AUDIT_ENABLED !== "false";
+const FOLLOWUP_MODE = process.env.UNITV_FOLLOWUP_MODE === "send" ? "send" : "shadow";
 
 let running = false;
 let dailyAuditRunning = false;
@@ -37,7 +38,7 @@ async function runFollowups() {
   try {
     const response = await fetch(JOB_URL, {
       method: "POST",
-      headers: { "x-admin-api-key": adminApiKey },
+      headers: { "x-admin-api-key": adminApiKey, "x-unitv-followup-mode": FOLLOWUP_MODE },
       signal: controller.signal
     });
     const body = await response.text();
@@ -137,6 +138,7 @@ async function runJobs() {
 
 console.log(
   `[followups-worker] started. interval=${INTERVAL_MS}ms timeout=${REQUEST_TIMEOUT_MS}ms url=${JOB_URL} ` +
+  `mode=${FOLLOWUP_MODE} ` +
   `daily_audit=${DAILY_AUDIT_ENABLED ? `${DAILY_AUDIT_TIMEZONE} ${String(DAILY_AUDIT_HOUR).padStart(2, "0")}:${String(DAILY_AUDIT_MINUTE).padStart(2, "0")}` : "disabled"}`
 );
 setTimeout(() => void runJobs(), START_DELAY_MS);

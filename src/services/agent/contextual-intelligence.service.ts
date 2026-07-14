@@ -7,6 +7,11 @@ import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import type { SpecialistLearningGuidance } from "@/services/agent/specialist-learning-guidance";
 import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_OFFER_TEXT } from "@/lib/unitv/official-catalog";
+import { CANONICAL_CONVERSATION_STATES, normalizeConversationState } from "@/lib/conversation-state";
+import { getStructuredKnowledgeContext } from "@/lib/unitv/structured-knowledge";
+
+const agentActionSchema = z.enum(["reply", "silent", "wait", "handoff", "backend_action"]);
+const canonicalConversationStateSchema = z.enum(CANONICAL_CONVERSATION_STATES);
 
 const commercialIntentSchema = z.enum([
   "activate",
@@ -109,6 +114,8 @@ const nextExpectedReplySchema = z.enum([
 const installStatusSchema = z.enum(["not_sent", "link_sent", "downloaded", "installed", "failed"]).nullable();
 
 export const contextualDecisionSchema = z.object({
+  action: agentActionSchema,
+  next_state: canonicalConversationStateSchema,
   intent: commercialIntentSchema,
   detected_intent: contextualDetectedIntentSchema,
   stage: commercialStageSchema,
@@ -148,9 +155,13 @@ export type CommercialContext = {
 };
 
 const SYSTEM_PROMPT = [
-  "Voce e o interpretador contextual do vendedor UNITV.",
+  "Voce e o decisor contextual do vendedor UNITV. Esta e a unica chamada de IA permitida neste turno.",
   "Retorne somente JSON valido no schema solicitado.",
-  "Pergunta central: o que essa pessoa quis dizer considerando o que o bot acabou de perguntar?",
+  "PASSO 1: identifique a intencao e o significado da mensagem pela ultima pergunta e pelo estado persistido.",
+  "PASSO 2: escolha uma unica action: reply, silent, wait, handoff ou backend_action.",
+  "PASSO 3: escolha next_state sem regredir o funil.",
+  "PASSO 4: quando action=reply, escreva recommended_response curta e pronta para envio; ela nao sera reescrita por outra IA.",
+  "PASSO 5: explique reason de forma objetiva para auditoria interna.",
   "Interprete historico, lead_profile, pedido aberto, ultima mensagem do bot e ultima pergunta do bot.",
   "Consulte a base de conhecimento recebida para fatos, fluxo e estilo, sem copiar exemplos literalmente.",
   "recommended_response deve ter preferencialmente 6 a 15 palavras, no maximo 22 palavras, duas frases e uma pergunta.",
@@ -225,6 +236,7 @@ export class ContextualIntelligenceService {
       this.knowledgeService.getKnowledgeByCategory("o_que_nunca_fazer"),
       this.knowledgeService.searchKnowledge(query)
     ]);
+    const structured = getStructuredKnowledgeContext({ query, stage, limit: 6 });
     const unique = new Map<string, Record<string, unknown>>();
     // Spend the compact RAG budget on the current issue first. The stable
     // system prompt already carries identity and immutable safety rules.
@@ -233,11 +245,19 @@ export class ContextualIntelligenceService {
       if (key && !unique.has(key)) unique.set(key, article);
     }
 
-    return [...unique.values()].slice(0, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeArticles).map((article) => ({
+    const markdownKnowledge = [...unique.values()].slice(0, 1).map((article) => ({
       title: String(article.title || article.category || "Conhecimento UNITV"),
       category: String(article.category || "geral"),
       guidance: selectKnowledgeExcerpt(String(article.content || ""), query, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeCharacters)
     })).filter((article) => article.guidance);
+    return [
+      ...(structured.length ? [{
+        title: "Conhecimento estruturado UNITV",
+        category: "compiled_operational_knowledge",
+        guidance: structured.map((rule) => rule.guidance).join("\n").slice(0, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeCharacters)
+      }] : []),
+      ...markdownKnowledge
+    ].slice(0, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeArticles);
   }
 }
 
@@ -664,7 +684,9 @@ function planToDetectedIntent(plan: NonNullable<ContextualDecision["selected_pla
 }
 
 function buildDecision(input: Partial<ContextualDecision> & Pick<ContextualDecision, "intent" | "stage" | "customer_message_meaning" | "confidence">): ContextualDecision {
-  return {
+  const decision: ContextualDecision = {
+    action: "reply" as const,
+    next_state: "new_lead" as const,
     detected_intent: "UNKNOWN",
     selected_plan: null,
     payment_method: null,
@@ -682,6 +704,27 @@ function buildDecision(input: Partial<ContextualDecision> & Pick<ContextualDecis
     install_status: null,
     ...input
   };
+  return {
+    ...decision,
+    action: input.action || inferAgentAction(decision),
+    next_state: input.next_state || normalizeConversationState(decision.stage) || "new_lead"
+  };
+}
+
+function inferAgentAction(decision: {
+  should_reply: boolean;
+  should_handoff: boolean;
+  should_generate_pix: boolean;
+  should_create_order: boolean;
+  should_send_download: boolean;
+  next_action: string;
+}) {
+  if (decision.should_handoff || decision.next_action === "human_handoff") return "handoff" as const;
+  if (decision.should_generate_pix || decision.should_create_order || decision.should_send_download || decision.next_action === "verify_payment") {
+    return "backend_action" as const;
+  }
+  if (!decision.should_reply) return "silent" as const;
+  return "reply" as const;
 }
 
 function isGenericPriceRequest(normalized: string) {
@@ -745,6 +788,8 @@ function toJsonSchema() {
     type: "object",
     additionalProperties: false,
     properties: {
+      action: { type: "string", enum: agentActionSchema.options },
+      next_state: { type: "string", enum: CANONICAL_CONVERSATION_STATES },
       intent: { type: "string", enum: commercialIntentSchema.options },
       detected_intent: { type: "string", enum: contextualDetectedIntentSchema.options },
       stage: { type: "string", enum: commercialStageSchema.options },
@@ -766,6 +811,8 @@ function toJsonSchema() {
       confidence: { type: "number", minimum: 0, maximum: 1 }
     },
     required: [
+      "action",
+      "next_state",
       "intent",
       "detected_intent",
       "stage",

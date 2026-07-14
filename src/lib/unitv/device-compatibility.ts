@@ -25,6 +25,16 @@ export type UnitvDeviceCompatibility = {
   youtube_tutorial?: string;
 };
 
+export type UnitvDeviceContext = {
+  device_brand: string | null;
+  device_type: "phone" | "tv" | "tv_box" | "streaming_stick" | "computer" | "unknown";
+  operating_system: "android" | "android_tv" | "fire_os" | "ios" | "roku_os" | "windows_or_macos" | "unknown";
+  has_play_store: boolean | null;
+  android_confirmed: boolean | null;
+  compatibility_status: "unknown" | "needs_capability_check" | "compatible" | "incompatible";
+  installation_attempt_status: "not_started" | "instructions_sent" | "downloaded" | "installed" | "failed";
+};
+
 export const UNITV_DEVICE_COMPATIBILITY: Record<UnitvDeviceId, UnitvDeviceCompatibility> = {
   tvbox_android: {
     compatible: true,
@@ -91,6 +101,38 @@ export function detectUnitvDevice(message: string): UnitvDeviceId {
   return "unknown";
 }
 
+export function resolveUnitvDeviceContext(message: string): UnitvDeviceContext {
+  const text = normalize(message);
+  const device = detectUnitvDevice(message);
+  const explicitlyAndroid = /\b(android|android tv|google tv)\b/.test(text);
+  const explicitlyNoAndroid = /\b(sem android|nao tem android|nao possui android)\b/.test(text);
+  const hasPlayStore = /\b(tem|possui|com) play store\b|\bplay store\b.*\b(tem|possui|sim)\b/.test(text)
+    ? true
+    : /\b(sem|nao tem|nao possui) play store\b/.test(text)
+      ? false
+      : null;
+  const config = UNITV_DEVICE_COMPATIBILITY[device];
+  const capabilityCompatible = explicitlyAndroid || hasPlayStore === true;
+  const explicitlyIncompatible = explicitlyNoAndroid || hasPlayStore === false || config.compatible === false ||
+    ((device === "lg_tv" || device === "samsung_tv") && /\b(antiga|velha)\b/.test(text));
+  const compatibilityStatus = explicitlyIncompatible
+    ? "incompatible"
+    : config.compatible === true || capabilityCompatible
+      ? "compatible"
+      : config.compatible === "unknown"
+        ? "needs_capability_check"
+        : "unknown";
+  return {
+    device_brand: detectBrand(device, text),
+    device_type: detectDeviceType(device),
+    operating_system: detectOperatingSystem(device, explicitlyAndroid),
+    has_play_store: hasPlayStore,
+    android_confirmed: explicitlyIncompatible ? false : explicitlyAndroid || device === "tvbox_android" || device === "android_tv_google_tv" || device === "android_phone" ? true : null,
+    compatibility_status: compatibilityStatus,
+    installation_attempt_status: /\b(nao deu|nao consegui|falhou|erro)\b/.test(text) ? "failed" : "not_started"
+  };
+}
+
 export function isUnitvInstallationRequest(message: string) {
   const text = normalize(message);
   return detectUnitvDevice(message) !== "unknown" ||
@@ -106,10 +148,16 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
   const text = normalize(message);
   const device = detectUnitvDevice(message);
   const config = UNITV_DEVICE_COMPATIBILITY[device];
+  const deviceContext = resolveUnitvDeviceContext(message);
   const basePatch = {
     device,
     aparelho: config.label,
-    device_compatible: config.compatible,
+    device_compatible: deviceContext.compatibility_status === "compatible"
+      ? true
+      : deviceContext.compatibility_status === "incompatible"
+        ? false
+        : "unknown",
+    ...deviceContext,
     download_method_sent: "none",
     youtube_tutorial_sent: false
   };
@@ -129,6 +177,8 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
         state: "closed_incompatible_device",
         install_status: "failed",
         download_status: "failed",
+        compatibility_status: "incompatible",
+        installation_attempt_status: "failed",
         next_expected_reply: null
       }
     };
@@ -150,6 +200,7 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
       leadProfilePatch: {
         ...basePatch,
         download_method_sent: "apk_tv",
+        installation_attempt_status: "instructions_sent",
         youtube_tutorial_sent: true,
         last_download_url_sent: UNITV_TV_APK_URL
       }
@@ -162,7 +213,7 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
         `Na Android TV ou Google TV funciona sim.\n\nO caminho mais simples é pelo Downloader.\n\n` +
         `Instale o Downloader by AFTVnews na Play Store da TV e digite o código:\n\n${UNITV_DOWNLOADER_CODE}\n\n` +
         `Tutorial:\n${UNITV_TUTORIAL_URL}\n\nConseguiu encontrar o Downloader na Play Store?`,
-      leadProfilePatch: { ...basePatch, download_method_sent: "downloader_code", youtube_tutorial_sent: true }
+      leadProfilePatch: { ...basePatch, download_method_sent: "downloader_code", youtube_tutorial_sent: true, installation_attempt_status: "instructions_sent" }
     };
   }
 
@@ -174,6 +225,7 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
       leadProfilePatch: {
         ...basePatch,
         download_method_sent: "apk_mobile",
+        installation_attempt_status: "instructions_sent",
         youtube_tutorial_sent: true,
         last_download_url_sent: UNITV_ANDROID_APK_URL
       }
@@ -185,7 +237,7 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
       reply:
         `No Fire Stick dá para instalar pelo Downloader.\n\nAbra o Downloader e use o código:\n\n${UNITV_DOWNLOADER_CODE}\n\n` +
         `Tutorial:\n${UNITV_TUTORIAL_URL}\n\nVocê já tem o Downloader instalado no Fire Stick?`,
-      leadProfilePatch: { ...basePatch, download_method_sent: "downloader_code", youtube_tutorial_sent: true }
+      leadProfilePatch: { ...basePatch, download_method_sent: "downloader_code", youtube_tutorial_sent: true, installation_attempt_status: "instructions_sent" }
     };
   }
 
@@ -231,6 +283,38 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
     reply: "Eu te mando o caminho certo.\n\nVocê vai instalar em TV Box Android, Android TV, Fire Stick ou celular Android?",
     leadProfilePatch: basePatch
   };
+}
+
+function detectBrand(device: UnitvDeviceId, text: string) {
+  if (/\bsamsung\b/.test(text)) return "samsung";
+  if (/\blg\b/.test(text)) return "lg";
+  if (/\b(tv hq|hq tv|televisao hq|smart tv hq)\b/.test(text)) return "hq";
+  if (device === "lg_tv") return "lg";
+  if (device === "samsung_tv") return "samsung";
+  if (device === "hq_tv") return "hq";
+  if (device === "firestick") return "amazon";
+  if (device === "iphone") return "apple";
+  if (device === "roku") return "roku";
+  return null;
+}
+
+function detectDeviceType(device: UnitvDeviceId): UnitvDeviceContext["device_type"] {
+  if (device === "android_phone" || device === "iphone") return "phone";
+  if (["android_tv_google_tv", "samsung_tv", "lg_tv", "hq_tv", "roku"].includes(device)) return "tv";
+  if (device === "tvbox_android") return "tv_box";
+  if (device === "firestick") return "streaming_stick";
+  if (device === "computer") return "computer";
+  return "unknown";
+}
+
+function detectOperatingSystem(device: UnitvDeviceId, explicitlyAndroid: boolean): UnitvDeviceContext["operating_system"] {
+  if (device === "android_phone") return "android";
+  if (device === "android_tv_google_tv" || device === "tvbox_android" || explicitlyAndroid) return "android_tv";
+  if (device === "firestick") return "fire_os";
+  if (device === "iphone") return "ios";
+  if (device === "roku") return "roku_os";
+  if (device === "computer") return "windows_or_macos";
+  return "unknown";
 }
 
 function normalize(value: string) {

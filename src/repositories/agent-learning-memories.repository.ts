@@ -16,7 +16,7 @@ export type AgentLearningMemory = {
   evidence_count: number;
   confidence: number;
   source_example_ids?: string[];
-  status?: "active" | "superseded" | "rejected";
+  status?: "candidate" | "active" | "superseded" | "rejected";
   metadata?: Record<string, unknown>;
   created_at?: string;
 };
