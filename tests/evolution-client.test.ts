@@ -7,6 +7,41 @@ import { EvolutionClient } from "@/lib/evolution/client";
 describe("EvolutionClient", () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it("sends a text reply quoted to the original Pix copy-paste message", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ key: { id: "guidance-message-id" } }), { status: 201 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new EvolutionClient({
+      apiUrl: "https://evolution.example.com",
+      apiKey: "evolution-key",
+      instanceName: "unitv"
+    });
+
+    await client.sendTextMessage({
+      phone: "+55 (11) 99999-8888",
+      text: "Essa é a Chave Copia e Cola, é so voce copiar e colar no seu banco ⬆️",
+      quotedMessageId: "pix-copy-message-id"
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://evolution.example.com/message/sendText/unitv",
+      expect.objectContaining({
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: "evolution-key" },
+        body: JSON.stringify({
+          number: "5511999998888",
+          text: "Essa é a Chave Copia e Cola, é so voce copiar e colar no seu banco ⬆️",
+          quoted: {
+            key: {
+              remoteJid: "5511999998888@s.whatsapp.net",
+              fromMe: true,
+              id: "pix-copy-message-id"
+            }
+          }
+        })
+      })
+    );
+  });
+
   it("sends a base64 Pix QR image through Evolution sendMedia", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ key: { id: "message-id" } }), { status: 201 }));
     vi.stubGlobal("fetch", fetchMock);

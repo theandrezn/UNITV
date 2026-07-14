@@ -49,6 +49,7 @@ const POST_DOWNLOAD_FOLLOWUP_DELAY_MS = 10 * 60 * 1000;
 const RESPONSE_INTENT_LOCK_MS = 30 * 60 * 1000;
 const PRE_SALE_RECHARGE_LATER_FOLLOWUP_KEY = "pre_sale_recharge_later_4h";
 const PRE_SALE_RECHARGE_LATER_DELAY_MS = 4 * 60 * 60 * 1000;
+const PIX_COPY_PASTE_GUIDANCE = "Essa é a Chave Copia e Cola, é so voce copiar e colar no seu banco ⬆️";
 
 type ProcessIncomingMessageInput = {
   webhookEventId: string;
@@ -1101,6 +1102,31 @@ export class WhatsappMessageService {
     if (copyText) {
       copyTextSendResult = await this.evolutionService.sendTextMessage({ phone: message.phone, text: copyText });
     }
+    const copyTextQuotedMessageId = extractEvolutionProviderMessageId(copyTextSendResult);
+    let copyTextGuidanceSendResult: unknown = null;
+    const sendCopyTextGuidance = async () => {
+      try {
+        copyTextGuidanceSendResult = await this.evolutionService.sendTextMessage({
+          phone: message.phone,
+          text: PIX_COPY_PASTE_GUIDANCE,
+          ...(copyTextQuotedMessageId ? { quotedMessageId: copyTextQuotedMessageId } : {})
+        });
+      } catch (error) {
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "evolution_pix_copy_guidance_send_failed",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: { webhookEventId, error: error instanceof Error ? error.message : "unknown_error" }
+        });
+      }
+    };
+
+    // Without a provider id there is no safe way to quote the payload, so keep
+    // the guidance immediately below it and before the QR code.
+    if (copyText && !copyTextQuotedMessageId) {
+      await sendCopyTextGuidance();
+    }
 
     const followUpSendResults = [];
     for (const followUpMessage of safeFollowUpMessages) {
@@ -1122,6 +1148,10 @@ export class WhatsappMessageService {
       }
     }
 
+    if (copyText && copyTextQuotedMessageId) {
+      await sendCopyTextGuidance();
+    }
+
     await this.messagesRepository.createMessage({
       conversation_id: conversation.id,
       customer_id: customer.id,
@@ -1141,6 +1171,7 @@ export class WhatsappMessageService {
         provider_message_id: extractEvolutionProviderMessageId(sendResult),
         sendResult,
         copyTextSendResult,
+        copyTextGuidanceSendResult,
         followUpSendResults,
         mediaSendResult,
         media: media ? { mimetype: media.mimetype, fileName: media.fileName, caption: media.caption } : null,

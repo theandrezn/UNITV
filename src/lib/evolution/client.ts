@@ -19,6 +19,7 @@ type EvolutionClientOptions = {
 type SendTextMessageInput = {
   phone: string;
   text: string;
+  quotedMessageId?: string;
 };
 
 type SendMediaMessageInput = {
@@ -73,7 +74,8 @@ export class EvolutionClient {
     return extractIncomingMessageFromWebhook(payload);
   }
 
-  async sendTextMessage({ phone, text }: SendTextMessageInput) {
+  async sendTextMessage({ phone, text, quotedMessageId }: SendTextMessageInput) {
+    const normalizedPhone = normalizePhone(phone);
     const response = await fetch(`${this.apiUrl}/message/sendText/${encodeURIComponent(this.instanceName)}`, {
       method: "POST",
       headers: {
@@ -81,8 +83,19 @@ export class EvolutionClient {
         apikey: this.apiKey
       },
       body: JSON.stringify({
-        number: normalizePhone(phone),
-        text
+        number: normalizedPhone,
+        text,
+        ...(quotedMessageId
+          ? {
+              quoted: {
+                key: {
+                  remoteJid: `${normalizedPhone}@s.whatsapp.net`,
+                  fromMe: true,
+                  id: quotedMessageId
+                }
+              }
+            }
+          : {})
       })
     });
 

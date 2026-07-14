@@ -4,7 +4,7 @@ import { EvolutionClient } from "@/lib/evolution/client";
 export class EvolutionService {
   constructor(private readonly evolutionClient = new EvolutionClient()) {}
 
-  sendTextMessage(input: { phone: string; text: string }) {
+  sendTextMessage(input: { phone: string; text: string; quotedMessageId?: string }) {
     return this.evolutionClient.sendTextMessage(input);
   }
 

@@ -4121,7 +4121,9 @@ describe("commercial WhatsApp agent", () => {
       }))
     };
     const evolutionService = {
-      sendTextMessage: vi.fn(async () => ({ sent: true })),
+      sendTextMessage: vi.fn(async (input) => input.text === "000201-pix-copy-paste"
+        ? { key: { id: "pix-copy-message-id" } }
+        : { sent: true }),
       sendMediaMessage: vi.fn(async () => ({ sent: true }))
     };
     const auditService = { createAuditLog: vi.fn(async () => ({})) };
@@ -4177,6 +4179,11 @@ describe("commercial WhatsApp agent", () => {
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
       text: "000201-pix-copy-paste"
+    });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "Essa é a Chave Copia e Cola, é so voce copiar e colar no seu banco ⬆️",
+      quotedMessageId: "pix-copy-message-id"
     });
     expect(evolutionService.sendMediaMessage).toHaveBeenCalledWith(
       expect.objectContaining({
