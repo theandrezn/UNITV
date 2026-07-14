@@ -26,7 +26,7 @@ import { SalesResponseAIService, shouldUseAIResponse } from "@/services/agent/sa
 import { getUnitvInstallationGuidance, isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
 import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
 import { validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
-import { OFFICIAL_MONTHLY_PRICE_TEXT } from "@/lib/unitv/official-catalog";
+import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_PRICE_TEXT } from "@/lib/unitv/official-catalog";
 
 export const INITIAL_UNITV_REPLY =
   "Oi, tudo bem? Você já usa o aplicativo UNITV ou seria sua primeira vez?";
@@ -38,10 +38,7 @@ const PLANS_TEXT = [`Mensal — ${OFFICIAL_MONTHLY_PRICE_TEXT}`, "3 meses — R$
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
-const MONTHLY_OFFER_QUESTION = "Voce tem interesse pra hoje?";
-const BROAD_PRICE_QUALIFICATION_QUESTION =
-  "Claro, te explico sim.\n\n" +
-  "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?";
+const MONTHLY_OFFER_QUESTION = "Voce tem interesse?";
 const CURRENT_RECHARGE_PRICE_QUESTION = "Voce ja faz a recarga? Se sim, faz a quanto?";
 const TRAFFIC_RECHARGE_WELCOME =
   "Ol\u00e1! Seja bem-vindo ao melhor aplicativo de filmes e canais \u{1F9E1}. Meu nome \u00e9 Andr\u00e9.\n\n" +
@@ -269,10 +266,21 @@ export class ChatAgentService {
 
     const salesObjectionReply = findUnitvObjectionReply(message) || getSalesObjectionReply(message);
     if ((intent === "unknown" || intent === "technical_support") && salesObjectionReply) {
+      const screenCoveragePatch = isMonthlyScreenCoverageQuestion(message)
+        ? {
+            selected_plan: "mensal",
+            plano_interesse: "mensal",
+            commercial_stage: "plan_selected",
+            stage: "plan_selected",
+            last_customer_intent: "ask_monthly_screen_coverage",
+            next_expected_reply: null
+          }
+        : undefined;
       return {
         reply: salesObjectionReply.reply,
         menu: allowMenu ? salesObjectionReply.menu : undefined,
-        sendTextBeforeMenu: allowMenu && Boolean(salesObjectionReply.menu)
+        sendTextBeforeMenu: allowMenu && Boolean(salesObjectionReply.menu),
+        leadProfilePatch: screenCoveragePatch
       };
     }
 
@@ -359,7 +367,6 @@ export class ChatAgentService {
     if (intent === "ask_price") {
       const plans = await this.plansService.listActivePlans();
       const menu = allowMenu && plans.length ? buildPlansMenu(plans) : null;
-      const objectionReply = salesObjectionReply?.reply;
       const { plan } = await this.plansService.findPlanMentionedInText(message);
       if (plan && !isAllPricesRequested(message)) {
         if (getCommercialPlanLabel(plan) === "mensal") {
@@ -390,19 +397,12 @@ export class ChatAgentService {
       }
       if (!isAllPricesRequested(message)) {
         return {
-          reply: BROAD_PRICE_QUALIFICATION_QUESTION,
-          leadProfilePatch: {
-            commercial_stage: "qualified",
-            stage: "qualified",
-            last_customer_intent: "ask_price",
-            next_expected_reply: "plan_choice",
-            last_bot_question: BROAD_PRICE_QUALIFICATION_QUESTION
-          }
+          reply: buildMonthlyPriceComparisonReply(leadProfile),
+          leadProfilePatch: buildMonthlyOfferPatch("ask_generic_price")
         };
       }
       return {
-        reply: objectionReply ||
-          `O mensal fica ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n` +
+        reply: `O mensal fica ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n` +
           "Também temos planos maiores:\n" +
           "3 meses — R$ 70\n" +
           "6 meses — R$ 120\n" +
@@ -1364,6 +1364,29 @@ function buildContextualUnderstandingReply(
   const activeContext = Boolean(lastQuestion || context.stage || context.leadProfile.last_bot_question);
   const safeResponse = String(decision.recommended_response || "").trim();
 
+  if (decision.next_action === "show_monthly_plan" && decision.detected_intent === "PLAN_PRICE_REQUEST") {
+    return {
+      reply: buildMonthlyPriceComparisonReply(context.leadProfile),
+      responseRule: "contextual_understanding_generic_price_monthly",
+      leadProfilePatch: buildMonthlyOfferPatch("ask_generic_price")
+    };
+  }
+
+  if (decision.next_action === "answer_screen_coverage" && decision.detected_intent === "PLAN_SCREEN_COVERAGE") {
+    return {
+      reply: buildMonthlyScreenCoverageReply(),
+      responseRule: "contextual_understanding_monthly_screen_coverage",
+      leadProfilePatch: {
+        selected_plan: decision.selected_plan || "mensal",
+        plano_interesse: decision.selected_plan || "mensal",
+        commercial_stage: "plan_selected",
+        stage: "plan_selected",
+        last_customer_intent: "ask_monthly_screen_coverage",
+        next_expected_reply: null
+      }
+    };
+  }
+
   if (
     decision.next_action === "ask_device_for_trial" &&
     decision.detected_intent === "FREE_TRIAL_REQUEST" &&
@@ -1627,7 +1650,7 @@ function buildLowRiskRecoveryReply(context: ConversationIntelligenceLayer) {
   }
 
   if (/\b(valor|preco|preço|quanto|planos?)\b/.test(normalized)) {
-    return BROAD_PRICE_QUALIFICATION_QUESTION;
+    return buildMonthlyPriceComparisonReply(context.leadProfile);
   }
 
   if (/\b(recarga|renovar|recarregar)\b/.test(normalized)) {
@@ -1677,13 +1700,7 @@ function buildLowRiskRecoveryPatch(context: ConversationIntelligenceLayer) {
     };
   }
   if (/\b(valor|preco|preço|quanto|planos?)\b/.test(normalized)) {
-    return {
-      commercial_stage: "qualified",
-      stage: "qualified",
-      last_customer_intent: "ask_price",
-      next_expected_reply: "plan_choice",
-      last_bot_question: BROAD_PRICE_QUALIFICATION_QUESTION
-    };
+    return buildMonthlyOfferPatch("ask_generic_price");
   }
 
   if (isShortOfferAvailabilityQuestion(normalized) && /\b(teste|gratis|gratuito|aparelho|celular android|tv box|android tv|fire stick|firestick)\b/.test(lastQuestion)) {
@@ -1943,7 +1960,11 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
     };
   }
 
-  if (/^(sim|s|isso|ok|pode|quero|pode ser)$/.test(normalized) && /\b(interesse (?:em seguir|pra|para) hoje|quer seguir com ele)\b/.test(lastBotQuestion)) {
+  if (
+    /^(sim|s|isso|ok|pode|quero|pode ser)$/.test(normalized) &&
+    (/\b(interesse (?:em seguir|pra|para) hoje|quer seguir com ele)\b/.test(lastBotQuestion) ||
+      (selectedPlan === "mensal" && /\btem interesse\b/.test(lastBotQuestion)))
+  ) {
     return {
       reply: PAYMENT_TEXT,
       leadProfilePatch: {
@@ -2082,7 +2103,11 @@ function buildTrafficRechargeWelcomeReply(): CommercialReplyResult {
 
 function buildMonthlyPriceComparisonReply(leadProfile: Record<string, unknown>) {
   void leadProfile;
-  return `O plano mensal fica em ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n${MONTHLY_OFFER_QUESTION}`;
+  return `O plano mensal esta saindo por ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n${MONTHLY_OFFER_QUESTION}`;
+}
+
+function buildMonthlyScreenCoverageReply() {
+  return `O plano mensal cobre ate ${OFFICIAL_MONTHLY_MAX_SCREENS} telas.`;
 }
 
 function buildMonthlyOfferPatch(lastCustomerIntent: string) {
@@ -2362,7 +2387,7 @@ function ensureQuestionForContext(reply: string, intent: IntentClassification["i
 
   const questions: Partial<Record<IntentClassification["intent"], string>> = {
     greeting: "Você quer ver os valores, fazer o teste grátis ou precisa de ajuda para instalar?",
-    ask_price: "Você quer começar pelo mensal ou prefere o melhor custo-benefício?",
+    ask_price: `O plano mensal esta saindo por ${OFFICIAL_MONTHLY_PRICE_TEXT}. Voce tem interesse?`,
     buy_plan: "Qual plano você quer ativar?",
     renew_plan: "Você quer renovar um acesso que já tem ou ativar um novo plano?",
     free_trial: "Você vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?",
@@ -2405,6 +2430,14 @@ function getObjectionKnowledgeCategory(message: string) {
   return null;
 }
 
+function isMonthlyScreenCoverageQuestion(message: string) {
+  const normalized = normalizeContextMessage(message);
+  return (
+    /\b(quantas telas|ate quantas telas|quantos aparelhos)\b/.test(normalized) ||
+    /\b(cobre|suporta|da direito|pode usar)\b.{0,35}\b(tela|telas|aparelho|aparelhos)\b/.test(normalized)
+  );
+}
+
 function getSalesObjectionReply(message: string): { reply: string; menu?: WhatsAppMenu } | null {
   const normalized = message
     .trim()
@@ -2417,19 +2450,14 @@ function getSalesObjectionReply(message: string): { reply: string; menu?: WhatsA
     return {
       reply: screenCount
         ? `Entendi, seriam ${screenCount} telas. Em quais aparelhos voce pretende usar?`
-        : "Consigo te orientar. Quantas telas voce precisa e em quais aparelhos pretende usar?",
+        : buildMonthlyScreenCoverageReply(),
       menu: CONTINUATION_MENU
     };
   }
 
   if (/\b(qual valor|valor|preco|preço|quanto custa|planos?)\b/.test(normalized)) {
     return {
-      reply:
-        `O mensal fica ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n` +
-        "Também temos:\n" +
-        PLANS_TEXT +
-        "\n\nO mensal é uma boa opção para começar. Se você quiser economizar mais, o anual sai melhor no custo-benefício.\n\n" +
-        "Você quer começar pelo mensal ou prefere um plano maior?"
+      reply: buildMonthlyPriceComparisonReply({})
     };
   }
 

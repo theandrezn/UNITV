@@ -1,4 +1,5 @@
 import { CONTINUATION_MENU, type WhatsAppMenu } from "@/lib/whatsapp/menus";
+import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_PRICE_TEXT } from "@/lib/unitv/official-catalog";
 
 export type UnitvObjectionReply = {
   id: string;
@@ -23,16 +24,15 @@ const rules: ObjectionRule[] = [
     pattern: /\b(quantas telas|2 telas|duas telas|telas?)\b/,
     followupKey: "screens",
     menu: CONTINUATION_MENU,
-    buildReply: () => "Consigo te orientar. Quantas telas voce precisa e em quais aparelhos pretende usar?"
+    buildReply: () => `O plano mensal cobre ate ${OFFICIAL_MONTHLY_MAX_SCREENS} telas.`
   },
   {
     id: "price",
     pattern: /\b(qual valor|preco|quanto custa)\b/,
     followupKey: "values",
     buildReply: () =>
-      "Claro, te explico sim.\n\n" +
-      "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?\n\n" +
-      "E seria para usar em quantas telas?"
+      `O plano mensal esta saindo por ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n` +
+      "Voce tem interesse?"
   },
   {
     id: "too_expensive",
@@ -131,7 +131,7 @@ function buildScreensReply(normalized: string) {
   const count = numeric ? Number(numeric[1]) : /\bduas telas?\b/.test(normalized) ? 2 : /\btres telas?\b/.test(normalized) ? 3 : null;
   return count
     ? `Entendi, seriam ${count} telas. Em quais aparelhos voce pretende usar?`
-    : "Consigo te orientar. Quantas telas voce precisa e em quais aparelhos pretende usar?";
+    : `O plano mensal cobre ate ${OFFICIAL_MONTHLY_MAX_SCREENS} telas.`;
 }
 
 function normalize(message: string) {

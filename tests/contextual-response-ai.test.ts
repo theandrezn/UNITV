@@ -111,15 +111,15 @@ describe("ContextualResponseAIService", () => {
     expect(openAIResponsesCreate.mock.calls[0][0].max_output_tokens).toBe(190);
   });
 
-  it("preserves interest for today and blocks screen questions in the monthly offer", async () => {
-    const directive = "O plano mensal fica em R$ 20,90.\n\nVoce tem interesse pra hoje?";
+  it("preserves direct interest and blocks screen questions in the monthly offer", async () => {
+    const directive = "O plano mensal esta saindo por R$ 20,90.\n\nVoce tem interesse?";
     const contract = extractDirectiveContract(directive);
     expect(validateResponseAgainstDirectiveContract(
       "Boa noite! O plano mensal fica em R$ 20,90. Se quiser, me diga em quantas telas voce pretende usar?",
       contract
     )).toBe(false);
     expect(validateResponseAgainstDirectiveContract(
-      "Boa noite! O plano mensal fica em R$ 20,90. Voce tem interesse pra hoje?",
+      "Boa noite! O plano mensal esta saindo por R$ 20,90. Voce tem interesse?",
       contract
     )).toBe(true);
 
@@ -138,7 +138,7 @@ describe("ContextualResponseAIService", () => {
 
     openAIResponsesCreate.mockResolvedValueOnce({
       output_text: JSON.stringify({
-        reply: "Boa noite! O plano mensal fica em R$ 20,90. Voce tem interesse pra hoje?"
+        reply: "Boa noite! O plano mensal esta saindo por R$ 20,90. Voce tem interesse?"
       })
     });
     await expect(service.generateResponse({
@@ -146,7 +146,26 @@ describe("ContextualResponseAIService", () => {
       intent: "ask_price",
       leadProfile: { stage: "monthly_offer_pending", selected_plan: "mensal" },
       responseDirective: directive
-    })).resolves.toContain("interesse pra hoje");
+    })).resolves.toContain("Voce tem interesse?");
+  });
+
+  it("preserves the official coverage of up to three screens", async () => {
+    const directive = "O plano mensal cobre ate 3 telas.";
+    const contract = extractDirectiveContract(directive);
+
+    expect(validateResponseAgainstDirectiveContract("O mensal funciona em ate 3 telas.", contract)).toBe(true);
+    expect(validateResponseAgainstDirectiveContract("Quantas telas voce quer usar?", contract)).toBe(false);
+
+    openAIResponsesCreate.mockResolvedValueOnce({
+      output_text: JSON.stringify({ reply: "O plano mensal pode ser usado em ate 3 telas." })
+    });
+    const service = new ContextualResponseAIService(createKnowledgeService() as never);
+    await expect(service.generateResponse({
+      currentMessage: "quantas telas?",
+      intent: "unknown",
+      leadProfile: { stage: "plan_selected", selected_plan: "mensal" },
+      responseDirective: directive
+    })).resolves.toContain("ate 3 telas");
   });
 });
 

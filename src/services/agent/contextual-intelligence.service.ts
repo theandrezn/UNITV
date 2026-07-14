@@ -5,6 +5,7 @@ import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import type { SpecialistLearningGuidance } from "@/services/agent/specialist-learning-guidance";
+import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_PRICE_TEXT } from "@/lib/unitv/official-catalog";
 
 const commercialIntentSchema = z.enum([
   "activate",
@@ -48,6 +49,7 @@ const commercialStageSchema = z.enum([
 const contextualDetectedIntentSchema = z.enum([
   "FREE_TRIAL_REQUEST",
   "PLAN_PRICE_REQUEST",
+  "PLAN_SCREEN_COVERAGE",
   "PLAN_SELECTION_MONTHLY",
   "PLAN_SELECTION_QUARTERLY",
   "PLAN_SELECTION_SEMIANNUAL",
@@ -79,6 +81,7 @@ const nextActionSchema = z.enum([
   "send_firestick_guidance",
   "ask_plan_preference",
   "show_monthly_plan",
+  "answer_screen_coverage",
   "show_requested_prices",
   "send_pix",
   "ask_payment_method",
@@ -152,6 +155,8 @@ const SYSTEM_PROMPT = [
   "recommended_response deve ser uma resposta final original, curta, contextual e com no maximo uma pergunta.",
   "Voce NAO executa acoes, NAO confirma pagamento, NAO cria Pix, NAO entrega codigo.",
   "Precos oficiais: mensal R$20,90, trimestral R$70, semestral R$120, anual R$200.",
+  "Se o cliente perguntar apenas valor, apresente direto o mensal de R$20,90 e pergunte se tem interesse; nao pergunte plano nem telas.",
+  "Se perguntar quantas telas o mensal cobre, informe ate 3 telas. Outros planos usam os fatos da base de conhecimento.",
   "Se a mensagem curta depender da ultima pergunta, use o historico para inferir a intencao.",
   "Exemplo: bot perguntou 'teste gratis ou planos?' e cliente respondeu 'Testes' => FREE_TRIAL_REQUEST, ask_device_for_trial.",
   "Exemplo: bot perguntou aparelho e cliente respondeu 'celular' => DEVICE_ANDROID_PHONE_NEEDS_CONFIRMATION, confirm_android_phone.",
@@ -266,6 +271,40 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
       recommended_response: "Recebi. Vou verificar com seguranca e aguardar a confirmacao real do pagamento antes de liberar qualquer acesso.",
       next_expected_reply: "payment_proof",
       confidence: 0.94
+    });
+  }
+
+  if (isGenericPriceRequest(normalized)) {
+    return buildDecision({
+      ...base,
+      intent: "ask_price",
+      detected_intent: "PLAN_PRICE_REQUEST",
+      stage: "plan_selected",
+      selected_plan: "mensal",
+      should_clarify: false,
+      customer_message_meaning: "Cliente pediu o valor de forma generica; a oferta inicial autorizada e o plano mensal.",
+      reason: "Pedido generico de valor deve receber o mensal diretamente, sem perguntar plano ou quantidade de telas.",
+      next_action: "show_monthly_plan",
+      recommended_response: `O plano mensal esta saindo por ${OFFICIAL_MONTHLY_PRICE_TEXT}. Voce tem interesse?`,
+      next_expected_reply: "plan_choice",
+      confidence: 0.98
+    });
+  }
+
+  if (isPlanScreenCoverageQuestion(normalized)) {
+    return buildDecision({
+      ...base,
+      intent: "compatibility_question",
+      detected_intent: "PLAN_SCREEN_COVERAGE",
+      stage: "plan_selected",
+      selected_plan: selectedPlan || "mensal",
+      should_clarify: false,
+      customer_message_meaning: "Cliente perguntou quantas telas o plano mensal cobre.",
+      reason: "A cobertura oficial do mensal e de ate 3 telas; nao e necessario perguntar a quantidade desejada.",
+      next_action: "answer_screen_coverage",
+      recommended_response: `O plano mensal cobre ate ${OFFICIAL_MONTHLY_MAX_SCREENS} telas.`,
+      next_expected_reply: null,
+      confidence: 0.98
     });
   }
 
@@ -622,6 +661,21 @@ function buildDecision(input: Partial<ContextualDecision> & Pick<ContextualDecis
     install_status: null,
     ...input
   };
+}
+
+function isGenericPriceRequest(normalized: string) {
+  const text = normalized.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  if (/\b(mensal|trimestral|semestral|anual|3 meses|6 meses|1 ano|12 meses)\b/.test(text)) return false;
+  if (/\b(todos|todas|tabela|opcoes|quais valores|valores dos planos|quais planos)\b/.test(text)) return false;
+  return /^(valor|preco|quanto|quanto custa|quanto e|qual valor|qual o valor|qual e o valor|me fala o valor|quero saber o valor)$/.test(text);
+}
+
+function isPlanScreenCoverageQuestion(normalized: string) {
+  const text = normalized.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+  return (
+    /\b(quantas telas|ate quantas telas|quantos aparelhos)\b/.test(text) ||
+    /\b(cobre|suporta|da direito|pode usar)\b.{0,35}\b(tela|telas|aparelho|aparelhos)\b/.test(text)
+  );
 }
 
 function normalize(value: unknown) {

@@ -82,6 +82,13 @@ describe("learning quality and objection guardrails", () => {
     expect(result?.reply.toLowerCase()).not.toContain("quantas telas");
   });
 
+  it("answers a screen coverage question with the official monthly limit", () => {
+    const result = findUnitvObjectionReply("Quantas telas o plano mensal cobre?");
+
+    expect(result?.reply).toContain("ate 3 telas");
+    expect(result?.reply.toLowerCase()).not.toContain("quantas telas voce precisa");
+  });
+
   it("treats media as receipt only inside a payment context", () => {
     const image: Record<string, unknown> = {
       text: "",

@@ -231,14 +231,14 @@ describe("commercial WhatsApp agent", () => {
     expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(result.reply).toContain("mensal");
     expect(result.reply).toContain("R$");
-    expect(result.reply).toContain("Voce tem interesse pra hoje?");
+    expect(result.reply).toContain("Voce tem interesse?");
     expect(result.reply).not.toContain("R$ 19,99");
   });
 
   it.each([
     ["Ativar", {}, "ja usa o UNITV", "R$ 25"],
     ["Nao paguei ainda", {}, "3 dias", "comprovante"],
-    ["Mensal", { wants_activation: true }, "Voce tem interesse pra hoje?", "Qual plano"],
+    ["Mensal", { wants_activation: true }, "Voce tem interesse?", "Qual plano"],
     ["Ja baixei", { device: "tvbox" }, "3 dias", "ja baixou"],
     ["Sim", { last_bot_question: "Voce ja baixou o app?" }, "ativa\u00e7\u00e3o", "ja baixou"],
     ["Ja usei", {}, "preferencia por qual plano", "R$ 25"],
@@ -438,6 +438,53 @@ describe("commercial WhatsApp agent", () => {
       next_action: "ask_download_problem",
       recommended_response: "Tudo bem, me fala onde travou: no link, no Downloader ou na instalacao?"
     });
+
+    const genericPriceDecision = extractDeterministicDecision({
+      current_message: "Valor",
+      recent_messages: [],
+      lead_profile: {},
+      open_order: null,
+      latest_order: null,
+      last_bot_question: null,
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(genericPriceDecision).toMatchObject({
+      intent: "ask_price",
+      detected_intent: "PLAN_PRICE_REQUEST",
+      selected_plan: "mensal",
+      next_action: "show_monthly_plan",
+      should_clarify: false,
+      confidence: 0.98
+    });
+    expect(genericPriceDecision.recommended_response).toContain("R$ 20,90");
+
+    const screenCoverageDecision = extractDeterministicDecision({
+      current_message: "Quantas telas o mensal cobre?",
+      recent_messages: [],
+      lead_profile: {},
+      open_order: null,
+      latest_order: null,
+      last_bot_question: null,
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+
+    expect(screenCoverageDecision).toMatchObject({
+      detected_intent: "PLAN_SCREEN_COVERAGE",
+      selected_plan: "mensal",
+      next_action: "answer_screen_coverage",
+      should_clarify: false,
+      confidence: 0.98
+    });
+    expect(screenCoverageDecision.recommended_response).toContain("ate 3 telas");
   });
 
   it("replaces an unsafe agent reply in the real WhatsApp send path", async () => {
@@ -621,7 +668,7 @@ describe("commercial WhatsApp agent", () => {
     expect(updates.at(-1)).toMatchObject({ followup_key: null, followup_due_at: null });
   });
 
-  it("asks plan preference before showing prices for a broad price question", async () => {
+  it("offers the monthly plan directly for a broad price question", async () => {
     const { service, plansService } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -633,15 +680,21 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(plansService.listActivePlans).toHaveBeenCalled();
-    expect(result.reply).toContain("Voce tem interesse em algum plano especifico");
+    expect(result.reply).toContain("R$ 20,90");
+    expect(result.reply).toContain("Voce tem interesse?");
     expect(result.reply).not.toContain("quantas telas");
-    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("trimestral");
     expect(result.reply).not.toContain("R$ 70");
     expect(result.menu).toBeUndefined();
     expect(result.reply).not.toContain("Ver planos");
+    expect(result.leadProfilePatch).toMatchObject({
+      selected_plan: "mensal",
+      stage: "monthly_offer_pending",
+      next_expected_reply: "monthly_offer_interest"
+    });
   });
 
-  it("answers a short quanto message by asking only the plan before showing price", async () => {
+  it("answers a short quanto message with the monthly offer", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -652,9 +705,10 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("Voce tem interesse em algum plano especifico");
+    expect(result.reply).toContain("R$ 20,90");
+    expect(result.reply).toContain("Voce tem interesse?");
     expect(result.reply).not.toContain("quantas telas");
-    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).not.toContain("trimestral");
     expect(result.reply).not.toContain("R$ 70");
   });
 
@@ -709,7 +763,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.requiresHuman).toBeUndefined();
   });
 
-  it("shows the monthly value and asks whether the customer wants to continue today", async () => {
+  it("shows the monthly value and asks whether the customer is interested", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -725,7 +779,7 @@ describe("commercial WhatsApp agent", () => {
 
     expect(result.reply).toContain("mensal");
     expect(result.reply).toContain("R$ 20,90");
-    expect(result.reply).toContain("Voce tem interesse pra hoje?");
+    expect(result.reply).toContain("Voce tem interesse?");
     expect(result.reply.toLowerCase()).not.toContain("telas");
     expect(result.reply).not.toContain("Voce ja faz a recarga?");
     expect(result.leadProfilePatch).toMatchObject({
@@ -746,8 +800,8 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("O plano mensal fica em R$ 20,90");
-    expect(result.reply).toContain("Voce tem interesse pra hoje?");
+    expect(result.reply).toContain("O plano mensal esta saindo por R$ 20,90");
+    expect(result.reply).toContain("Voce tem interesse?");
     expect(result.reply.toLowerCase()).not.toContain("tela");
     expect(result.reply.toLowerCase()).not.toContain("aparelho");
     expect(result.reply).not.toContain("Voce ja faz a recarga?");
@@ -756,7 +810,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.leadProfilePatch).toMatchObject({
       selected_plan: "mensal",
       next_expected_reply: "monthly_offer_interest",
-      last_bot_question: "Voce tem interesse pra hoje?"
+      last_bot_question: "Voce tem interesse?"
     });
   });
 
@@ -769,7 +823,7 @@ describe("commercial WhatsApp agent", () => {
       customer: { id: "customer-id" },
       conversation: {
         id: "conversation-id",
-        metadata: { lead_profile: { selected_plan: "mensal", last_bot_question: "Voce tem interesse pra hoje?" } }
+        metadata: { lead_profile: { selected_plan: "mensal", last_bot_question: "Voce tem interesse?" } }
       },
       webhookEventId: "webhook-id"
     });
@@ -797,7 +851,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("R$ 20,90");
-    expect(result.reply).toContain("Voce tem interesse pra hoje?");
+    expect(result.reply).toContain("Voce tem interesse?");
     expect(result.reply).not.toContain("R$ 19,99");
     expect(result.reply).not.toContain("Pix");
     expect(result.leadProfilePatch).toMatchObject({
@@ -805,7 +859,7 @@ describe("commercial WhatsApp agent", () => {
       current_recharge_price_cents: 2000,
       commercial_stage: "monthly_offer_pending",
       next_expected_reply: "monthly_offer_interest",
-      last_bot_question: "Voce tem interesse pra hoje?"
+      last_bot_question: "Voce tem interesse?"
     });
   });
 
@@ -829,14 +883,14 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.reply).toContain("R$ 20,90");
-    expect(result.reply).toContain("Voce tem interesse pra hoje?");
+    expect(result.reply).toContain("Voce tem interesse?");
     expect(result.reply).not.toContain("R$ 19,99");
     expect(result.reply).not.toContain("Pix");
     expect(result.leadProfilePatch).toMatchObject({
       selected_plan: "mensal",
       commercial_stage: "monthly_offer_pending",
       next_expected_reply: "monthly_offer_interest",
-      last_bot_question: "Voce tem interesse pra hoje?"
+      last_bot_question: "Voce tem interesse?"
     });
   });
 
@@ -855,6 +909,24 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).toContain("R$ 70");
     expect(result.reply).toContain("R$ 120");
     expect(result.reply).toContain("R$ 200");
+  });
+
+  it("uses the official knowledge value when the customer asks for the trimestral plan", async () => {
+    const { service } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "qual o valor do trimestral?",
+      classification: { intent: "ask_price", confidence: 0.95, summary: "valor trimestral", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("trimestral");
+    expect(result.reply).toContain("R$ 70");
+    expect(result.reply).not.toContain("R$ 20,90");
+    expect(result.reply).not.toContain("quantas telas");
+    expect(result.leadProfilePatch).toMatchObject({ selected_plan: "trimestral", stage: "plan_selected" });
   });
 
   it("does not reveal prices on traffic-source recharge opener", async () => {
@@ -967,7 +1039,7 @@ describe("commercial WhatsApp agent", () => {
     expect(ordersService.createOrder).not.toHaveBeenCalled();
     expect(result.reply).toContain("mensal");
     expect(result.reply).toContain("R$");
-    expect(result.reply).toContain("Voce tem interesse pra hoje?");
+    expect(result.reply).toContain("Voce tem interesse?");
     expect(result.reply).not.toContain("Pix");
     expect(result.reply).not.toContain("R$ 70");
     expect(result.reply).not.toContain("R$ 120");
@@ -1079,9 +1151,11 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.requiresHuman).not.toBe(true);
-    expect(result.reply).toContain("Voce tem interesse em algum plano especifico");
-    expect(result.reply).toContain("mensal, trimestral, semestral ou anual");
-    expect(result.reply).not.toContain("R$ 25");
+    expect(result.reply).toContain("R$ 20,90");
+    expect(result.reply).toContain("Voce tem interesse?");
+    expect(result.reply).not.toContain("quantas telas");
+    expect(result.reply).not.toContain("R$ 70");
+    expect(result.leadProfilePatch).toMatchObject({ selected_plan: "mensal", stage: "monthly_offer_pending" });
     expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
       expect.objectContaining({ action_name: "handoff_to_human" })
     );
@@ -2079,7 +2153,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("https://www.mercadopago.com.br/checkout/dynamic-order-link");
     expect(result.reply).not.toContain("Cartao:");
     expect(result.reply).not.toContain("Para gerar o Pix Copia e Cola");
-    expect(result.reply).toContain("Voce tem interesse pra hoje?");
+    expect(result.reply).toContain("Voce tem interesse?");
     expect(result.reply).not.toContain("Quer que eu gere o Pix");
     expect(result.menu).toBeUndefined();
     expect(result.reply.toLowerCase()).not.toContain("codigo de ativacao");
@@ -3139,7 +3213,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.reply).not.toContain("862585");
   });
 
-  it("answers screen questions without inventing a number or sending a menu", async () => {
+  it("answers that the monthly plan covers up to three screens without asking the count again", async () => {
     const { service } = createChatAgent();
 
     const result = await service.generateCommercialReply({
@@ -3150,10 +3224,11 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("Quantas telas");
-    expect(result.reply).toContain("quais aparelhos");
-    expect(result.reply).not.toContain("2 telas");
+    expect(result.reply).toContain("ate 3 telas");
+    expect(result.reply.toLowerCase()).not.toContain("quantas telas");
+    expect(result.reply).not.toContain("quais aparelhos");
     expect(result.menu).toBeUndefined();
+    expect(result.leadProfilePatch).toMatchObject({ selected_plan: "mensal", stage: "plan_selected" });
   });
 
   it("answers objections from trained knowledge and keeps a next step", async () => {
@@ -3301,7 +3376,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(reply).toContain("Temos planos mensais");
-    expect(reply).toContain("Você quer começar pelo mensal ou prefere o melhor custo-benefício?");
+    expect(reply).toContain("O plano mensal esta saindo por R$ 20,90. Voce tem interesse?");
     expect(reply.trim().endsWith("?")).toBe(true);
   });
 

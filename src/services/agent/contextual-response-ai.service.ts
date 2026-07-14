@@ -203,13 +203,21 @@ export function extractRequiredArtifacts(directive: string) {
 
 export function extractDirectiveContract(directive: string) {
   const normalized = normalize(directive);
-  const monthlyInterestToday = /\b(plano )?mensal\b/.test(normalized) &&
+  const monthlyInterestOffer = /\b(plano )?mensal\b/.test(normalized) &&
     /\br\$ ?20[,.]?90\b/.test(normalized) &&
-    /\binteresse\b/.test(normalized) &&
-    /\bhoje\b/.test(normalized);
+    /\binteresse\b/.test(normalized);
+  const monthlyScreenCoverage = /\b(plano )?mensal\b/.test(normalized) && /\bate 3 telas\b/.test(normalized);
   return {
-    requiredSemanticOutcome: monthlyInterestToday ? "perguntar se o cliente tem interesse para hoje" : null,
-    forbiddenTopics: monthlyInterestToday ? ["quantidade de telas", "aparelhos"] : []
+    requiredSemanticOutcome: monthlyInterestOffer
+      ? "perguntar se o cliente tem interesse no plano mensal"
+      : monthlyScreenCoverage
+        ? "informar que o plano mensal cobre ate 3 telas"
+        : null,
+    forbiddenTopics: monthlyInterestOffer
+      ? ["quantidade de telas", "aparelhos", "lista de outros planos"]
+      : monthlyScreenCoverage
+        ? ["perguntar quantas telas", "lista de outros planos"]
+        : []
   };
 }
 
@@ -219,12 +227,19 @@ export function validateResponseAgainstDirectiveContract(
 ) {
   if (!contract.requiredSemanticOutcome) return true;
   const normalized = normalize(response);
-  const asksInterestToday = (
-    /\binteresse\b[\s\S]{0,50}\bhoje\b/.test(normalized) ||
-    /\bhoje\b[\s\S]{0,50}\binteresse\b/.test(normalized)
-  ) && response.includes("?");
-  const mentionsForbiddenTopic = /\b(tela|telas|aparelho|aparelhos)\b/.test(normalized);
-  return asksInterestToday && !mentionsForbiddenTopic;
+  if (contract.requiredSemanticOutcome === "perguntar se o cliente tem interesse no plano mensal") {
+    const asksInterest = /\binteresse\b/.test(normalized) && response.includes("?");
+    const mentionsMonthly = /\bmensal\b/.test(normalized);
+    const mentionsForbiddenTopic = /\b(tela|telas|aparelho|aparelhos|trimestral|semestral|anual)\b/.test(normalized);
+    return asksInterest && mentionsMonthly && !mentionsForbiddenTopic;
+  }
+  if (contract.requiredSemanticOutcome === "informar que o plano mensal cobre ate 3 telas") {
+    const statesCoverage = /\bate 3 telas\b/.test(normalized);
+    const asksScreenCount = /\b(quantas telas|quantos aparelhos)\b/.test(normalized);
+    const mentionsOtherPlans = /\b(trimestral|semestral|anual)\b/.test(normalized);
+    return statesCoverage && !asksScreenCount && !mentionsOtherPlans;
+  }
+  return false;
 }
 
 function compactLeadProfile(profile: Record<string, unknown>) {
