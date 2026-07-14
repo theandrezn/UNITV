@@ -99,6 +99,7 @@ export function validateResponseAgainstLeadProfile(
     (responseIntent === "saudacao_inicial" || isInitialGreetingResponse(normalized)) &&
     (
       profile.saudacao_enviada === true ||
+      hasDefinedConversationStage(profile) ||
       isActiveDownloadOrTrialFlow(profile) ||
       recentBotMessages.some((previous) => classifyCustomerFacingResponseIntent(previous) === "saudacao_inicial")
     )
@@ -239,6 +240,11 @@ function areSimilar(current: string, previous: string) {
   }
 
   return overlap / Math.max(currentWords.size, previousWords.size) >= 0.82;
+}
+
+function hasDefinedConversationStage(profile: Record<string, unknown>) {
+  const stage = normalize(String(profile.stage || profile.commercial_stage || profile.etapa_atual || "")).replace(/\s+/g, "_");
+  return Boolean(stage) && !["new", "new_lead"].includes(stage);
 }
 
 function isActiveDownloadOrTrialFlow(profile: Record<string, unknown>) {

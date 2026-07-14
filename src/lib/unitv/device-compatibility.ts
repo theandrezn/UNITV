@@ -114,6 +114,26 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
     youtube_tutorial_sent: false
   };
 
+  if (
+    device === "lg_tv" &&
+    (/\b(lg|tv lg)\b.{0,24}\b(antiga|velha|sem android|nao tem android|sem play store|nao tem play store)\b/.test(text) ||
+      /\b(antiga|velha|sem android|nao tem android|sem play store|nao tem play store)\b.{0,24}\b(lg|tv lg)\b/.test(text))
+  ) {
+    return {
+      reply: "",
+      leadProfilePatch: {
+        ...basePatch,
+        device_compatible: false,
+        commercial_stage: "incompatible_device",
+        stage: "incompatible_device",
+        state: "closed_incompatible_device",
+        install_status: "failed",
+        download_status: "failed",
+        next_expected_reply: null
+      }
+    };
+  }
+
   if (/\b(video|tutorial)\b/.test(text) && device === "unknown") {
     return {
       reply: `Tutorial de instalação UNITV:\n\n${UNITV_TUTORIAL_URL}\n\nVocê vai instalar em TV Box Android, Android TV, Fire Stick ou celular Android?`,

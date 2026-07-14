@@ -113,6 +113,66 @@ describe("ConversationBrainService", () => {
     expect(decision.directReply).not.toContain("Voce ja usa o aplicativo UNITV");
   });
 
+  it("never restarts the greeting after the customer commits to recharge later", () => {
+    const decision = decide({
+      current_message: "Sim sim obrigado",
+      recent_messages: [
+        { role: "assistant", content: "Perfeito, fico no aguardo. Quando receber, me chama para fazermos a recarga, pode ser?" },
+        { role: "customer", content: "Sim sim obrigado" }
+      ],
+      lead_profile: {
+        stage: "pre_sale_recharge_intent",
+        commercial_stage: "pre_sale_recharge_intent",
+        payment_intent_status: "later"
+      },
+      followup_key: "pre_sale_recharge_later"
+    }, "greeting");
+
+    expect(decision.shouldReply).toBe(false);
+    expect(decision.allowInitialGreeting).toBe(false);
+    expect(decision.responseRule).toBe("conversation_brain_pre_sale_acknowledgement_silent");
+    expect(decision.leadProfilePatch).toMatchObject({ stage: "pre_sale_recharge_intent" });
+  });
+
+  it("treats an old LG TV as incompatible and does not start another installation attempt", () => {
+    const decision = decide({
+      current_message: "Nao e LG antiga",
+      last_bot_question: "Voce conseguiu?",
+      recent_messages: [{ role: "assistant", content: "Siga o tutorial. Voce conseguiu?" }],
+      lead_profile: { stage: "awaiting_download_installation", install_status: "link_sent" }
+    });
+
+    expect(decision.shouldReply).toBe(false);
+    expect(decision.allowFollowup).toBe(false);
+    expect(decision.responseRule).toBe("conversation_brain_legacy_lg_incompatible_silent");
+    expect(decision.leadProfilePatch).toMatchObject({
+      stage: "incompatible_device",
+      device: "lg_tv",
+      device_compatible: false,
+      install_status: "failed"
+    });
+  });
+
+  it("stays silent when installation already failed on a confirmed incompatible device", () => {
+    const decision = decide({
+      current_message: "Nao deu certo nao",
+      last_bot_question: "Voce conseguiu?",
+      recent_messages: [{ role: "assistant", content: "Voce conseguiu?" }],
+      lead_profile: {
+        stage: "incompatible_device",
+        device: "lg_tv",
+        aparelho: "LG antiga",
+        device_compatible: false,
+        install_status: "failed"
+      }
+    });
+
+    expect(decision.shouldReply).toBe(false);
+    expect(decision.allowFollowup).toBe(false);
+    expect(decision.responseRule).toBe("conversation_brain_incompatible_installation_failure_silent");
+    expect(decision.directReply).toBeNull();
+  });
+
   it("blocks stale post-download follow-up after customer, human, or payment progression", () => {
     expect(validateFollowupWithConversationBrain({
       stage: "awaiting_download_installation",
@@ -151,6 +211,17 @@ describe("ConversationBrainService", () => {
       customerRepliedAfterBaseMessage: false,
       humanRepliedAfterBaseMessage: false
     })).toMatchObject({ allowed: true, reason: "conversation_brain_followup_allowed" });
+  });
+
+  it("blocks installation follow-up for a confirmed incompatible device", () => {
+    expect(validateFollowupWithConversationBrain({
+      stage: "incompatible_device",
+      followupKey: "post_download_check_10min",
+      humanHoldActive: false,
+      lastBotMessage: "Siga o tutorial.",
+      customerRepliedAfterBaseMessage: false,
+      humanRepliedAfterBaseMessage: false
+    })).toEqual({ allowed: false, reason: "incompatible_device_blocks_followup" });
   });
 
   it("blocks the legacy automatic monthly promotion after the fixed-price change", () => {

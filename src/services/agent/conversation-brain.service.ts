@@ -59,7 +59,9 @@ const ACTIVE_STAGES = new Set([
   "awaiting_payment",
   "payment_approved",
   "code_delivered",
-  "post_sale"
+  "post_sale",
+  "pre_sale_recharge_intent",
+  "incompatible_device"
 ]);
 
 const DOWNLOAD_STAGES = new Set([
@@ -118,6 +120,51 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
       allowHumanHandoff: false,
       allowFollowup: false,
       responseRule: "conversation_brain_human_hold"
+    });
+  }
+
+  if (isLegacyLgWithoutCompatibleSystem(message)) {
+    return base({
+      stage: "incompatible_device",
+      contextActive: true,
+      allowInitialGreeting: false,
+      allowHumanHandoff: false,
+      allowFollowup: false,
+      shouldReply: false,
+      responseRule: "conversation_brain_legacy_lg_incompatible_silent",
+      leadProfilePatch: incompatibleDevicePatch("lg_tv", "LG antiga")
+    });
+  }
+
+  if (isConfirmedIncompatibleDevice(profile, stage) && isDownloadProblem(message, lastQuestion)) {
+    return base({
+      stage: "incompatible_device",
+      contextActive: true,
+      allowInitialGreeting: false,
+      allowHumanHandoff: false,
+      allowFollowup: false,
+      shouldReply: false,
+      responseRule: "conversation_brain_incompatible_installation_failure_silent",
+      leadProfilePatch: incompatibleDevicePatch(
+        String(profile.device || "unknown"),
+        String(profile.aparelho || "Aparelho incompatível")
+      )
+    });
+  }
+
+  if (stage === "pre_sale_recharge_intent" && isClosingAcknowledgement(message)) {
+    return base({
+      contextActive: true,
+      allowInitialGreeting: false,
+      allowHumanHandoff: false,
+      shouldReply: false,
+      responseRule: "conversation_brain_pre_sale_acknowledgement_silent",
+      leadProfilePatch: {
+        commercial_stage: "pre_sale_recharge_intent",
+        stage: "pre_sale_recharge_intent",
+        last_customer_intent: "closing_acknowledgement",
+        next_expected_reply: "customer_returns_for_recharge"
+      }
     });
   }
 
@@ -254,6 +301,7 @@ export function validateFollowupWithConversationBrain(input: {
   const key = String(input.followupKey || "");
   if (input.humanHoldActive) return { allowed: false, reason: "human_context_blocks_followup" };
   if (SENSITIVE_STAGES.test(stage)) return { allowed: false, reason: "advanced_or_sensitive_stage_blocks_followup" };
+  if (stage === "incompatible_device") return { allowed: false, reason: "incompatible_device_blocks_followup" };
   if (key === "post_download_check_10min") {
     if (input.customerRepliedAfterBaseMessage) return { allowed: false, reason: "customer_replied_after_followup_base" };
     if (input.humanRepliedAfterBaseMessage) return { allowed: false, reason: "human_context_blocks_followup" };
@@ -285,15 +333,35 @@ function downloadPatch(stage: string, extra: Record<string, unknown>) {
   });
 }
 
+function incompatibleDevicePatch(device: string, label: string) {
+  return {
+    commercial_stage: "incompatible_device",
+    stage: "incompatible_device",
+    state: "closed_incompatible_device",
+    device,
+    aparelho: label,
+    device_compatible: false,
+    install_status: "failed",
+    download_status: "failed",
+    last_customer_intent: "incompatible_device_confirmed",
+    next_expected_reply: null,
+    last_bot_question: null,
+    contextual_response_owner: "conversation_brain"
+  };
+}
+
 function isActiveContext(stage: string, profile: Record<string, unknown>, lastQuestion: string, recent: CommercialContext["recent_messages"], followupKey: string | null) {
+  const hasDefinedStage = Boolean(stage) && !["new", "new_lead"].includes(stage);
   return (
     ACTIVE_STAGES.has(stage) ||
+    hasDefinedStage ||
     Boolean(lastQuestion) ||
     Boolean(profile.last_bot_question) ||
     Boolean(profile.last_download_url_sent) ||
     Boolean(profile.selected_plan || profile.plano_interesse) ||
     Boolean(followupKey) ||
-    recent.filter((message) => message.role === "assistant" || message.role === "human_agent").length > 0
+    recent.filter((message) => message.role === "assistant" || message.role === "human_agent").length > 0 ||
+    recent.filter((message) => message.role === "customer").length > 1
   );
 }
 
@@ -339,6 +407,19 @@ function isFirstTimeNo(message: string) {
 function isDownloadProblem(message: string, lastQuestion: string) {
   return /\b(nao consegui|nao deu|erro|nao abre|nao baixa|link nao funciona|codigo nao deu)\b/.test(message) ||
     (/^(nao|n)$/.test(message) && /\b(conseguiu baixar|conseguiu instalar|baixou|instalou)\b/.test(lastQuestion));
+}
+
+function isLegacyLgWithoutCompatibleSystem(message: string) {
+  return /\b(lg|tv lg)\b.{0,24}\b(antiga|velha|sem android|nao tem android|sem play store|nao tem play store)\b/.test(message) ||
+    /\b(antiga|velha|sem android|nao tem android|sem play store|nao tem play store)\b.{0,24}\b(lg|tv lg)\b/.test(message);
+}
+
+function isConfirmedIncompatibleDevice(profile: Record<string, unknown>, stage: string) {
+  return stage === "incompatible_device" || profile.device_compatible === false;
+}
+
+function isClosingAcknowledgement(message: string) {
+  return /^(sim(?: sim)?(?: obrigado| obrigada)?|obrigado|obrigada|valeu|ta bom|tudo bem|beleza|blz|ok)[!?.\s]*$/.test(message);
 }
 
 function isDownloaded(message: string, lastQuestion: string) {

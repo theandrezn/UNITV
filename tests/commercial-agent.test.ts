@@ -236,6 +236,10 @@ describe("commercial WhatsApp agent", () => {
       { saudacao_enviada: true }
     ).valid).toBe(false);
     expect(validateResponseAgainstLeadProfile(
+      INITIAL_UNITV_REPLY,
+      { stage: "pre_sale_recharge_intent", saudacao_enviada: false }
+    )).toEqual({ valid: false, reason: "repeats_welcome" });
+    expect(validateResponseAgainstLeadProfile(
       "Claro 👍 Pra eu liberar seu teste grátis de 3 dias, me diz só em qual aparelho você vai usar: celular Android, TV Box, Android TV, Google TV ou Fire Stick?",
       { pergunta_aparelho_enviada: true }
     ).valid).toBe(false);

@@ -94,4 +94,16 @@ describe("UNITV device compatibility", () => {
     expect(guidance?.reply).not.toContain("mediafire.com");
     expect(guidance?.reply).not.toContain(UNITV_DOWNLOADER_CODE);
   });
+
+  it("marks an old LG TV as incompatible without sending another installation instruction", () => {
+    const guidance = getUnitvInstallationGuidance("Nao e LG antiga");
+
+    expect(guidance?.reply).toBe("");
+    expect(guidance?.leadProfilePatch).toMatchObject({
+      device: "lg_tv",
+      device_compatible: false,
+      stage: "incompatible_device",
+      install_status: "failed"
+    });
+  });
 });

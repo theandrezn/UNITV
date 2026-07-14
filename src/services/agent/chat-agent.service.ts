@@ -2166,11 +2166,22 @@ function shouldSendFixedInitialGreeting(
     return false;
   }
 
+  const definedStage = normalizeContextMessage(String(
+    leadProfile.stage || leadProfile.commercial_stage || leadProfile.etapa_atual || ""
+  )).replace(/\s+/g, "_");
+  if (definedStage && !["new", "new_lead"].includes(definedStage)) {
+    return false;
+  }
+
   if (Array.isArray(input.recentMessages)) {
     if (input.recentMessages.some((message) => message.role === "assistant" || message.role === "human_agent")) {
       return false;
     }
-    if (input.recentMessages.some((message) => message.role === "customer")) {
+    const customerMessageCount = input.recentMessages.filter((message) => message.role === "customer").length;
+    if (customerMessageCount > 1) {
+      return false;
+    }
+    if (customerMessageCount === 1) {
       return true;
     }
   }
