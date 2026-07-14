@@ -1,6 +1,7 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { z } from "zod";
+import { buildGreetingFollowupMessage } from "@/lib/greeting-followup-policy";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
 
 const followupDecisionSchema = z.object({
@@ -430,24 +431,8 @@ function readRecoveryStep(context: FollowupContext) {
 }
 
 function buildTrialRecoveryMessage(context: FollowupContext, recoveryStep: number) {
-  const firstName = readFirstName(context.lead_profile.nome || context.latest_customer_message?.metadata?.pushName);
-  const prefix = firstName ? `${firstName}, ` : "";
-
-  if (recoveryStep <= 0) {
-    return firstName
-      ? `${prefix}voce ja usou o UNITV? Se nao, posso liberar 3 dias gratis. Qual aparelho voce quer testar?`
-      : "Voce ja usou o UNITV? Se nao, posso liberar 3 dias gratis. Qual aparelho voce quer testar?";
-  }
-
-  if (recoveryStep === 1) {
-    return firstName
-      ? `${prefix}passando rapidinho: se ainda quiser testar, eu libero 3 dias e te ajudo pelo aparelho que voce usa. Qual aparelho seria?`
-      : "Passando rapidinho: se ainda quiser testar, eu libero 3 dias e te ajudo pelo aparelho que voce usa. Qual aparelho seria?";
-  }
-
-  return firstName
-    ? `${prefix}ultima tentativa por aqui hoje: quer que eu deixe o teste de 3 dias encaminhado pra voce?`
-    : "Ultima tentativa por aqui hoje: quer que eu deixe o teste de 3 dias encaminhado pra voce?";
+  void context;
+  return buildGreetingFollowupMessage(recoveryStep + 1);
 }
 
 function buildPreSaleRechargeLaterMessage(context: FollowupContext) {

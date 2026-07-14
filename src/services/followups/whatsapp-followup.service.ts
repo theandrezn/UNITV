@@ -20,19 +20,23 @@ import {
 } from "@/services/followups/contextual-followup-decision.service";
 import { resolveConversationState, withCanonicalConversationState } from "@/lib/conversation-state";
 import { ShadowDecisionService } from "@/services/agent/shadow-decision.service";
+import {
+  GREETING_FOLLOWUP_POLICY_VERSION,
+  GREETING_MAX_FOLLOWUPS,
+  buildGreetingFollowupMessage,
+  getNextGreetingBusinessOpening,
+  getNextGreetingRecoveryDueAt,
+  isGreetingBusinessHours
+} from "@/lib/greeting-followup-policy";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
-const MAX_LEAD_RECOVERY_FOLLOWUPS = 3;
+const MAX_LEAD_RECOVERY_FOLLOWUPS = GREETING_MAX_FOLLOWUPS;
 const HUMAN_SILENCE_WINDOW_MS = 5 * 60 * 1000;
-const UNANSWERED_BOT_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
+const UNANSWERED_BOT_FOLLOWUP_DELAY_MS = 30 * 60 * 1000;
 const UNANSWERED_CUSTOMER_FOLLOWUP_DELAY_MS = 5 * 60 * 1000;
 const RECENT_DUPLICATE_WINDOW_MS = 10 * 60 * 1000;
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const MONTHLY_PROMO_FOLLOWUP_KEY = "monthly_promo_19_99_check";
-const LEAD_RECOVERY_DELAYS_AFTER_SEND_MS = [
-  2 * 60 * 60 * 1000,
-  6 * 60 * 60 * 1000
-];
 
 type ConversationRow = {
   id: string;
@@ -66,13 +70,23 @@ export class WhatsappFollowupService {
     private readonly shadowDecisionService?: ShadowDecisionService
   ) {}
 
-  async processDueFollowups(now = new Date(), options: { mode?: "send" | "shadow" } = {}): Promise<FollowupResult> {
+  async processDueFollowups(
+    now = new Date(),
+    options: { mode?: "send" | "shadow"; scope?: "all" | "greeting_recovery" } = {}
+  ): Promise<FollowupResult> {
     const repository = this.conversationsRepository as ConversationsRepository & {
       listFollowupCandidates?: (now: Date, limit?: number) => Promise<ConversationRow[]>;
+      listGreetingRecoveryCandidates?: (now: Date, policyVersion: string, limit?: number) => Promise<ConversationRow[]>;
     };
-    const conversations = (repository.listFollowupCandidates
-      ? await repository.listFollowupCandidates(now, 200)
-      : await this.conversationsRepository.listOpenConversations(200)) as ConversationRow[];
+    const greetingRecoveryOnly = options.scope === "greeting_recovery";
+    const rawConversations = greetingRecoveryOnly && repository.listGreetingRecoveryCandidates
+      ? await repository.listGreetingRecoveryCandidates(now, GREETING_FOLLOWUP_POLICY_VERSION, 200)
+      : repository.listFollowupCandidates
+        ? await repository.listFollowupCandidates(now, 200)
+        : await this.conversationsRepository.listOpenConversations(200);
+    const conversations = (greetingRecoveryOnly
+      ? rawConversations.filter((conversation) => isCurrentGreetingRecoveryMetadata(conversation.metadata || {}))
+      : rawConversations) as ConversationRow[];
     let sent = 0;
     let skipped = 0;
     let shadowed = 0;
@@ -85,6 +99,31 @@ export class WhatsappFollowupService {
       const unansweredCustomerFollowup = getUnansweredCustomerFollowup(metadata, now);
       const unansweredBotFollowup = getUnansweredBotFollowup(metadata, now);
       if (!isDue(metadata.followup_due_at, now) && !unansweredCustomerFollowup && !unansweredBotFollowup) {
+        continue;
+      }
+
+      if (greetingRecoveryOnly && !isGreetingBusinessHours(now)) {
+        const nextOpening = getNextGreetingBusinessOpening(now).toISOString();
+        await this.conversationsRepository.updateConversationMetadata(conversation.id, {
+          ...metadata,
+          followup_due_at: nextOpening,
+          followup_rescheduled_for_business_hours: true,
+          followup_rescheduled_at: now.toISOString()
+        });
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "greeting_followup_rescheduled_outside_business_hours",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: {
+            policy_version: GREETING_FOLLOWUP_POLICY_VERSION,
+            previous_due_at: metadata.followup_due_at || null,
+            next_due_at: nextOpening,
+            openai_calls: 0,
+            openai_tokens: 0
+          }
+        });
+        skipped++;
         continue;
       }
 
@@ -154,6 +193,33 @@ export class WhatsappFollowupService {
       }
 
       const context = await this.buildFollowupContext(conversation, metadata, now, phone);
+      if (greetingRecoveryOnly) {
+        const greetingPolicyBlockReason = getGreetingRecoveryBlockReason(context);
+        if (greetingPolicyBlockReason) {
+          skipped++;
+          await this.recordFollowupCancellation(conversation, phone, metadata, greetingPolicyBlockReason);
+          await this.conversationsRepository.updateConversationMetadata(
+            conversation.id,
+            buildProcessedFollowupMetadata(metadata, context, now, greetingPolicyBlockReason, {
+              unansweredCustomerFollowup,
+              unansweredBotFollowup
+            })
+          );
+          await this.auditService.createAuditLog({
+            actor_type: "system",
+            action: "greeting_followup_context_blocked",
+            entity_type: "conversations",
+            entity_id: conversation.id,
+            metadata: {
+              reason: greetingPolicyBlockReason,
+              policy_version: GREETING_FOLLOWUP_POLICY_VERSION,
+              openai_calls: 0,
+              openai_tokens: 0
+            }
+          });
+          continue;
+        }
+      }
       const alreadyProcessedReason = getAlreadyProcessedFollowupReason(metadata, context);
       if (alreadyProcessedReason) {
         skipped++;
@@ -303,18 +369,20 @@ export class WhatsappFollowupService {
         shadowed++;
         continue;
       }
-      const followupText = await this.buildContextualFollowupText({
-        context,
-        decision,
-        fallbackText: fallbackFollowupText,
-        reason: unansweredCustomerFollowup
-          ? "ultima_mensagem_do_cliente_sem_resposta"
-          : leadRecovery
-          ? `recuperacao_de_lead_etapa_${leadRecovery.step}`
-          : promoRecovery
-            ? "recuperacao_promocional"
-            : "followup_contextual"
-      });
+      const followupText = greetingRecoveryOnly
+        ? buildGreetingFollowupMessage(leadRecovery?.step || 1)
+        : await this.buildContextualFollowupText({
+            context,
+            decision,
+            fallbackText: fallbackFollowupText,
+            reason: unansweredCustomerFollowup
+              ? "ultima_mensagem_do_cliente_sem_resposta"
+              : leadRecovery
+              ? `recuperacao_de_lead_etapa_${leadRecovery.step}`
+              : promoRecovery
+                ? "recuperacao_promocional"
+                : "followup_contextual"
+          });
       if (!followupText) {
         skipped++;
         await this.recordFollowupCancellation(conversation, phone, metadata, "contextual_ai_reply_unavailable");
@@ -461,7 +529,10 @@ export class WhatsappFollowupService {
           promo_recovery: promoRecovery,
           unanswered_bot_followup: Boolean(unansweredBotFollowup),
           unanswered_customer_followup: Boolean(unansweredCustomerFollowup),
-          lead_recovery_step: leadRecovery?.step || null
+          lead_recovery_step: leadRecovery?.step || null,
+          response_source: greetingRecoveryOnly ? "deterministic_zero_token" : "contextual_ai",
+          openai_calls: greetingRecoveryOnly ? 0 : 1,
+          openai_tokens: greetingRecoveryOnly ? 0 : null
         }
       });
       await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
@@ -486,7 +557,10 @@ export class WhatsappFollowupService {
           dedupe_key: policy.dedupeKey,
           promo_recovery: promoRecovery,
           unanswered_bot_followup: Boolean(unansweredBotFollowup),
-          lead_recovery_step: leadRecovery?.step || null
+          lead_recovery_step: leadRecovery?.step || null,
+          response_source: greetingRecoveryOnly ? "deterministic_zero_token" : "contextual_ai",
+          openai_calls: greetingRecoveryOnly ? 0 : 1,
+          openai_tokens: greetingRecoveryOnly ? 0 : null
         }
       });
       await this.safeCreateAgentEvent({
@@ -508,7 +582,10 @@ export class WhatsappFollowupService {
           promo_recovery: promoRecovery,
           unanswered_bot_followup: Boolean(unansweredBotFollowup),
           unanswered_customer_followup: Boolean(unansweredCustomerFollowup),
-          lead_recovery_step: leadRecovery?.step || null
+          lead_recovery_step: leadRecovery?.step || null,
+          response_source: greetingRecoveryOnly ? "deterministic_zero_token" : "contextual_ai",
+          openai_calls: greetingRecoveryOnly ? 0 : 1,
+          openai_tokens: greetingRecoveryOnly ? 0 : null
         }
       });
 
@@ -1245,6 +1322,63 @@ function normalizeText(value: string) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
+function isCurrentGreetingRecoveryMetadata(metadata: Record<string, unknown>) {
+  return metadata.followup_key === "welcome_activation" &&
+    metadata.followup_policy_version === GREETING_FOLLOWUP_POLICY_VERSION;
+}
+
+function getGreetingRecoveryBlockReason(context: FollowupContext) {
+  const metadata = context.metadata || {};
+  if (!isCurrentGreetingRecoveryMetadata(metadata)) return "greeting_policy_version_mismatch";
+
+  const recoveryStep = Number(metadata.lead_recovery_followup_step || 0);
+  if (recoveryStep >= GREETING_MAX_FOLLOWUPS || metadata.lead_recovery_followup_completed === true) {
+    return "greeting_followup_limit_reached";
+  }
+
+  const latestBotText = normalizeText(String(context.latest_bot_message?.content || ""));
+  const expectedLatestBotText = recoveryStep <= 0
+    ? "seja bem-vindo ao melhor aplicativo de filmes e canais"
+    : normalizeText(buildGreetingFollowupMessage(recoveryStep));
+  if (!latestBotText || !latestBotText.includes(expectedLatestBotText)) {
+    return "latest_bot_message_does_not_match_greeting_recovery";
+  }
+  if (recoveryStep <= 0 && (!latestBotText.includes("meu nome e andre") || !latestBotText.includes("como posso ajudar"))) {
+    return "latest_bot_message_is_not_official_greeting";
+  }
+
+  if (isAfter(context.latest_customer_message?.created_at || metadata.last_customer_message_at, context.latest_bot_message?.created_at || metadata.last_bot_message_at)) {
+    return "customer_replied_after_greeting_recovery_origin";
+  }
+  if (isAfter(context.latest_human_message?.created_at || metadata.last_specialist_message_at, context.latest_bot_message?.created_at || metadata.last_bot_message_at)) {
+    return "human_replied_after_greeting_recovery_origin";
+  }
+  if (context.human_hold_active || metadata.requires_human === true) return "human_support_active";
+
+  const profile = context.lead_profile || {};
+  const stage = String(profile.conversation_state || profile.stage || metadata.conversation_stage || "");
+  const allowedStages = new Set(["", "new_lead", "welcome_sent", "welcome_activation", "boas_vindas", "qualified", "initial_qualification"]);
+  if (!allowedStages.has(stage)) return "conversation_already_advanced";
+
+  if (
+    profile.selected_plan ||
+    profile.plano_interesse ||
+    profile.device ||
+    profile.aparelho ||
+    profile.pediu_pix ||
+    profile.pix_code ||
+    profile.codigo_enviado === true ||
+    profile.download_status ||
+    profile.install_status ||
+    context.open_order ||
+    ["paid", "confirmed", "code_reserved", "code_sent"].includes(String(context.latest_order?.status || profile.payment_status || ""))
+  ) {
+    return "greeting_recovery_blocked_by_advanced_context";
+  }
+
+  return null;
+}
+
 export function getLeadRecoveryFollowup(metadata: Record<string, unknown>) {
   if (!shouldUseLeadRecoverySequence(metadata)) {
     return null;
@@ -1265,7 +1399,7 @@ export function getLeadRecoveryFollowup(metadata: Record<string, unknown>) {
 
 export function shouldUseLeadRecoverySequence(metadata: Record<string, unknown>) {
   const key = String(metadata.followup_key || "");
-  if (!["welcome_activation", "plan_choice"].includes(key)) {
+  if (key !== "welcome_activation") {
     return false;
   }
 
@@ -1291,40 +1425,10 @@ export function shouldUseLeadRecoverySequence(metadata: Record<string, unknown>)
 
 export function buildLeadRecoveryFollowupText(
   step: number,
-  metadata: Record<string, unknown>,
-  conversation?: Pick<ConversationRow, "customers">
+  _metadata: Record<string, unknown>,
+  _conversation?: Pick<ConversationRow, "customers">
 ) {
-  const firstName = readFirstName(conversation?.customers?.name || readLeadProfile(metadata).nome);
-  const namePrefix = firstName ? `${firstName}, ` : "";
-
-  if (step === 1) {
-    return [
-      firstName ? `${namePrefix}voce ja usou o UNITV?` : "Voce ja usou o UNITV?",
-      "Se nao, posso te enviar 3 dias gratis para testar.",
-      "Qual aparelho voce quer testar: TV Box, Android TV, celular Android ou Fire Stick?"
-    ].join("\n\n");
-  }
-
-  if (step === 2) {
-    return [
-      firstName ? `${namePrefix}o plano mensal fica em R$ 20,90.` : "O plano mensal fica em R$ 20,90.",
-      "Voce tem interesse pra hoje?"
-    ].join("\n\n");
-  }
-
-  if (step === 3) {
-    return [
-      "Com a UNITV voce fica com filmes, series e canais em um so lugar.",
-      "A ativacao e rapida e eu te ajudo por aqui mesmo.",
-      "Se fizer sentido pra voce, posso te explicar o proximo passo."
-    ].join("\n\n");
-  }
-
-  return [
-    firstName ? `Oi, ${firstName}` : "Oi",
-    "O plano mensal fica em R$ 20,90.",
-    "Voce tem interesse pra hoje?"
-  ].join("\n\n");
+  return buildGreetingFollowupMessage(step);
 }
 
 export function shouldSendPromoRecoveryFollowup(metadata: Record<string, unknown>) {
@@ -1565,6 +1669,10 @@ function getUnansweredBotFollowup(metadata: Record<string, unknown>, now: Date) 
     return null;
   }
 
+  if (isCurrentGreetingRecoveryMetadata(metadata) && isFutureDate(metadata.followup_due_at, now)) {
+    return null;
+  }
+
   const botMessageAt = new Date(metadata.last_bot_message_at);
   if (Number.isNaN(botMessageAt.getTime())) {
     return null;
@@ -1595,11 +1703,7 @@ function readCustomerPhone(conversation: ConversationRow) {
 }
 
 function getNextLeadRecoveryDueAt(step: number, now: Date) {
-  const delay = LEAD_RECOVERY_DELAYS_AFTER_SEND_MS[step - 1];
-  if (!delay) {
-    return null;
-  }
-  return new Date(now.getTime() + delay).toISOString();
+  return getNextGreetingRecoveryDueAt(step, now);
 }
 
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
@@ -1620,6 +1724,7 @@ const FOLLOWUP_METADATA_KEYS = [
   "followup_dedupe_key",
   "followup_due_at",
   "followup_key",
+  "followup_policy_version",
   "followup_sent_at",
   "followup_sent_stage_id",
   "followup_type",
@@ -1633,6 +1738,7 @@ const FOLLOWUP_METADATA_KEYS = [
   "last_followup_stage_id",
   "last_followup_text_hash",
   "last_specialist_message_at",
+  "greeting_recovery_scheduled_at",
   "lead_recovery_followup_base_stage_id",
   "lead_recovery_followup_completed",
   "lead_recovery_followup_step",

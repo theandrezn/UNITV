@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_hash": "d65565f3768dba8e5a6fdbb64dcae1173980198a9ec1bae069226a5a70ab04b9",
-  "generated_at": "2026-07-14T17:51:53.497Z",
+  "source_hash": "9c841eb0975a095428d4eab3c4b589805ccf6b8276036f8cd2d1d6f5a921ec90",
+  "generated_at": "2026-07-14T18:08:22.965Z",
   "facts": [
     {
       "id": "13eb990749a776a19eba",
@@ -2385,6 +2385,48 @@
       "stages": []
     },
     {
+      "id": "b14d02ab71b1d04bab4d",
+      "text": "Nunca chamar OpenAI para decidir ou redigir essas duas mensagens. Registrar `openai_calls=0`, `openai_tokens=0` e `response_source=deterministic_zero_token`.",
+      "source_file": "09_FOLLOWUPS.md",
+      "heading": "Travas obrigatorias",
+      "stages": []
+    },
+    {
+      "id": "273cde78a67506cbc1dc",
+      "text": "Nunca enviar `??` e nunca criar uma terceira tentativa.",
+      "source_file": "09_FOLLOWUPS.md",
+      "heading": "Travas obrigatorias",
+      "stages": []
+    },
+    {
+      "id": "7a7383f85bc938a948ac",
+      "text": "Nunca chamar IA para estas duas mensagens.",
+      "source_file": "09_FOLLOWUPS.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "ecf7089af0402ab3b9ac",
+      "text": "Nunca processar candidato legado sem `greeting_zero_token_v1`.",
+      "source_file": "09_FOLLOWUPS.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "a6e160a20aeeab08baee",
+      "text": "Nunca enviar depois de resposta, avanco comercial ou intervencao humana.",
+      "source_file": "09_FOLLOWUPS.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "81f2fcb7824de81984d5",
+      "text": "Nunca enviar fora do horario, em duplicidade, `??` ou mais de duas tentativas.",
+      "source_file": "09_FOLLOWUPS.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
       "id": "0b06b2ad7641c1894e26",
       "text": "Nunca considerar worker `online` como autorizacao de envio.",
       "source_file": "09_FOLLOWUPS.md",
@@ -2399,8 +2441,8 @@
       "stages": []
     },
     {
-      "id": "095837bd20174d9a95c5",
-      "text": "Nunca reativar envio real antes da revisao das 48 horas.",
+      "id": "53942cc454dacecd0390",
+      "text": "Nunca adicionar uma nova categoria ao escopo real sem revisao e autorizacao.",
       "source_file": "09_FOLLOWUPS.md",
       "heading": "O que nunca fazer",
       "stages": []
@@ -6486,6 +6528,18 @@
       "rule_without_test_reference:09_FOLLOWUPS.md:37fae961de80123475ac",
       "rule_without_test_reference:09_FOLLOWUPS.md:6846f41451f8e2aadf72",
       "rule_without_test_reference:09_FOLLOWUPS.md:6b78c00f6a21a602ba45",
+      "rule_without_test_reference:09_FOLLOWUPS.md:a1eebb6c25692da3b34a",
+      "rule_without_test_reference:09_FOLLOWUPS.md:83021124bc3a4107de23",
+      "rule_without_test_reference:09_FOLLOWUPS.md:3c412c648110518014bb",
+      "rule_without_test_reference:09_FOLLOWUPS.md:9d599f4dac6dea12d7d5",
+      "rule_without_test_reference:09_FOLLOWUPS.md:342963ebd153db6b6d89",
+      "rule_without_test_reference:09_FOLLOWUPS.md:2906b65c1ae1842afd4d",
+      "rule_without_test_reference:09_FOLLOWUPS.md:b14d02ab71b1d04bab4d",
+      "rule_without_test_reference:09_FOLLOWUPS.md:273cde78a67506cbc1dc",
+      "rule_without_test_reference:09_FOLLOWUPS.md:7a7383f85bc938a948ac",
+      "rule_without_test_reference:09_FOLLOWUPS.md:ecf7089af0402ab3b9ac",
+      "rule_without_test_reference:09_FOLLOWUPS.md:a6e160a20aeeab08baee",
+      "rule_without_test_reference:09_FOLLOWUPS.md:81f2fcb7824de81984d5",
       "rule_without_test_reference:09_FOLLOWUPS.md:11498611ca80f8bc903b",
       "rule_without_test_reference:09_FOLLOWUPS.md:db1d3a99385a39405ff4",
       "rule_without_test_reference:09_FOLLOWUPS.md:a6c37e0b597b8cb7c754",
@@ -6493,7 +6547,7 @@
       "rule_without_test_reference:09_FOLLOWUPS.md:4f0555abeebf3e709d3a",
       "rule_without_test_reference:09_FOLLOWUPS.md:0b06b2ad7641c1894e26",
       "rule_without_test_reference:09_FOLLOWUPS.md:39fef99ad0909131161f",
-      "rule_without_test_reference:09_FOLLOWUPS.md:095837bd20174d9a95c5",
+      "rule_without_test_reference:09_FOLLOWUPS.md:53942cc454dacecd0390",
       "duplicate_rule:03_PERGUNTAS_DOS_CLIENTES.md:10_INTERVENCAO_HUMANA.md:5d712519fc55acab514a",
       "rule_without_test_reference:11_OBJECOES.md:3d415a0f8b8dc7509822",
       "rule_without_test_reference:11_OBJECOES.md:454e52c61ea2feb72925",

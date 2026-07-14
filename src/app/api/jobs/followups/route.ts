@@ -26,7 +26,10 @@ export async function POST(request: NextRequest) {
   const requestedMode = request.headers.get("x-unitv-followup-mode");
   const sendExplicitlyEnabled = process.env.UNITV_FOLLOWUP_SEND_ENABLED === "true";
   const mode = requestedMode === "send" && sendExplicitlyEnabled ? "send" : "shadow";
-  const result = await new WhatsappFollowupService().processDueFollowups(new Date(), { mode });
+  const result = await new WhatsappFollowupService().processDueFollowups(new Date(), {
+    mode,
+    scope: "greeting_recovery"
+  });
   return NextResponse.json({ status: "ok", mode, result });
 }
 

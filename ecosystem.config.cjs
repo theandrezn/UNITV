@@ -13,7 +13,7 @@ module.exports = {
         UNITV_AI_INTENT_CLASSIFIER_ENABLED: "false",
         UNITV_DAILY_LEARNING_ENABLED: "false",
         UNITV_DAILY_LEARNING_QUALITY_GATE_ENABLED: "false",
-        UNITV_FOLLOWUP_SEND_ENABLED: "false"
+        UNITV_FOLLOWUP_SEND_ENABLED: "true"
       }
     },
     {
@@ -31,7 +31,7 @@ module.exports = {
         FOLLOWUPS_WORKER_INTERVAL_MS: "60000",
         FOLLOWUPS_WORKER_START_DELAY_MS: "15000",
         FOLLOWUPS_WORKER_REQUEST_TIMEOUT_MS: "50000",
-        UNITV_FOLLOWUP_MODE: "shadow",
+        UNITV_FOLLOWUP_MODE: "send",
         UNITV_DAILY_AUDIT_ENABLED: "false"
       }
     }

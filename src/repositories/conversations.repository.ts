@@ -118,6 +118,23 @@ export class ConversationsRepository {
     return assertSupabaseSuccess(data || [], error);
   }
 
+  async listGreetingRecoveryCandidates(now: Date, policyVersion: string, limit = 200) {
+    const { data, error } = await this.supabase
+      .from("conversations")
+      .select("*, customers(id, name, phone)")
+      .eq("channel", "whatsapp")
+      .eq("status", "open")
+      .lte("followup_due_at", now.toISOString())
+      .contains("metadata", {
+        followup_key: "welcome_activation",
+        followup_policy_version: policyVersion
+      })
+      .order("followup_due_at", { ascending: true, nullsFirst: false })
+      .limit(limit);
+
+    return assertSupabaseSuccess(data || [], error);
+  }
+
   async listTouchedBetween(periodStart: string, periodEnd: string, limit = 1000) {
     const { data, error } = await this.supabase
       .from("conversations")

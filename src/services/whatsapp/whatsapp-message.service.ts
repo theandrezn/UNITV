@@ -45,6 +45,10 @@ import {
   UNITV_DEVICE_COMPATIBILITY
 } from "@/lib/unitv/device-compatibility";
 import { resolveConversationState, withCanonicalConversationState } from "@/lib/conversation-state";
+import {
+  GREETING_FIRST_FOLLOWUP_DELAY_MS,
+  GREETING_FOLLOWUP_POLICY_VERSION
+} from "@/lib/greeting-followup-policy";
 import { ShadowDecisionService } from "@/services/agent/shadow-decision.service";
 
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
@@ -2318,15 +2322,26 @@ function buildFollowupState(
 
   const stageId = `${intent || "conversation"}:${key}:${now.getTime()}`;
   const isPostDownload = key === "post_download_check_10min";
+  const isGreetingRecovery = key === "welcome_activation";
   return {
     followup_key: key,
-    followup_due_at: new Date(now.getTime() + (isPostDownload ? POST_DOWNLOAD_FOLLOWUP_DELAY_MS : CUSTOMER_FOLLOWUP_DELAY_MS)).toISOString(),
+    followup_due_at: new Date(now.getTime() + (
+      isPostDownload
+        ? POST_DOWNLOAD_FOLLOWUP_DELAY_MS
+        : isGreetingRecovery
+          ? GREETING_FIRST_FOLLOWUP_DELAY_MS
+          : CUSTOMER_FOLLOWUP_DELAY_MS
+    )).toISOString(),
     followup_sent_at: null,
     followup_sent_stage_id: null,
     followup_count: 0,
     last_followup_stage_id: stageId,
     awaiting_customer_action: inferAwaitingAction(key),
     conversation_stage: inferConversationStage(intent, key),
+    ...(isGreetingRecovery ? {
+      followup_policy_version: GREETING_FOLLOWUP_POLICY_VERSION,
+      greeting_recovery_scheduled_at: now.toISOString()
+    } : {}),
     ...(isPostDownload ? {
       followup_type: "post_download_check_10min",
       context_stage: "download_sent",

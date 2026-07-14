@@ -4036,6 +4036,8 @@ describe("commercial WhatsApp agent", () => {
       "conversation-id",
       expect.objectContaining({
         followup_key: "welcome_activation",
+        followup_policy_version: "greeting_zero_token_v1",
+        greeting_recovery_scheduled_at: expect.any(String),
         awaiting_customer_action: "answer_welcome_intent",
         followup_count: 0
       })

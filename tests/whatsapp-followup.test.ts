@@ -36,6 +36,7 @@ function createService(
   const conversationsRepository = {
     listOpenConversations: vi.fn(async () => conversations),
     listFollowupCandidates: vi.fn(async () => conversations),
+    listGreetingRecoveryCandidates: vi.fn(async () => conversations),
     updateConversationMetadata: vi.fn(async (_id, metadata) => {
       const conversation = conversations.find((item) => item.id === _id);
       if (conversation) {
@@ -157,6 +158,195 @@ describe("WhatsappFollowupService", () => {
       wouldSend: true,
       blockedBeforeAI: true
     }));
+  });
+
+  it("sends the first greeting recovery after 30 minutes with zero OpenAI calls", async () => {
+    const greeting = "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André.\n\nComo posso ajudar?";
+    const { service, conversationsRepository, evolutionService, messagesRepository, salesResponseAIService } = createService([{
+      id: "conversation-zero-token",
+      customer_id: "customer-id",
+      conversation_state: "welcome_sent",
+      customers: { id: "customer-id", phone: "5511999998888" },
+      metadata: {
+        followup_key: "welcome_activation",
+        followup_policy_version: "greeting_zero_token_v1",
+        greeting_recovery_scheduled_at: "2026-07-06T11:30:00.000Z",
+        followup_due_at: "2026-07-06T12:00:00.000Z",
+        last_bot_message_at: "2026-07-06T11:30:00.000Z",
+        last_customer_message_at: "2026-07-06T11:29:00.000Z",
+        last_followup_stage_id: "greeting:welcome_activation:1",
+        followup_count: 0,
+        conversation_stage: "boas_vindas",
+        lead_profile: { conversation_state: "welcome_sent", stage: "welcome_sent" }
+      }
+    }], {
+      recentMessages: [
+        { id: "customer-1", role: "customer", content: "Olá! Posso ter mais informações?", created_at: "2026-07-06T11:29:00.000Z" },
+        { id: "bot-1", role: "assistant", content: greeting, created_at: "2026-07-06T11:30:00.000Z" }
+      ]
+    });
+
+    const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"), {
+      mode: "send",
+      scope: "greeting_recovery"
+    });
+
+    expect(result).toEqual({ checked: 1, sent: 1, skipped: 0 });
+    expect(conversationsRepository.listGreetingRecoveryCandidates).toHaveBeenCalledWith(
+      new Date("2026-07-06T12:00:00.000Z"),
+      "greeting_zero_token_v1",
+      200
+    );
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: "Você quer fazer o teste grátis de 3 dias ou conhecer os planos?"
+    });
+    expect(messagesRepository.createMessage).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        response_source: "deterministic_zero_token",
+        openai_calls: 0,
+        openai_tokens: 0
+      })
+    }));
+  });
+
+  it("does not send greeting recovery before the 30 minute due time", async () => {
+    const { service, evolutionService, salesResponseAIService } = createService([{
+      id: "conversation-not-due",
+      customers: { phone: "5511999998888" },
+      metadata: {
+        followup_key: "welcome_activation",
+        followup_policy_version: "greeting_zero_token_v1",
+        followup_due_at: "2026-07-06T12:00:00.000Z",
+        last_bot_message_at: "2026-07-06T11:30:00.000Z",
+        last_customer_message_at: "2026-07-06T11:29:00.000Z",
+        followup_count: 0
+      }
+    }]);
+
+    expect(await service.processDueFollowups(new Date("2026-07-06T11:59:59.000Z"), {
+      mode: "send",
+      scope: "greeting_recovery"
+    })).toEqual({ checked: 1, sent: 0, skipped: 0 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it("ignores every legacy greeting candidate created before the zero-token policy", async () => {
+    const { service, evolutionService, salesResponseAIService } = createService([{
+      id: "legacy-greeting",
+      customers: { phone: "5511999998888" },
+      metadata: {
+        followup_key: "welcome_activation",
+        followup_due_at: "2026-07-06T11:00:00.000Z",
+        last_bot_message_at: "2026-07-06T10:55:00.000Z",
+        last_customer_message_at: "2026-07-06T10:54:00.000Z"
+      }
+    }]);
+
+    expect(await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"), {
+      mode: "send",
+      scope: "greeting_recovery"
+    })).toEqual({ checked: 0, sent: 0, skipped: 0 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it("blocks greeting recovery when the conversation already reached payment", async () => {
+    const { service, evolutionService, salesResponseAIService } = createService([{
+      id: "advanced-conversation",
+      customer_id: "customer-id",
+      conversation_state: "payment_pending",
+      customers: { id: "customer-id", phone: "5511999998888" },
+      metadata: {
+        followup_key: "welcome_activation",
+        followup_policy_version: "greeting_zero_token_v1",
+        followup_due_at: "2026-07-06T12:00:00.000Z",
+        last_bot_message_at: "2026-07-06T11:30:00.000Z",
+        last_customer_message_at: "2026-07-06T11:29:00.000Z",
+        last_followup_stage_id: "greeting:advanced",
+        followup_count: 0,
+        conversation_stage: "payment_pending",
+        lead_profile: { conversation_state: "payment_pending", stage: "payment_pending", payment_status: "pending" }
+      }
+    }], {
+      recentMessages: [
+        { role: "customer", content: "Vou pagar agora", created_at: "2026-07-06T11:29:00.000Z" },
+        { role: "assistant", content: "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais. Meu nome é André. Como posso ajudar?", created_at: "2026-07-06T11:30:00.000Z" }
+      ],
+      openOrder: { id: "order-1", status: "pending_payment", payment_method: "pix" }
+    });
+
+    expect(await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"), {
+      mode: "send",
+      scope: "greeting_recovery"
+    })).toMatchObject({ sent: 0, skipped: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it("cancels greeting recovery when the customer or Andre replied", async () => {
+    const baseConversation = (id: string) => ({
+      id,
+      customer_id: "customer-id",
+      conversation_state: "welcome_sent",
+      customers: { id: "customer-id", phone: id.endsWith("customer") ? "5511999998888" : "5511999997777" },
+      metadata: {
+        followup_key: "welcome_activation",
+        followup_policy_version: "greeting_zero_token_v1",
+        followup_due_at: "2026-07-06T12:00:00.000Z",
+        last_bot_message_at: "2026-07-06T11:30:00.000Z",
+        last_customer_message_at: id.endsWith("customer") ? "2026-07-06T11:40:00.000Z" : "2026-07-06T11:29:00.000Z",
+        last_specialist_message_at: id.endsWith("human") ? "2026-07-06T11:45:00.000Z" : null,
+        last_followup_stage_id: `greeting:${id}`,
+        followup_count: 0,
+        conversation_stage: "boas_vindas",
+        lead_profile: { conversation_state: "welcome_sent", stage: "welcome_sent" }
+      }
+    });
+    const customerReply = createService([baseConversation("reply-customer")]);
+    const humanReply = createService([baseConversation("reply-human")], {
+      recentMessages: [
+        { role: "assistant", content: "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais. Meu nome é André. Como posso ajudar?", created_at: "2026-07-06T11:30:00.000Z" },
+        { role: "human_agent", content: "Posso te ajudar por aqui.", created_at: "2026-07-06T11:45:00.000Z" }
+      ]
+    });
+
+    expect(await customerReply.service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"), { mode: "send", scope: "greeting_recovery" }))
+      .toMatchObject({ sent: 0, skipped: 1 });
+    expect(await humanReply.service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"), { mode: "send", scope: "greeting_recovery" }))
+      .toMatchObject({ sent: 0, skipped: 1 });
+    expect(customerReply.evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(humanReply.evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(customerReply.salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+    expect(humanReply.salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it("reschedules a due greeting recovery to business hours without sending", async () => {
+    const { service, conversationsRepository, evolutionService, salesResponseAIService } = createService([{
+      id: "conversation-outside-hours",
+      customers: { phone: "5511999998888" },
+      metadata: {
+        followup_key: "welcome_activation",
+        followup_policy_version: "greeting_zero_token_v1",
+        followup_due_at: "2026-07-06T23:59:00.000Z",
+        last_bot_message_at: "2026-07-06T23:29:00.000Z",
+        last_customer_message_at: "2026-07-06T23:28:00.000Z",
+        followup_count: 0
+      }
+    }]);
+
+    expect(await service.processDueFollowups(new Date("2026-07-07T00:00:00.000Z"), {
+      mode: "send",
+      scope: "greeting_recovery"
+    })).toEqual({ checked: 1, sent: 0, skipped: 1 });
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-outside-hours",
+      expect.objectContaining({ followup_due_at: "2026-07-07T12:00:00.000Z" })
+    );
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
   });
 
   it("sends Android download follow-up only after the 10 minute due time", async () => {
@@ -693,7 +883,7 @@ describe("WhatsappFollowupService", () => {
     expect(validation.detectedStage).toBe("pre_sale_commitment_pending_payment");
   });
 
-  it("runs progressive lead recovery after the first unanswered agent message", async () => {
+  it("schedules the second greeting recovery for the next business morning", async () => {
     const now = new Date("2026-07-06T12:00:00.000Z");
     const { service, evolutionService, messagesRepository, conversationsRepository } = createService([
       {
@@ -727,7 +917,7 @@ describe("WhatsappFollowupService", () => {
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        followup_due_at: "2026-07-06T14:00:00.000Z",
+        followup_due_at: "2026-07-07T13:00:00.000Z",
         followup_count: 1,
         lead_recovery_followup_step: 1,
         lead_recovery_followup_completed: false,
@@ -786,8 +976,8 @@ describe("WhatsappFollowupService", () => {
     );
   });
 
-  it("recovers unanswered bot messages after 5 minutes even when followup_due_at is missing", async () => {
-    const now = new Date("2026-07-06T12:35:00.000Z");
+  it("recovers unanswered bot messages only after 30 minutes when followup_due_at is missing", async () => {
+    const now = new Date("2026-07-06T13:00:00.000Z");
     const { service, evolutionService, messagesRepository, conversationsRepository } = createService([
       {
         id: "conversation-id",
@@ -827,12 +1017,12 @@ describe("WhatsappFollowupService", () => {
       expect.objectContaining({
         unanswered_bot_followup_for_message_at: "2026-07-06T12:29:00.000Z",
         lead_recovery_followup_step: 1,
-        followup_due_at: "2026-07-06T14:35:00.000Z"
+        followup_due_at: "2026-07-07T13:00:00.000Z"
       })
     );
   });
 
-  it("sends the second contextual recovery and schedules the final one for 6 hours later", async () => {
+  it("sends the second recovery as the final attempt", async () => {
     const now = new Date("2026-07-06T13:00:00.000Z");
     const { service, evolutionService, conversationsRepository } = createService([
       {
@@ -862,15 +1052,16 @@ describe("WhatsappFollowupService", () => {
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        followup_due_at: "2026-07-06T19:00:00.000Z",
+        followup_due_at: null,
         lead_recovery_followup_step: 2,
         followup_count: 2,
-        last_followup_stage_id: "greeting:welcome_activation:1:recovery:3"
+        lead_recovery_followup_completed: true,
+        last_followup_stage_id: "greeting:welcome_activation:1:recovery:2"
       })
     );
   });
 
-  it("finishes lead recovery after the third follow-up without payment language", () => {
+  it("limits greeting recovery to two deterministic messages", () => {
     expect(shouldUseLeadRecoverySequence({
       followup_key: "welcome_activation",
       lead_recovery_followup_step: 2,
@@ -878,28 +1069,15 @@ describe("WhatsappFollowupService", () => {
     })).toBe(true);
     expect(getLeadRecoveryFollowup({
       followup_key: "welcome_activation",
-      last_followup_stage_id: "greeting:welcome_activation:1:recovery:3",
-      lead_recovery_followup_base_stage_id: "greeting:welcome_activation:1",
       lead_recovery_followup_step: 2,
-      lead_profile: { intencao_inicial: "greeting" }
-    })).toEqual({
-      step: 3,
-      baseStageId: "greeting:welcome_activation:1",
-      stageId: "greeting:welcome_activation:1:recovery:3"
-    });
-    expect(getLeadRecoveryFollowup({
-      followup_key: "welcome_activation",
-      lead_recovery_followup_step: 3,
       lead_profile: { intencao_inicial: "greeting" }
     })).toBeNull();
 
-    const lastCall = buildLeadRecoveryFollowupText(3, { lead_profile: { nome: "Maria" } });
-    expect(lastCall).toContain("Se fizer sentido pra voce, posso te explicar o proximo passo.");
+    const lastCall = buildLeadRecoveryFollowupText(2, { lead_profile: { nome: "Maria" } });
+    expect(lastCall).toBe("Se ainda tiver interesse, posso te ajudar por aqui. Quer fazer o teste grátis?");
     expect(lastCall).not.toContain("pagamento");
     expect(lastCall).not.toContain("comprovante");
-    expect(lastCall).not.toContain("hoje");
-    expect(buildLeadRecoveryFollowupText(1, { lead_profile: {} })).toContain("Voce ja usou o UNITV?");
-    expect(buildLeadRecoveryFollowupText(2, { lead_profile: {} })).toContain("R$ 20,90");
+    expect(buildLeadRecoveryFollowupText(1, { lead_profile: {} })).toBe("Você quer fazer o teste grátis de 3 dias ou conhecer os planos?");
   });
 
   it("sends a one-time promotional recovery follow-up for hot leads before payment", async () => {
