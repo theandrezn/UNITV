@@ -8,7 +8,7 @@ describe("CustomerMessageBurstService", () => {
     vi.unstubAllEnvs();
   });
 
-  it("uses a 2.5 second default window to merge consecutive WhatsApp bubbles", async () => {
+  it("uses a 5 second default window to read consecutive WhatsApp bubbles before answering", async () => {
     vi.stubEnv("UNITV_MESSAGE_BURST_DEBOUNCE_MS", "");
     vi.useFakeTimers();
     const service = new CustomerMessageBurstService();
@@ -18,7 +18,7 @@ describe("CustomerMessageBurstService", () => {
       return value;
     });
 
-    await vi.advanceTimersByTimeAsync(2499);
+    await vi.advanceTimersByTimeAsync(4999);
     expect(settled).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     await expect(pending).resolves.toBe(true);

@@ -113,16 +113,20 @@ describe("ContextualResponseAIService", () => {
   });
 
   it("preserves direct interest and blocks screen questions in the monthly offer", async () => {
-    const directive = "O plano mensal esta saindo por R$ 20,90.\n\nVoce tem interesse?";
+    const directive = "O plano mensal esta saindo por R$ 20,90. Voce tem interesse pra hoje?";
     const contract = extractDirectiveContract(directive);
     expect(validateResponseAgainstDirectiveContract(
       "Boa noite! O plano mensal fica em R$ 20,90. Se quiser, me diga em quantas telas voce pretende usar?",
       contract
     )).toBe(false);
     expect(validateResponseAgainstDirectiveContract(
-      "Boa noite! O plano mensal esta saindo por R$ 20,90. Voce tem interesse?",
+      "O plano mensal esta saindo por R$ 20,90. Voce tem interesse pra hoje?",
       contract
     )).toBe(true);
+    expect(validateResponseAgainstDirectiveContract(
+      "O plano mensal está saindo por R$ 20,90. Se preferir, também tenho R$ 70, R$ 120 e R$ 200. Qual você quer seguir?",
+      contract
+    )).toBe(false);
 
     openAIResponsesCreate.mockResolvedValueOnce({
       output_text: JSON.stringify({
@@ -139,7 +143,7 @@ describe("ContextualResponseAIService", () => {
 
     openAIResponsesCreate.mockResolvedValueOnce({
       output_text: JSON.stringify({
-        reply: "Boa noite! O plano mensal esta saindo por R$ 20,90. Voce tem interesse?"
+        reply: "O plano mensal esta saindo por R$ 20,90. Voce tem interesse pra hoje?"
       })
     });
     await expect(service.generateResponse({
@@ -147,7 +151,23 @@ describe("ContextualResponseAIService", () => {
       intent: "ask_price",
       leadProfile: { stage: "monthly_offer_pending", selected_plan: "mensal" },
       responseDirective: directive
-    })).resolves.toContain("Voce tem interesse?");
+    })).resolves.toContain("Voce tem interesse pra hoje?");
+  });
+
+  it("keeps every value attached to its plan when all prices were explicitly requested", () => {
+    const directive = [
+      "Mensal — R$ 20,90",
+      "Trimestral — R$ 70",
+      "Semestral — R$ 120",
+      "Anual — R$ 200"
+    ].join("\n");
+    const contract = extractDirectiveContract(directive);
+
+    expect(validateResponseAgainstDirectiveContract(directive, contract)).toBe(true);
+    expect(validateResponseAgainstDirectiveContract(
+      "O mensal custa R$ 20,90. Tambem tenho R$ 70, R$ 120 e R$ 200.",
+      contract
+    )).toBe(false);
   });
 
   it("preserves the official coverage of up to three screens", async () => {

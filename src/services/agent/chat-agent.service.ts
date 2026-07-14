@@ -26,7 +26,12 @@ import { SalesResponseAIService, shouldUseAIResponse } from "@/services/agent/sa
 import { getUnitvInstallationGuidance, isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
 import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
 import { validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
-import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_PRICE_TEXT } from "@/lib/unitv/official-catalog";
+import {
+  OFFICIAL_ALL_PLAN_PRICES_TEXT,
+  OFFICIAL_MONTHLY_MAX_SCREENS,
+  OFFICIAL_MONTHLY_OFFER_TEXT,
+  OFFICIAL_MONTHLY_PRICE_TEXT
+} from "@/lib/unitv/official-catalog";
 import { UNITV_FIXED_INITIAL_GREETING } from "@/lib/unitv/agent-identity";
 
 export const INITIAL_UNITV_REPLY = UNITV_FIXED_INITIAL_GREETING;
@@ -38,7 +43,7 @@ const PLANS_TEXT = [`Mensal — ${OFFICIAL_MONTHLY_PRICE_TEXT}`, "3 meses — R$
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
-const MONTHLY_OFFER_QUESTION = "Voce tem interesse?";
+const MONTHLY_OFFER_QUESTION = "Voce tem interesse pra hoje?";
 const CURRENT_RECHARGE_PRICE_QUESTION = "Voce ja faz a recarga? Se sim, faz a quanto?";
 const TRAFFIC_RECHARGE_WELCOME = INITIAL_UNITV_REPLY;
 const RENEWAL_CONTEXT_QUESTION = "Perfeito. Voce ja usa o UNITV e quer so renovar o codigo, ou seria sua primeira vez usando?";
@@ -398,13 +403,7 @@ export class ChatAgentService {
         };
       }
       return {
-        reply: `O mensal fica ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n` +
-          "Também temos planos maiores:\n" +
-          "3 meses — R$ 70\n" +
-          "6 meses — R$ 120\n" +
-          "Anual — R$ 200\n\n" +
-          "O mensal é bom para começar, mas o anual é o melhor custo-benefício.\n\n" +
-          "Você quer começar pelo mensal ou prefere um plano maior?",
+        reply: OFFICIAL_ALL_PLAN_PRICES_TEXT,
         menu: menu || undefined,
         sendTextBeforeMenu: Boolean(menu)
       };
@@ -2143,7 +2142,7 @@ function shouldSendFixedInitialGreeting(
 
 function buildMonthlyPriceComparisonReply(leadProfile: Record<string, unknown>) {
   void leadProfile;
-  return `O plano mensal esta saindo por ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n${MONTHLY_OFFER_QUESTION}`;
+  return OFFICIAL_MONTHLY_OFFER_TEXT;
 }
 
 function buildMonthlyScreenCoverageReply() {
@@ -2268,8 +2267,8 @@ function isAllPricesRequested(message: string) {
   return (
     /\b(quais|todos|todas|cada|lista|tabela)\b.*\b(valor|valores|preco|precos|planos)\b/.test(normalized) ||
     /\b(valor|valores|preco|precos|planos)\b.*\b(quais|todos|todas|cada|lista|tabela)\b/.test(normalized) ||
-    /\b(me manda|manda|envia|mostra|ver)\b.*\b(valores|precos|planos)\b/.test(normalized) ||
-    /\b(tem quais planos|quais planos tem|quero ver os planos|quero ver todos|quanto custa cada plano)\b/.test(normalized)
+    /\b(me manda|manda|envia|mostra)\b.*\b(todos|todas|tabela|lista)\b.*\b(valores|precos|planos)\b/.test(normalized) ||
+    /\b(tem quais planos|quais planos tem|quero ver todos os planos|quero ver todos os valores|quanto custa cada plano)\b/.test(normalized)
   );
 }
 
@@ -2279,7 +2278,7 @@ function formatSpecificPlanPriceReply(
 ) {
   const label = getCommercialPlanLabel(plan);
   const price = formatMoney(Number(plan.price_cents || 0), String(plan.currency || "BRL")).replace(/\s+/g, " ");
-  const nextQuestion = intent === "renew_plan" ? "Voce quer seguir com essa renovacao?" : "Voce tem interesse?";
+  const nextQuestion = intent === "renew_plan" ? "Voce quer seguir com essa renovacao?" : "Voce tem interesse pra hoje?";
   if (label === "anual") {
     return `O anual fica ${price}. Ele e o melhor custo-beneficio. ${nextQuestion}`;
   }
@@ -2427,7 +2426,7 @@ function ensureQuestionForContext(reply: string, intent: IntentClassification["i
 
   const questions: Partial<Record<IntentClassification["intent"], string>> = {
     greeting: "Você quer ver os valores, fazer o teste grátis ou precisa de ajuda para instalar?",
-    ask_price: `O plano mensal esta saindo por ${OFFICIAL_MONTHLY_PRICE_TEXT}. Voce tem interesse?`,
+    ask_price: OFFICIAL_MONTHLY_OFFER_TEXT,
     buy_plan: "Qual plano você quer ativar?",
     renew_plan: "Você quer renovar um acesso que já tem ou ativar um novo plano?",
     free_trial: "Você vai usar em TV Box Android, Android TV, Fire Stick ou celular Android?",

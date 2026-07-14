@@ -106,7 +106,7 @@ describe("commercial sales cadence", () => {
     expect(salesResponseAIService.generateResponse).toHaveBeenCalled();
     expect(result.responseRule).toBe("contextual_reply");
     expect(result.reply).toContain("R$ 20,90");
-    expect(result.reply).toContain("Voce tem interesse?");
+    expect(result.reply).toContain("Voce tem interesse pra hoje?");
     expect(result.reply.toLowerCase()).not.toContain("tela");
     expect(result.reply.toLowerCase()).not.toContain("aparelho");
     expect(result.reply).not.toContain("vamos liberar");

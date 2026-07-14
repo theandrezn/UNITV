@@ -6,7 +6,7 @@ import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import type { SpecialistLearningGuidance } from "@/services/agent/specialist-learning-guidance";
-import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_PRICE_TEXT } from "@/lib/unitv/official-catalog";
+import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_OFFER_TEXT } from "@/lib/unitv/official-catalog";
 
 const commercialIntentSchema = z.enum([
   "activate",
@@ -156,7 +156,7 @@ const SYSTEM_PROMPT = [
   "recommended_response deve ter preferencialmente 6 a 15 palavras, no maximo 22 palavras, duas frases e uma pergunta.",
   "Voce NAO executa acoes, NAO confirma pagamento, NAO cria Pix, NAO entrega codigo.",
   "Precos oficiais: mensal R$20,90, trimestral R$70, semestral R$120, anual R$200.",
-  "Se o cliente perguntar apenas valor, apresente direto o mensal de R$20,90 e pergunte se tem interesse; nao pergunte plano nem telas.",
+  "Se o cliente perguntar apenas valor, responda exatamente o mensal de R$ 20,90 e pergunte se tem interesse pra hoje; nao revele outros valores.",
   "Se perguntar quantas telas o mensal cobre, informe ate 3 telas. Outros planos usam os fatos da base de conhecimento.",
   "Se a mensagem curta depender da ultima pergunta, use o historico para inferir a intencao.",
   "Exemplo: bot perguntou 'teste gratis ou planos?' e cliente respondeu 'Testes' => FREE_TRIAL_REQUEST, ask_device_for_trial.",
@@ -291,7 +291,7 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
       customer_message_meaning: "Cliente pediu o valor de forma generica; a oferta inicial autorizada e o plano mensal.",
       reason: "Pedido generico de valor deve receber o mensal diretamente, sem perguntar plano ou quantidade de telas.",
       next_action: "show_monthly_plan",
-      recommended_response: `O plano mensal esta saindo por ${OFFICIAL_MONTHLY_PRICE_TEXT}. Voce tem interesse?`,
+      recommended_response: OFFICIAL_MONTHLY_OFFER_TEXT,
       next_expected_reply: "plan_choice",
       confidence: 0.98
     });
@@ -688,7 +688,7 @@ function isGenericPriceRequest(normalized: string) {
   const text = normalized.replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
   if (/\b(mensal|trimestral|semestral|anual|3 meses|6 meses|1 ano|12 meses)\b/.test(text)) return false;
   if (/\b(todos|todas|tabela|opcoes|quais valores|valores dos planos|quais planos)\b/.test(text)) return false;
-  return /^(valor|preco|quanto|quanto custa|quanto e|qual valor|qual o valor|qual e o valor|me fala o valor|quero saber o valor)$/.test(text);
+  return /\b(valor|valores|preco|precos|quanto custa|qual valor|qual o valor)\b/.test(text);
 }
 
 function isPlanScreenCoverageQuestion(normalized: string) {

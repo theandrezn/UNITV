@@ -75,7 +75,9 @@ export class WhatsappMessageService {
     private readonly contextualIntelligenceService = new ContextualIntelligenceService(),
     private readonly conversationBrainService = new ConversationBrainService(),
     private readonly agentLearningMemoriesRepository?: AgentLearningMemoriesRepository,
-    private readonly customerMessageBurstService = new CustomerMessageBurstService(),
+    private readonly customerMessageBurstService = new CustomerMessageBurstService(
+      process.env.NODE_ENV === "test" ? 0 : undefined
+    ),
     private readonly contextualResponseAIService = new ContextualResponseAIService(),
     private readonly audioTranscriptionService?: AudioTranscriptionService
   ) {}
@@ -596,6 +598,10 @@ export class WhatsappMessageService {
       useStrongModel: false,
       specialistLearning
     });
+    if (await this.isCustomerMessageSuperseded(conversation.id, message.externalMessageId)) {
+      await this.auditSupersededCustomerReply(conversation.id, webhookEventId, message.externalMessageId, "after_context_read");
+      return { status: "ignored" as const };
+    }
     const conversationBrainDecision = this.conversationBrainService.decide({
       context: contextSnapshot,
       contextualDecision,
@@ -1107,6 +1113,13 @@ export class WhatsappMessageService {
       });
       return { status: "ignored" as const };
     }
+    if (
+      !useProtectedOperationalReply &&
+      await this.isCustomerMessageSuperseded(conversation.id, message.externalMessageId)
+    ) {
+      await this.auditSupersededCustomerReply(conversation.id, webhookEventId, message.externalMessageId, "before_whatsapp_send");
+      return { status: "ignored" as const };
+    }
     const safeFollowUpMessages: string[] = [];
 
     const sendResult: unknown = await this.evolutionService.sendTextMessage({ phone: message.phone, text: safeReply });
@@ -1436,6 +1449,35 @@ export class WhatsappMessageService {
     } catch {
       return [];
     }
+  }
+
+  private async isCustomerMessageSuperseded(conversationId: string, externalMessageId: string) {
+    const listMessages = (this.messagesRepository as unknown as {
+      listMessagesByConversationId?: (conversationId: string, limit?: number) => Promise<Array<Record<string, unknown>>>;
+    }).listMessagesByConversationId;
+    if (!listMessages) return false;
+
+    try {
+      const messages = await listMessages.call(this.messagesRepository, conversationId, 20);
+      return isCustomerMessageSuperseded(messages, externalMessageId);
+    } catch {
+      return false;
+    }
+  }
+
+  private async auditSupersededCustomerReply(
+    conversationId: string,
+    webhookEventId: string,
+    externalMessageId: string,
+    checkpoint: string
+  ) {
+    await this.auditService.createAuditLog({
+      actor_type: "system",
+      action: "superseded_customer_reply_suppressed",
+      entity_type: "conversations",
+      entity_id: conversationId,
+      metadata: { webhookEventId, externalMessageId, checkpoint }
+    });
   }
 
   private async isBotEcho(conversationId: string, message: IncomingEvolutionMessage) {
@@ -2865,6 +2907,18 @@ function mergeStyleNotes(...notes: Array<string | null | undefined>) {
     .filter(Boolean)
     .filter((note, index, list) => list.indexOf(note) === index)
     .join(" ");
+}
+
+export function isCustomerMessageSuperseded(
+  messages: Array<Record<string, unknown>>,
+  externalMessageId: string
+) {
+  const latestCustomerMessage = [...messages]
+    .reverse()
+    .find((item) => item.role === "customer");
+  if (!latestCustomerMessage) return false;
+  return typeof latestCustomerMessage.external_message_id === "string" &&
+    latestCustomerMessage.external_message_id !== externalMessageId;
 }
 
 function buildSpecialistLearningTags(input: {

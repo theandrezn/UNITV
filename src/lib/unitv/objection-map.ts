@@ -1,5 +1,5 @@
 import { CONTINUATION_MENU, type WhatsAppMenu } from "@/lib/whatsapp/menus";
-import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_PRICE_TEXT } from "@/lib/unitv/official-catalog";
+import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_OFFER_TEXT } from "@/lib/unitv/official-catalog";
 
 export type UnitvObjectionReply = {
   id: string;
@@ -30,9 +30,7 @@ const rules: ObjectionRule[] = [
     id: "price",
     pattern: /\b(qual valor|preco|quanto custa)\b/,
     followupKey: "values",
-    buildReply: () =>
-      `O plano mensal esta saindo por ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n` +
-      "Voce tem interesse?"
+    buildReply: () => OFFICIAL_MONTHLY_OFFER_TEXT
   },
   {
     id: "too_expensive",

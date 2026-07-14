@@ -57,6 +57,8 @@ const SYSTEM_PROMPT = [
   "Imite o ritmo do especialista Andre: responda primeiro ao ponto exato e indique apenas o proximo passo.",
   "Em respostas normais use de 6 a 15 palavras, nunca mais de 22, no maximo duas frases e uma pergunta.",
   "So ultrapasse 22 palavras quando links, codigos, Pix ou um passo tecnico obrigatorio precisarem ser preservados.",
+  "Em oferta mensal, nunca acrescente valores trimestral, semestral ou anual. Revele outro valor apenas quando ele estiver no resultado autorizado.",
+  "Quando todos os valores forem autorizados, mantenha o nome de cada plano junto do respectivo valor.",
   "Nao mencione IA, prompt, regra, template, sistema, backend, JSON, base de conhecimento ou classificacao.",
   "Retorne somente JSON valido no schema solicitado."
 ].join("\n");
@@ -205,6 +207,9 @@ export function extractRequiredArtifacts(directive: string) {
   for (const match of directive.matchAll(/R\$\s*\d+(?:[.,]\d{1,2})?/gi)) {
     artifacts.add(match[0]);
   }
+  if (/\b20[,.]90\b/.test(directive) && ![...artifacts].some((artifact) => /20[,.]90/.test(artifact))) {
+    artifacts.add(directive.match(/\b20[,.]90\b/)?.[0] || "20,90");
+  }
   for (const match of directive.matchAll(/\bUTV-[A-Z0-9-]+\b/gi)) {
     artifacts.add(match[0]);
   }
@@ -226,17 +231,22 @@ export function extractRequiredArtifacts(directive: string) {
 export function extractDirectiveContract(directive: string) {
   const normalized = normalize(directive);
   const monthlyInterestOffer = /\b(plano )?mensal\b/.test(normalized) &&
-    /\br\$ ?20[,.]?90\b/.test(normalized) &&
+    /\b(?:r\$ ?)?20[,.]?90\b/.test(normalized) &&
     /\binteresse\b/.test(normalized);
   const monthlyScreenCoverage = /\b(plano )?mensal\b/.test(normalized) && /\bate 3 telas\b/.test(normalized);
+  const allPlanPrices = /\bmensal\b/.test(normalized) && /\btrimestral\b/.test(normalized) &&
+    /\bsemestral\b/.test(normalized) && /\banual\b/.test(normalized) &&
+    /20[,.]?90/.test(normalized) && /\b70\b/.test(normalized) && /\b120\b/.test(normalized) && /\b200\b/.test(normalized);
   return {
-    requiredSemanticOutcome: monthlyInterestOffer
+    requiredSemanticOutcome: allPlanPrices
+      ? "identificar os quatro planos com seus respectivos valores"
+      : monthlyInterestOffer
       ? "perguntar se o cliente tem interesse no plano mensal"
       : monthlyScreenCoverage
         ? "informar que o plano mensal cobre ate 3 telas"
         : null,
     forbiddenTopics: monthlyInterestOffer
-      ? ["quantidade de telas", "aparelhos", "lista de outros planos"]
+      ? ["quantidade de telas", "aparelhos", "outros planos", "outros valores"]
       : monthlyScreenCoverage
         ? ["perguntar quantas telas", "lista de outros planos"]
         : []
@@ -250,10 +260,17 @@ export function validateResponseAgainstDirectiveContract(
   if (!contract.requiredSemanticOutcome) return true;
   const normalized = normalize(response);
   if (contract.requiredSemanticOutcome === "perguntar se o cliente tem interesse no plano mensal") {
-    const asksInterest = /\binteresse\b/.test(normalized) && response.includes("?");
+    const asksInterest = /\binteresse\b/.test(normalized) && /\bhoje\b/.test(normalized) && response.includes("?");
     const mentionsMonthly = /\bmensal\b/.test(normalized);
     const mentionsForbiddenTopic = /\b(tela|telas|aparelho|aparelhos|trimestral|semestral|anual)\b/.test(normalized);
-    return asksInterest && mentionsMonthly && !mentionsForbiddenTopic;
+    const mentionsForbiddenPrice = /(?:r\$\s*)?(?:70|120|200)(?:[,.]00)?\b/.test(normalized);
+    return asksInterest && mentionsMonthly && !mentionsForbiddenTopic && !mentionsForbiddenPrice;
+  }
+  if (contract.requiredSemanticOutcome === "identificar os quatro planos com seus respectivos valores") {
+    return /\bmensal\b[^\n]{0,30}20[,.]?90/.test(normalized) &&
+      /\btrimestral\b[^\n]{0,30}\b70\b/.test(normalized) &&
+      /\bsemestral\b[^\n]{0,30}\b120\b/.test(normalized) &&
+      /\banual\b[^\n]{0,30}\b200\b/.test(normalized);
   }
   if (contract.requiredSemanticOutcome === "informar que o plano mensal cobre ate 3 telas") {
     const statesCoverage = /\bate 3 telas\b/.test(normalized);
