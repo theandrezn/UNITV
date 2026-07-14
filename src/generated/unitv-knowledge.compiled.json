@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_hash": "366f9c38a04fe0b40f6782e355cf54390be16a7080212cd50553972b654202a1",
-  "generated_at": "2026-07-14T19:14:10.223Z",
+  "source_hash": "942e21c8f15624bb098234dd5ff9a06922fbb678be330b156f3cd14895dae509",
+  "generated_at": "2026-07-14T19:55:24.476Z",
   "facts": [
     {
       "id": "13eb990749a776a19eba",
@@ -3395,6 +3395,41 @@
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "O que nunca fazer",
       "stages": []
+    },
+    {
+      "id": "abb2ab4a02f9c75ea211",
+      "text": "Nunca atravessar uma mensagem do agente ou do especialista ao montar a rajada.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "7221cdd720e4d02212c2",
+      "text": "Nunca descartar a primeira parte de um pedido enviado em duas ou mais bolhas.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "f5c9d0728d323ad8f020",
+      "text": "Nunca interpretar apenas \"Tem como\", \"e para teste\" ou outro complemento se houver uma bolha imediatamente anterior do mesmo cliente.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "c3b7cdd2b4504938a38f",
+      "text": "Nunca exigir uma segunda chamada de IA para enviar uma resposta ja validada por regra de contexto.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "3930b68a55d5223c9d9b",
+      "text": "Nunca unir mensagens antigas ou ultrapassar uma resposta do agente ao reconstruir a solicitacao.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
     }
   ],
   "handoff_conditions": [
@@ -3767,6 +3802,13 @@
       "text": "Nunca confiar apenas no marcador de saudacao; bloquear tambem quando ja existir qualquer mensagem do agente ou do especialista.",
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "abb2ab4a02f9c75ea211",
+      "text": "Nunca atravessar uma mensagem do agente ou do especialista ao montar a rajada.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que fazer",
       "stages": []
     }
   ],

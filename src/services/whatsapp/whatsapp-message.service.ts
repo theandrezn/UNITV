@@ -27,7 +27,10 @@ import { AgentLearningMemoriesRepository } from "@/repositories/agent-learning-m
 import { buildMaskedConversationExcerpt, maskSpecialistTrainingText } from "@/lib/whatsapp/specialist-training-privacy";
 import { SpecialistInterventionAnalysisService } from "@/services/agent/specialist-intervention-analysis.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
-import { CustomerMessageBurstService } from "@/services/whatsapp/customer-message-burst.service";
+import {
+  buildEffectiveCustomerBurstMessage,
+  CustomerMessageBurstService
+} from "@/services/whatsapp/customer-message-burst.service";
 import {
   ContextualIntelligenceService,
   type CommercialContext,
@@ -532,16 +535,21 @@ export class WhatsappMessageService {
     };
     await this.conversationsRepository.updateConversationMetadata(conversation.id, conversation.metadata);
 
-    let effectiveMessage = message.text;
+    const recentMessages = await this.listRecentConversationMessages(conversation.id);
+    let effectiveMessage = buildEffectiveCustomerBurstMessage({
+      currentMessage: message.text,
+      currentMessageId: message.externalMessageId,
+      recentMessages
+    });
     let classification: IntentClassification;
-    const directHumanRequest = isHumanHandoffRequest(message.text);
-    const selection = directHumanRequest ? null : resolveMenuSelection(message.text, conversation.metadata);
+    const directHumanRequest = isHumanHandoffRequest(effectiveMessage);
+    const selection = directHumanRequest ? null : resolveMenuSelection(effectiveMessage, conversation.metadata);
     if (selection) {
       effectiveMessage = selection.message;
       classification = {
         intent: selection.intent,
         confidence: 1,
-        summary: `Selecao direta do menu: ${message.text}`,
+        summary: `Selecao direta do menu: ${effectiveMessage}`,
         suggested_reply: ""
       };
     } else if (directHumanRequest) {
@@ -552,10 +560,10 @@ export class WhatsappMessageService {
         suggested_reply: ""
       };
     } else {
-      classification = await this.intentClassifier.classify({ message: message.text, conversationId: conversation.id });
+      classification = await this.intentClassifier.classify({ message: effectiveMessage, conversationId: conversation.id });
     }
 
-    const leadProfilePatch = buildLeadProfilePatch(message.text, classification.intent, conversation.metadata);
+    const leadProfilePatch = buildLeadProfilePatch(effectiveMessage, classification.intent, conversation.metadata);
     if (leadProfilePatch.accepted_special_promo) {
       effectiveMessage = "mensal pix promocao";
       classification = {
@@ -581,7 +589,7 @@ export class WhatsappMessageService {
       await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
       conversation.metadata = nextMetadata;
     }
-    for (const eventType of inferCustomerAgentEvents(message.text, classification.intent, leadProfilePatch)) {
+    for (const eventType of inferCustomerAgentEvents(effectiveMessage, classification.intent, leadProfilePatch)) {
       await this.safeCreateAgentEvent({
         conversation_id: conversation.id,
         customer_phone: message.phone,
@@ -597,15 +605,14 @@ export class WhatsappMessageService {
       });
     }
 
-    const recentMessages = await this.listRecentConversationMessages(conversation.id);
     const contextSnapshot = await this.buildCommercialContext({
-      message,
+      message: { ...message, text: effectiveMessage },
       conversation,
       recentMessages
     });
     const [specialistExamples, learningMemories] = await Promise.all([
-      this.listRelevantSpecialistExamples(conversation.metadata, message.text, recentMessages),
-      this.listRelevantLearningMemories(conversation.metadata, message.text, recentMessages)
+      this.listRelevantSpecialistExamples(conversation.metadata, effectiveMessage, recentMessages),
+      this.listRelevantLearningMemories(conversation.metadata, effectiveMessage, recentMessages)
     ]);
     const specialistLearning = buildSpecialistLearningGuidance(specialistExamples, learningMemories);
     const contextualDecision = await this.contextualIntelligenceService.extract({
@@ -681,7 +688,7 @@ export class WhatsappMessageService {
       }
     });
     const preSaleFollowupState = buildPreSaleRechargeLaterFollowupState({
-      text: message.text,
+      text: effectiveMessage,
       metadata: conversation.metadata,
       recentMessages,
       now: new Date(customerMessageAt),
@@ -909,7 +916,7 @@ export class WhatsappMessageService {
 
     return this.sendAndStoreAssistantReply({
       webhookEventId,
-      message,
+      message: { ...message, text: effectiveMessage },
       customer,
       conversation,
       reply,
@@ -1101,11 +1108,18 @@ export class WhatsappMessageService {
       responseRule,
       reply
     });
+    const useStateGuardedLocalReply = canDeliverStateGuardedLocalReply({
+      responseGeneratedByAI,
+      responseRule,
+      reply
+    });
     const contextualReply = useProtectedOperationalReply
       ? reply
       : reuseUpstreamAIReply
       ? reply
       : useAuthoritativeLocalReply
+      ? reply
+      : useStateGuardedLocalReply
       ? reply
       : await this.contextualResponseAIService.generateResponse({
         currentMessage: message.text,
@@ -1152,6 +1166,8 @@ export class WhatsappMessageService {
         ? "upstream_contextual_ai_reused"
         : useAuthoritativeLocalReply
           ? "authoritative_local_rule"
+        : useStateGuardedLocalReply
+          ? "state_guarded_local_rule"
         : "contextual_ai";
     if (useProtectedBackendArtifact) {
       await this.auditService.createAuditLog({
@@ -1192,6 +1208,14 @@ export class WhatsappMessageService {
       await this.auditService.createAuditLog({
         actor_type: "system",
         action: "authoritative_local_response_used",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, intent, response_rule: responseRule || null, avoided_openai_call: true }
+      });
+    } else if (useStateGuardedLocalReply) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "state_guarded_local_response_used",
         entity_type: "conversations",
         entity_id: conversation.id,
         metadata: { webhookEventId, intent, response_rule: responseRule || null, avoided_openai_call: true }
@@ -1491,7 +1515,9 @@ export class WhatsappMessageService {
       const messages = await listMessages.call(this.messagesRepository, conversationId, 12);
       return messages.map((item) => ({
         role: typeof item.role === "string" ? item.role : undefined,
-        content: typeof item.content === "string" ? item.content : null
+        content: typeof item.content === "string" ? item.content : null,
+        external_message_id: typeof item.external_message_id === "string" ? item.external_message_id : null,
+        created_at: typeof item.created_at === "string" ? item.created_at : null
       }));
     } catch {
       return [];
@@ -2112,6 +2138,26 @@ export function canDeliverAuthoritativeLocalReply(input: {
   if (reply === `O plano mensal cobre ate ${OFFICIAL_MONTHLY_MAX_SCREENS} telas.`) return true;
   if (AUTHORITATIVE_LOCAL_RESPONSE_RULES.has(responseRule)) return true;
   return /^authoritative_(?:espn|premiere|spanish_catalog)(?:_|$)/.test(responseRule);
+}
+
+const STATE_GUARDED_LOCAL_RESPONSE_RULES = new Set([
+  "blocked_low_risk_handoff_awaiting_customer",
+  "conversation_intelligence_low_risk_recovery",
+  "active_download_flow",
+  "expected_device_answer",
+  "hq_android_compatibility_check"
+]);
+
+export function canDeliverStateGuardedLocalReply(input: {
+  responseGeneratedByAI?: boolean;
+  responseRule?: string;
+  reply: string;
+}) {
+  if (input.responseGeneratedByAI || !input.reply.trim()) return false;
+  const responseRule = String(input.responseRule || "");
+  if (responseRule.startsWith("contextual_understanding_")) return true;
+  if (responseRule.startsWith("conversation_brain_") && responseRule !== "conversation_brain_continue") return true;
+  return STATE_GUARDED_LOCAL_RESPONSE_RULES.has(responseRule);
 }
 
 export function canReuseUpstreamAIReply(input: {

@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CustomerMessageBurstService } from "@/services/whatsapp/customer-message-burst.service";
+import {
+  buildEffectiveCustomerBurstMessage,
+  CustomerMessageBurstService
+} from "@/services/whatsapp/customer-message-burst.service";
 
 describe("CustomerMessageBurstService", () => {
   afterEach(() => {
@@ -38,5 +41,40 @@ describe("CustomerMessageBurstService", () => {
   it("does not delay or suppress a message when batching is disabled", async () => {
     const service = new CustomerMessageBurstService(0);
     await expect(service.isLatestMessageInBurst("conversation-id")).resolves.toBe(true);
+  });
+
+  it("joins consecutive customer bubbles so the last webhook keeps the complete request", () => {
+    const effectiveMessage = buildEffectiveCustomerBurstMessage({
+      currentMessage: "Tem como",
+      currentMessageId: "customer-2",
+      recentMessages: [
+        { role: "assistant", content: "Como posso ajudar?", external_message_id: "assistant-1", created_at: "2026-07-14T19:45:12.000Z" },
+        { role: "customer", content: "Queria fazer um teste", external_message_id: "customer-1", created_at: "2026-07-14T19:45:59.000Z" },
+        { role: "customer", content: "Tem como", external_message_id: "customer-2", created_at: "2026-07-14T19:46:01.000Z" }
+      ]
+    });
+
+    expect(effectiveMessage).toBe("Queria fazer um teste Tem como");
+  });
+
+  it("does not join an old customer message or cross an assistant boundary", () => {
+    expect(buildEffectiveCustomerBurstMessage({
+      currentMessage: "Tem como",
+      currentMessageId: "customer-2",
+      recentMessages: [
+        { role: "customer", content: "Queria fazer um teste", external_message_id: "customer-old", created_at: "2026-07-14T19:44:00.000Z" },
+        { role: "customer", content: "Tem como", external_message_id: "customer-2", created_at: "2026-07-14T19:46:01.000Z" }
+      ]
+    })).toBe("Tem como");
+
+    expect(buildEffectiveCustomerBurstMessage({
+      currentMessage: "Tem como",
+      currentMessageId: "customer-2",
+      recentMessages: [
+        { role: "customer", content: "Queria fazer um teste", external_message_id: "customer-1", created_at: "2026-07-14T19:45:59.000Z" },
+        { role: "assistant", content: "Qual aparelho?", external_message_id: "assistant-1", created_at: "2026-07-14T19:46:00.000Z" },
+        { role: "customer", content: "Tem como", external_message_id: "customer-2", created_at: "2026-07-14T19:46:01.000Z" }
+      ]
+    })).toBe("Tem como");
   });
 });

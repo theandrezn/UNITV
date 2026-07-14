@@ -27,6 +27,7 @@ import { resolveConversationBrain } from "@/services/agent/conversation-brain.se
 import { PlansService } from "@/services/plans.service";
 import {
   canDeliverAuthoritativeLocalReply,
+  canDeliverStateGuardedLocalReply,
   canReuseUpstreamAIReply,
   isCustomerMessageSuperseded,
   WhatsappMessageService
@@ -1616,6 +1617,24 @@ describe("commercial WhatsApp agent", () => {
       responseGeneratedByAI: true,
       responseRule: "contextual_understanding_generic_price_monthly",
       reply: OFFICIAL_MONTHLY_OFFER_TEXT
+    })).toBe(false);
+  });
+
+  it("delivers state-guarded local decisions without requiring an impossible second AI call", () => {
+    expect(canDeliverStateGuardedLocalReply({
+      responseGeneratedByAI: false,
+      responseRule: "contextual_understanding_free_trial",
+      reply: "Perfeito. Em qual aparelho voce quer fazer o teste gratis de 3 dias?"
+    })).toBe(true);
+    expect(canDeliverStateGuardedLocalReply({
+      responseGeneratedByAI: false,
+      responseRule: "conversation_brain_continue",
+      reply: "Resposta local arbitraria"
+    })).toBe(false);
+    expect(canDeliverStateGuardedLocalReply({
+      responseGeneratedByAI: true,
+      responseRule: "contextual_understanding_free_trial",
+      reply: "Resposta gerada pela IA"
     })).toBe(false);
   });
 
@@ -4113,6 +4132,133 @@ describe("commercial WhatsApp agent", () => {
     expect(contextualResponseGenerate).not.toHaveBeenCalled();
     expect(auditService.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: "authoritative_local_response_used",
+      metadata: expect.objectContaining({ avoided_openai_call: true })
+    }));
+  });
+
+  it("answers a free-trial request split across consecutive WhatsApp bubbles", async () => {
+    const expectedReply = "Perfeito. Em qual aparelho voce quer fazer o teste gratis de 3 dias?";
+    const classify = vi.fn(async () => ({ intent: "free_trial", confidence: 0.99, summary: "pedido de teste", suggested_reply: "" }));
+    const generateCommercialReply = vi.fn(async () => ({
+      reply: expectedReply,
+      responseSource: "local_rule",
+      responseRule: "contextual_understanding_free_trial",
+      leadProfilePatch: {
+        wants_test: true,
+        stage: "device_qualification",
+        commercial_stage: "device_qualification",
+        next_expected_reply: "device"
+      }
+    }));
+    const contextualDecision = {
+      ...extractDeterministicDecision({
+        current_message: "Queria fazer um teste Tem como",
+        recent_messages: [],
+        lead_profile: { stage: "welcome_sent", saudacao_enviada: true, last_bot_question: "Como posso ajudar?" },
+        open_order: null,
+        latest_order: null,
+        last_bot_question: "Como posso ajudar?",
+        last_bot_message_at: "2026-07-14T19:45:12.000Z",
+        last_specialist_message_at: null,
+        followup_key: null,
+        followup_due_at: null,
+        human_hold_active: false
+      }),
+      intent: "free_trial",
+      detected_intent: "free_trial",
+      stage: "device_qualification",
+      next_action: "ask_device",
+      should_reply: true,
+      should_handoff: false,
+      should_clarify: false,
+      confidence: 1,
+      recommended_response: expectedReply,
+      source: "deterministic" as const
+    };
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({
+        id: "conversation-id",
+        customer_id: "customer-id",
+        conversation_state: "welcome_sent",
+        metadata: {
+          last_bot_message_at: "2026-07-14T19:45:12.000Z",
+          lead_profile: {
+            conversation_state: "welcome_sent",
+            stage: "welcome_sent",
+            saudacao_enviada: true,
+            last_bot_question: "Como posso ajudar?"
+          }
+        }
+      })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: _id, metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+      listMessagesByConversationId: vi.fn(async () => ([
+        { role: "assistant", content: INITIAL_UNITV_REPLY, external_message_id: "assistant-greeting", created_at: "2026-07-14T19:45:12.000Z" },
+        { role: "customer", content: "Queria fazer um teste", external_message_id: "customer-trial-1", created_at: "2026-07-14T19:45:59.000Z" },
+        { role: "customer", content: "Tem como", external_message_id: "customer-trial-2", created_at: "2026-07-14T19:46:01.000Z" }
+      ]))
+    };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ id: "provider-id" })) };
+    const auditService = { createAuditLog: vi.fn(async () => ({})) };
+    const contextualWriter = { generateResponse: vi.fn(async () => null) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", name: "Cliente" })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      { classify } as never,
+      { generateCommercialReply } as never,
+      evolutionService as never,
+      auditService as never,
+      { findLatestOpenOrderByCustomerId: vi.fn(async () => null), findLatestOrderByCustomerId: vi.fn(async () => null) } as never,
+      {} as never,
+      {} as never,
+      undefined,
+      {} as never,
+      { safeCreateEvent: vi.fn(async () => ({})) } as never,
+      undefined,
+      { extract: vi.fn(async () => contextualDecision) } as never,
+      undefined,
+      undefined,
+      { isLatestMessageInBurst: vi.fn(async () => true) } as never,
+      contextualWriter as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-trial-burst",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "customer-trial-2",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Tem como",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(classify).toHaveBeenCalledWith({
+      message: "Queria fazer um teste Tem como",
+      conversationId: "conversation-id"
+    });
+    expect(generateCommercialReply).toHaveBeenCalledWith(expect.objectContaining({
+      message: "Queria fazer um teste Tem como"
+    }));
+    expect(result).toMatchObject({ status: "processed", reply: expectedReply });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({ phone: "5511999998888", text: expectedReply });
+    expect(contextualWriter.generateResponse).not.toHaveBeenCalled();
+    expect(auditService.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "state_guarded_local_response_used",
       metadata: expect.objectContaining({ avoided_openai_call: true })
     }));
   });
