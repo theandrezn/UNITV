@@ -1,5 +1,11 @@
 import type { CommercialContext, ContextualDecision } from "./contextual-intelligence.service";
 import { normalizeConversationState, type ConversationState } from "@/lib/conversation-state";
+import {
+  UNITV_ANDROID_APK_URL,
+  UNITV_DOWNLOADER_CODE,
+  UNITV_TUTORIAL_URL,
+  UNITV_TV_APK_URL
+} from "@/lib/unitv/device-compatibility";
 
 export type AgentActionKind = "reply" | "silent" | "wait" | "handoff" | "backend_action";
 
@@ -464,9 +470,30 @@ function detectBackendArtifact(
 ): AgentBackendArtifact | null {
   if (candidate.copyText || (decision.should_generate_pix && candidate.reply)) return { type: "pix", present: Boolean(candidate.copyText) };
   if (decision.next_action === "verify_payment") return { type: "payment_check", present: true };
+  if (containsAuthorizedDownloadArtifact(candidate.reply, candidate.responseRule, decision)) {
+    return { type: "download", present: true };
+  }
   if (candidate.media) return { type: decision.should_send_download ? "download" : "menu", present: true };
   if (candidate.menu) return { type: "menu", present: true };
   return null;
+}
+
+function containsAuthorizedDownloadArtifact(
+  reply: string | null | undefined,
+  responseRule: string | undefined,
+  decision: ContextualDecision
+) {
+  const text = String(reply || "");
+  const containsOfficialArtifact = [
+    UNITV_ANDROID_APK_URL,
+    UNITV_TV_APK_URL,
+    UNITV_TUTORIAL_URL,
+    UNITV_DOWNLOADER_CODE
+  ].some((artifact) => text.includes(artifact));
+  if (!containsOfficialArtifact) return false;
+
+  return decision.should_send_download === true ||
+    /(?:download|installation|expected_device_answer|active_download_flow)/i.test(String(responseRule || ""));
 }
 
 function followupFromPatch(patch: Record<string, unknown>): AgentFollowupAction {

@@ -221,7 +221,7 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
     return {
       reply:
         `No celular Android funciona sim.\n\nBaixe por aqui:\n\n${UNITV_ANDROID_APK_URL}\n\n` +
-        `Tutorial:\n${UNITV_TUTORIAL_URL}\n\nSeu celular é Android?`,
+        `Tutorial:\n${UNITV_TUTORIAL_URL}\n\nQuando terminar de instalar, me avisa?`,
       leadProfilePatch: {
         ...basePatch,
         download_method_sent: "apk_mobile",

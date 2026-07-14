@@ -4047,13 +4047,26 @@ describe("commercial WhatsApp agent", () => {
   });
 
   it("schedules download follow-up after Android link even when the incoming classification is greeting", async () => {
+    contextualResponseGenerate.mockClear();
+    let downloadSent = false;
     const conversationsRepository = {
       findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
       createConversation: vi.fn(),
-      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => {
+        const persistedStage = metadata?.lead_profile?.stage;
+        if (["download_link_sent", "download_instructions", "awaiting_download_installation"].includes(persistedStage)) {
+          expect(downloadSent).toBe(true);
+        }
+        return { id: "conversation-id", metadata };
+      }),
       touchConversation: vi.fn(async () => ({}))
     };
-    const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
+    const evolutionService = {
+      sendTextMessage: vi.fn(async () => {
+        downloadSent = true;
+        return { sent: true };
+      })
+    };
     const service = new WhatsappMessageService(
       { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
       conversationsRepository as never,
@@ -4064,7 +4077,9 @@ describe("commercial WhatsApp agent", () => {
       } as never,
       { classify: vi.fn(async () => ({ intent: "greeting", confidence: 1, summary: "confirmacao", suggested_reply: "" })) } as never,
       { generateCommercialReply: vi.fn(async () => ({
-        reply: "No celular Android funciona sim.\n\nBaixe por aqui:\n\nhttps://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file\n\nTutorial:\nhttps://www.youtube.com/watch?v=LBBAbs2-I0c\n\nSeu celular e Android?",
+        reply: "No celular Android funciona sim.\n\nBaixe por aqui:\n\nhttps://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file\n\nTutorial:\nhttps://www.youtube.com/watch?v=LBBAbs2-I0c\n\nQuando terminar de instalar, me avisa?",
+        responseSource: "local_rule",
+        responseRule: "expected_device_answer",
         leadProfilePatch: {
           device: "android_phone",
           stage: "download_instructions",
@@ -4080,7 +4095,7 @@ describe("commercial WhatsApp agent", () => {
       {} as never
     );
 
-    await service.processIncomingMessage({
+    const result = await service.processIncomingMessage({
       webhookEventId: "webhook-id",
       message: {
         event: "messages.upsert",
@@ -4098,6 +4113,16 @@ describe("commercial WhatsApp agent", () => {
         isGroup: false
       }
     });
+
+    expect(result).toMatchObject({ status: "processed", reply: expect.stringContaining("UniTV_mobile_3.21.6.apk") });
+    expect(contextualResponseGenerate).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
+      phone: "5511999998888",
+      text: expect.stringContaining("UniTV_mobile_3.21.6.apk")
+    });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ text: expect.stringContaining("unitv_stb_4.19.apk") })
+    );
 
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",

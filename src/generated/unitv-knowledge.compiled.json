@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_hash": "6c26c7c0b57b0a1f5d1e7e84fb4a1ce904230c81fab9fe025c0b4686b61d374f",
-  "generated_at": "2026-07-14T17:18:50.907Z",
+  "source_hash": "d65565f3768dba8e5a6fdbb64dcae1173980198a9ec1bae069226a5a70ab04b9",
+  "generated_at": "2026-07-14T17:51:53.497Z",
   "facts": [
     {
       "id": "13eb990749a776a19eba",
@@ -692,6 +692,71 @@
       "stages": []
     },
     {
+      "id": "defa4f9c0c539bc4ed49",
+      "text": "Entregar diretamente APK e tutorial oficiais como artefatos operacionais protegidos, sem nova chamada de IA.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "4df8b52b5229dcfe9b80",
+      "text": "Indicar apenas o proximo passo: pedir que o cliente avise quando terminar de instalar.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "6f16db1fef0791a6f90d",
+      "text": "Persistir `download_link_sent` e agendar acompanhamento somente depois que o provedor aceitar o envio.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que fazer",
+      "stages": [
+        "download_link_sent"
+      ]
+    },
+    {
+      "id": "18531edb3fe01334184c",
+      "text": "No celular Android funciona sim.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "0c0c09af7f814a9c0020",
+      "text": "Baixe por aqui:",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "936cc92d78041e9a7c31",
+      "text": "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "2e071374fbe544ad305d",
+      "text": "Tutorial:",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "fcbfbe7be424d29cfdd4",
+      "text": "https://www.youtube.com/watch?v=LBBAbs2-I0c",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "86e2b58c9793c6e3ee06",
+      "text": "Quando terminar de instalar, me avisa?",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
       "id": "4281df27af3556e9a3e6",
       "text": "filmes, series e canais ao vivo no mesmo app;",
       "source_file": "14_MEMORIA_OPERACIONAL.md",
@@ -865,7 +930,17 @@
         ]
       }
     ],
-    "download_link_sent": [],
+    "download_link_sent": [
+      {
+        "id": "6f16db1fef0791a6f90d",
+        "text": "Persistir `download_link_sent` e agendar acompanhamento somente depois que o provedor aceitar o envio.",
+        "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+        "heading": "O que fazer",
+        "stages": [
+          "download_link_sent"
+        ]
+      }
+    ],
     "awaiting_download_installation": [],
     "awaiting_test_activation": [],
     "price_discovery": [],
@@ -2233,6 +2308,41 @@
       "stages": []
     },
     {
+      "id": "038c55f3aa0143324ae8",
+      "text": "Quando a ultima pergunta solicitar o aparelho e o cliente responder \"Celular Android\", usar o APK mobile, nunca o APK de TV Box.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "f2c62098cfce25fcfeec",
+      "text": "Nunca descartar o download porque uma redacao opcional da IA falhou ou foi rejeitada.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "39dd8aa2d3197f06a524",
+      "text": "Nunca enviar o APK de TV Box para quem confirmou celular Android.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "25b1bbd2e5a8eaa46656",
+      "text": "Nunca marcar link, tutorial ou codigo como enviados antes do envio real.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "5710a4e84e32a4fa41bc",
+      "text": "Nunca repetir a pergunta se o celular e Android depois que o cliente ja confirmou \"Celular Android\".",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
       "id": "cb01700bdd8554fca09c",
       "text": "Nunca reiniciar a saudacao depois de instrucoes de instalacao.",
       "source_file": "09_FOLLOWUPS.md",
@@ -2733,6 +2843,20 @@
     {
       "id": "ed4c656449523317d088",
       "text": "Nunca usar fallback pronto quando a chamada contextual falhar.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "05c6d2f33a2f8946ac4e",
+      "text": "Nunca tratar um artefato operacional autorizado como fallback comercial.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "f6625cf6ace2b57f1f8b",
+      "text": "Nunca persistir estado de artefato enviado antes da confirmacao do provedor.",
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "O que nunca fazer",
       "stages": []
@@ -3982,6 +4106,106 @@
       "text": "Nunca continuar tentando instalar quando `compatibility_status=incompatible` e a tentativa falhou.",
       "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
       "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "038c55f3aa0143324ae8",
+      "text": "Quando a ultima pergunta solicitar o aparelho e o cliente responder \"Celular Android\", usar o APK mobile, nunca o APK de TV Box.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "defa4f9c0c539bc4ed49",
+      "text": "Entregar diretamente APK e tutorial oficiais como artefatos operacionais protegidos, sem nova chamada de IA.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "4df8b52b5229dcfe9b80",
+      "text": "Indicar apenas o proximo passo: pedir que o cliente avise quando terminar de instalar.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "6f16db1fef0791a6f90d",
+      "text": "Persistir `download_link_sent` e agendar acompanhamento somente depois que o provedor aceitar o envio.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que fazer",
+      "stages": [
+        "download_link_sent"
+      ]
+    },
+    {
+      "id": "f2c62098cfce25fcfeec",
+      "text": "Nunca descartar o download porque uma redacao opcional da IA falhou ou foi rejeitada.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "39dd8aa2d3197f06a524",
+      "text": "Nunca enviar o APK de TV Box para quem confirmou celular Android.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "25b1bbd2e5a8eaa46656",
+      "text": "Nunca marcar link, tutorial ou codigo como enviados antes do envio real.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "5710a4e84e32a4fa41bc",
+      "text": "Nunca repetir a pergunta se o celular e Android depois que o cliente ja confirmou \"Celular Android\".",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "18531edb3fe01334184c",
+      "text": "No celular Android funciona sim.",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "0c0c09af7f814a9c0020",
+      "text": "Baixe por aqui:",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "936cc92d78041e9a7c31",
+      "text": "https://www.mediafire.com/file_premium/e2jc97dcqr80tjw/UniTV_mobile_3.21.6.apk/file",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "2e071374fbe544ad305d",
+      "text": "Tutorial:",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "fcbfbe7be424d29cfdd4",
+      "text": "https://www.youtube.com/watch?v=LBBAbs2-I0c",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "86e2b58c9793c6e3ee06",
+      "text": "Quando terminar de instalar, me avisa?",
+      "source_file": "08_DOWNLOAD_INSTALACAO_E_SUPORTE.md",
+      "heading": "Resposta correta esperada",
       "stages": []
     },
     {
@@ -6251,6 +6475,11 @@
       "rule_without_test_reference:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:067ddbdf38af706ddb94",
       "rule_without_test_reference:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:f0df6fbc06188d369d19",
       "rule_without_test_reference:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:bfafc590d27ddf3a3fdf",
+      "rule_without_test_reference:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:038c55f3aa0143324ae8",
+      "rule_without_test_reference:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:f2c62098cfce25fcfeec",
+      "rule_without_test_reference:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:39dd8aa2d3197f06a524",
+      "rule_without_test_reference:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:25b1bbd2e5a8eaa46656",
+      "rule_without_test_reference:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:5710a4e84e32a4fa41bc",
       "rule_without_test_reference:09_FOLLOWUPS.md:cb01700bdd8554fca09c",
       "rule_without_test_reference:09_FOLLOWUPS.md:ee4e1c1d1028359815e3",
       "rule_without_test_reference:09_FOLLOWUPS.md:72044b74fe72702e928d",
@@ -6280,6 +6509,9 @@
       "rule_without_test_reference:14_MEMORIA_OPERACIONAL.md:4852f9e6512f13792743",
       "duplicate_rule:04_FLUXO_COMERCIAL.md:15_MELHORIA_CONTINUA.md:60ae1d5299ac5101b82b",
       "duplicate_rule:02_O_QUE_NUNCA_FAZER.md:15_MELHORIA_CONTINUA.md:33b91e14026c583d2584",
+      "duplicate_rule:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:15_MELHORIA_CONTINUA.md:0a81130750cfb93d9e27",
+      "duplicate_rule:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:15_MELHORIA_CONTINUA.md:42bfbc3b454cd6ee918b",
+      "duplicate_rule:08_DOWNLOAD_INSTALACAO_E_SUPORTE.md:15_MELHORIA_CONTINUA.md:af79c391eb6d1f7e9cf4",
       "duplicate_rule:02_O_QUE_NUNCA_FAZER.md:15_MELHORIA_CONTINUA.md:050f3a5a34ca60a90d30",
       "contradictory_rule:02_O_QUE_NUNCA_FAZER.md:15_MELHORIA_CONTINUA.md:050f3a5a34ca60a90d30",
       "duplicate_rule:09_FOLLOWUPS.md:15_MELHORIA_CONTINUA.md:c33b3bca013f5de2bbe2",

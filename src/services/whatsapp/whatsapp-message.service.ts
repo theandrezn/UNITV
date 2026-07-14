@@ -28,7 +28,10 @@ import {
   type CommercialContext,
   type ContextualDecision
 } from "@/services/agent/contextual-intelligence.service";
-import { ConversationBrainService } from "@/services/agent/conversation-brain.service";
+import {
+  ConversationBrainService,
+  type AgentBackendArtifact
+} from "@/services/agent/conversation-brain.service";
 import { ContextualResponseAIService } from "@/services/agent/contextual-response-ai.service";
 import { buildSpecialistLearningGuidance, type SpecialistLearningGuidance } from "@/services/agent/specialist-learning-guidance";
 import {
@@ -809,7 +812,11 @@ export class WhatsappMessageService {
           updated_at: new Date().toISOString()
         }
       };
-      await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
+      // Delivery states backed by an operational artifact must only become
+      // durable after Evolution accepts the actual WhatsApp send.
+      if (!finalAgentAction.backend_artifact?.present) {
+        await this.conversationsRepository.updateConversationMetadata(conversation.id, nextMetadata);
+      }
       conversation.metadata = nextMetadata;
     }
     const reply = finalAgentAction.reply || "";
@@ -903,6 +910,7 @@ export class WhatsappMessageService {
       sendTextBeforeMenu: commercialReply.sendTextBeforeMenu,
       responseGeneratedByAI: commercialReply.responseSource === "ai",
       specialistLearning,
+      backendArtifact: finalAgentAction.backend_artifact,
       protectedOperationalReply:
         classification.intent === "pix_payment" &&
         (Boolean(commercialReply.copyText) || commercialReply.requiresHuman === true)
@@ -1028,6 +1036,7 @@ export class WhatsappMessageService {
     sendTextBeforeMenu,
     responseGeneratedByAI,
     specialistLearning,
+    backendArtifact,
     protectedOperationalReply
   }: {
     webhookEventId: string;
@@ -1048,6 +1057,7 @@ export class WhatsappMessageService {
     sendTextBeforeMenu?: boolean;
     responseGeneratedByAI?: boolean;
     specialistLearning?: SpecialistLearningGuidance | null;
+    backendArtifact?: AgentBackendArtifact | null;
     protectedOperationalReply?: boolean;
   }) {
     const rawResponseDirective = [reply, ...(followUpMessages || [])].filter(Boolean).join("\n\n");
@@ -1056,8 +1066,12 @@ export class WhatsappMessageService {
       : rawResponseDirective;
     const intent = typeof classification.intent === "string" ? classification.intent : "unknown";
     const useFixedInitialGreeting = reply.trim() === INITIAL_UNITV_REPLY;
+    const useProtectedBackendArtifact =
+      backendArtifact?.present === true && backendArtifact.type !== "menu";
     const useProtectedOperationalReply =
-      (protectedOperationalReply === true && intent === "pix_payment") || useFixedInitialGreeting;
+      (protectedOperationalReply === true && intent === "pix_payment") ||
+      useProtectedBackendArtifact ||
+      useFixedInitialGreeting;
     const recentMessages = useProtectedOperationalReply ? [] : await this.listRecentConversationMessages(conversation.id);
     const reuseUpstreamAIReply = canReuseUpstreamAIReply({
       responseGeneratedByAI,
@@ -1109,6 +1123,8 @@ export class WhatsappMessageService {
 
     const responseSource = useFixedInitialGreeting
       ? "fixed_initial_greeting"
+      : useProtectedBackendArtifact
+      ? `protected_${backendArtifact?.type || "operational"}_backend`
       : useProtectedOperationalReply
       ? "protected_payment_backend"
       : reuseUpstreamAIReply
@@ -1121,6 +1137,19 @@ export class WhatsappMessageService {
         entity_type: "conversations",
         entity_id: conversation.id,
         metadata: { webhookEventId, intent, avoided_openai_call: true }
+      });
+    } else if (useProtectedBackendArtifact) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "protected_backend_artifact_delivery_used",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: {
+          webhookEventId,
+          intent,
+          artifact_type: backendArtifact?.type || null,
+          avoided_openai_call: true
+        }
       });
     } else if (useProtectedOperationalReply) {
       await this.auditService.createAuditLog({

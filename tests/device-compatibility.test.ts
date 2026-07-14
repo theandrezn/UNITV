@@ -46,7 +46,7 @@ describe("UNITV device compatibility", () => {
 
   it.each([
     ["minha tv é android", "android_tv_google_tv", "Downloader", UNITV_DOWNLOADER_CODE],
-    ["baixar no celular", "android_phone", UNITV_ANDROID_APK_URL, "Seu celular é Android?"],
+    ["baixar no celular", "android_phone", UNITV_ANDROID_APK_URL, "Quando terminar de instalar, me avisa?"],
     ["tenho fire stick", "firestick", "Downloader", UNITV_DOWNLOADER_CODE]
   ] as const)("sends compatible guidance for %s", (message, device, expectedOne, expectedTwo) => {
     const guidance = getUnitvInstallationGuidance(message);
