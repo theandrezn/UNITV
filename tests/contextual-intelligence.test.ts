@@ -81,7 +81,7 @@ describe("ContextualIntelligenceService ultra-low token path", () => {
     const request = openAIResponsesCreate.mock.calls[0][0];
     const compactContext = JSON.parse(request.input[1].content[0].text);
     expect(request.reasoning).toBeUndefined();
-    expect(request.max_output_tokens).toBe(90);
+    expect(request.max_output_tokens).toBe(180);
     expect(request.text.format.schema.required).toEqual([
       "action", "intent", "next_state", "meaning", "reason", "reply", "confidence"
     ]);
@@ -147,14 +147,10 @@ describe("ContextualIntelligenceService ultra-low token path", () => {
 
   it.each([
     ["obrigado", "silent"],
-    ["quais os valores de todos os planos?", "reply"],
-    ["quanto custa o trimestral?", "reply"],
-    ["tem ESPN?", "reply"],
-    ["quero renovar", "reply"],
     ["meu celular e Android", "reply"],
     ["vou usar uma TV Box", "reply"],
     ["LG antiga, nao deu certo", "silent"]
-  ])("resolves '%s' without spending tokens", async (message, expectedAction) => {
+  ])("keeps protected action '%s' deterministic", async (message, expectedAction) => {
     const result = await new ContextualIntelligenceService().extract({
       context: makeContext({ current_message: message })
     });
@@ -163,6 +159,45 @@ describe("ContextualIntelligenceService ultra-low token path", () => {
     expect(result.action).toBe(expectedAction);
     expect(result.confidence).toBeGreaterThanOrEqual(0.96);
     expect(openAIResponsesCreate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Esse aplicativo e vitalicio", "Nao e vitalicio: temos planos mensal, trimestral, semestral e anual. Quer conhecer o mensal?"],
+    ["Esse aplicativo e por ano ou por mes", "Temos plano mensal e anual, alem do trimestral e semestral. Quer conhecer o mensal?"]
+  ])("uses the single AI call to formulate the plan-duration answer for '%s'", async (message, reply) => {
+    openAIResponsesCreate.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        action: "reply",
+        intent: "ask_price",
+        next_state: "price_discovery",
+        meaning: "Cliente perguntou pelas duracoes disponiveis.",
+        reason: "Responder diretamente com as opcoes oficiais.",
+        reply,
+        confidence: 0.96
+      })
+    });
+
+    const result = await new ContextualIntelligenceService().extract({
+      context: makeContext({
+        current_message: message,
+        lead_profile: { conversation_state: "welcome_sent" },
+        last_bot_question: "Como posso ajudar?"
+      })
+    });
+
+    expect(result.source).toBe("ai");
+    expect(result.detected_intent).toBe("PLAN_DURATION_REQUEST");
+    expect(result.next_action).toBe("answer_plan_duration");
+    expect(result.recommended_response).toBe(reply);
+    expect(openAIResponsesCreate).toHaveBeenCalledTimes(1);
+    const request = openAIResponsesCreate.mock.calls[0][0];
+    const compactContext = JSON.parse(request.input[1].content[0].text);
+    expect(compactContext.guard).toMatchObject({
+      intent: "ask_price",
+      next_state: "price_discovery"
+    });
+    expect(request.text.format.schema.properties.intent.enum).toContain("ask_price");
+    expect(request.text.format.schema.properties.next_state.enum).toContain("price_discovery");
   });
 
   it("uses the fixed greeting only for a genuinely new conversation without history", async () => {

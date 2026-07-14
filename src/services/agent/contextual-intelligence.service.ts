@@ -17,6 +17,11 @@ import { getStructuredKnowledgeContext } from "@/lib/unitv/structured-knowledge"
 import { findUnitvAuthoritativeKnowledgeReply } from "@/lib/unitv/objection-map";
 import { UNITV_FIXED_INITIAL_GREETING } from "@/lib/unitv/agent-identity";
 import { detectUnitvDevice, getUnitvInstallationGuidance, type UnitvDeviceId } from "@/lib/unitv/device-compatibility";
+import {
+  extractDirectiveContract,
+  extractRequiredArtifacts,
+  validateResponseAgainstDirectiveContract
+} from "@/services/agent/contextual-response-ai.service";
 
 const agentActionSchema = z.enum(["reply", "silent", "wait", "handoff", "backend_action"]);
 const canonicalConversationStateSchema = z.enum(CANONICAL_CONVERSATION_STATES);
@@ -63,6 +68,7 @@ const commercialStageSchema = z.enum([
 const contextualDetectedIntentSchema = z.enum([
   "FREE_TRIAL_REQUEST",
   "PLAN_PRICE_REQUEST",
+  "PLAN_DURATION_REQUEST",
   "PLAN_SCREEN_COVERAGE",
   "PLAN_SELECTION_MONTHLY",
   "PLAN_SELECTION_QUARTERLY",
@@ -96,6 +102,7 @@ const nextActionSchema = z.enum([
   "ask_plan_preference",
   "show_monthly_plan",
   "answer_screen_coverage",
+  "answer_plan_duration",
   "show_requested_prices",
   "send_pix",
   "ask_payment_method",
@@ -174,9 +181,11 @@ export type CommercialContext = {
 
 export const CONTEXTUAL_DECISION_PROMPT_VERSION = "unitv-decision-v3-ultra-low";
 export const CONTEXTUAL_DECISION_SYSTEM_PROMPT = [
-  "Decida um turno ambiguo da UNITV. Retorne apenas o JSON curto solicitado.",
+  "Decida e escreva a resposta deste turno da UNITV. Retorne apenas o JSON solicitado.",
   "Prioridade: estado > ultima pergunta > cliente > humano > base.",
   "Passos: interprete; escolha uma acao; mantenha ou avance o estado; responda curto.",
+  "Se houver guard, ele contem fatos e resultado obrigatorios: preserve-os, mas formule a frase agora com linguagem natural.",
+  "Responda diretamente perguntas claras. Nao use pedido generico de esclarecimento quando o sentido puder ser inferido.",
   "Acoes: reply, silent, wait, handoff. Use silent em agradecimento ou encerramento.",
   "Handoff somente quando o cliente pedir humano ou tratar de revenda.",
   "Nunca execute Pix, pagamento, codigo ou download; o backend e a autoridade.",
@@ -187,7 +196,7 @@ export const CONTEXTUAL_DECISION_SYSTEM_PROMPT = [
 export class ContextualIntelligenceService {
   async extract(input: { context: CommercialContext; useStrongModel?: boolean; specialistLearning?: SpecialistLearningGuidance | null }): Promise<ContextualDecision> {
     const deterministic = extractDeterministicDecision(input.context);
-    if (deterministic.confidence >= 0.92 || !process.env.OPENAI_API_KEY) {
+    if (!process.env.OPENAI_API_KEY || !shouldUseAIWording(deterministic)) {
       return { ...deterministic, source: "deterministic" };
     }
 
@@ -195,7 +204,7 @@ export class ContextualIntelligenceService {
       const client = createOpenAIClient();
       const model = input.useStrongModel ? getStrongSalesAgentOpenAIModel() : getSalesAgentOpenAIModel();
       const knowledge = this.loadKnowledge(input.context);
-      const compactContext = compactCommercialContextForModel(input.context, knowledge, input.specialistLearning);
+      const compactContext = compactCommercialContextForModel(input.context, knowledge, input.specialistLearning, deterministic);
       const compactContextText = JSON.stringify(compactContext);
       const response = await executeObservedOpenAICall(
         {
@@ -223,7 +232,7 @@ export class ContextualIntelligenceService {
       })
       );
       if (!response) {
-        return deterministic;
+        return { ...deterministic, source: "deterministic" };
       }
 
       const parsed = compactAIDecisionSchema.safeParse(JSON.parse(response.output_text || "{}"));
@@ -333,6 +342,25 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
       recommended_response: OFFICIAL_ALL_PLAN_PRICES_TEXT,
       next_expected_reply: "plan_choice",
       confidence: 0.99
+    });
+  }
+
+  if (isPlanDurationQuestion(normalized)) {
+    return buildDecision({
+      ...base,
+      intent: "ask_price",
+      detected_intent: "PLAN_DURATION_REQUEST",
+      stage: "qualified",
+      next_state: "price_discovery",
+      selected_plan: null,
+      should_schedule_followup: false,
+      should_clarify: false,
+      customer_message_meaning: "Cliente quer saber se o acesso e vitalicio ou quais duracoes de plano existem.",
+      reason: "A UNITV nao e vitalicia e possui planos mensal, trimestral, semestral e anual.",
+      next_action: "answer_plan_duration",
+      recommended_response: "Informe que nao e vitalicio e que existem planos mensal, trimestral, semestral e anual. Pergunte se quer conhecer o mensal.",
+      next_expected_reply: "plan_choice",
+      confidence: 0.88
     });
   }
 
@@ -711,7 +739,8 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
 function compactCommercialContextForModel(
   context: CommercialContext,
   knowledge: string[] = [],
-  specialistLearning?: SpecialistLearningGuidance | null
+  specialistLearning?: SpecialistLearningGuidance | null,
+  deterministic?: ContextualDecision
 ) {
   const profileKeys = [
     "selected_plan", "device", "operating_system", "compatibility_status", "install_status",
@@ -742,6 +771,13 @@ function compactCommercialContextForModel(
       -OPENAI_ECONOMY_POLICY.contextualDecision.messageCharacters
     ) || null,
     human_hold: context.human_hold_active || undefined,
+    guard: deterministic ? {
+      action: deterministic.action,
+      intent: deterministic.intent,
+      next_state: deterministic.next_state,
+      required_outcome: deterministic.recommended_response.slice(0, 260),
+      required_facts: extractRequiredArtifacts(deterministic.recommended_response)
+    } : undefined,
     knowledge: knowledge.length ? knowledge : undefined,
     specialist_hint: compactSpecialistLearning(specialistLearning) || undefined
   };
@@ -769,21 +805,27 @@ function expandCompactAIDecision(
     : currentState;
   const proposedReply = compact.action === "reply" ? compact.reply.trim() : "";
   const fallbackReply = deterministic.recommended_response || "Me conta em uma frase o que voce precisa agora.";
-  const recommendedResponse = proposedReply && validateConciseUnitvReply(proposedReply).valid
+  const usedAIReply = Boolean(
+    proposedReply &&
+    validateConciseUnitvReply(proposedReply).valid &&
+    validateAIReplyAgainstGuard(proposedReply, deterministic, context)
+  );
+  const recommendedResponse = usedAIReply
     ? proposedReply
     : compact.action === "reply" ? fallbackReply : "";
   const selectedPlan = normalizePlan(context.lead_profile.selected_plan || context.lead_profile.plano_interesse || context.current_message);
   const paymentMethod = normalizePaymentMethod(context.lead_profile.payment_method || context.current_message);
-  const action = compact.action;
+  const deterministicGuarded = deterministic.confidence >= 0.8 && deterministic.detected_intent !== "UNKNOWN";
+  const action = deterministicGuarded ? deterministic.action : compact.action;
 
   return buildDecision({
     action,
-    next_state: nextState,
-    intent: compact.intent,
-    detected_intent: detectedIntentForCommercialIntent(compact.intent),
-    stage: stageForConversationState(nextState),
-    selected_plan: selectedPlan,
-    payment_method: paymentMethod,
+    next_state: deterministicGuarded ? deterministic.next_state : nextState,
+    intent: deterministicGuarded ? deterministic.intent : compact.intent,
+    detected_intent: deterministicGuarded ? deterministic.detected_intent : detectedIntentForCommercialIntent(compact.intent),
+    stage: stageForConversationState(deterministicGuarded ? deterministic.next_state : nextState),
+    selected_plan: deterministicGuarded ? deterministic.selected_plan : selectedPlan,
+    payment_method: deterministicGuarded ? deterministic.payment_method : paymentMethod,
     should_create_order: false,
     should_generate_pix: false,
     should_send_download: false,
@@ -791,15 +833,43 @@ function expandCompactAIDecision(
     should_reply: action === "reply",
     should_handoff: action === "handoff",
     should_clarify: action === "reply" && compact.intent === "unknown",
-    next_action: nextActionForCommercialIntent(compact.intent, action),
+    next_action: deterministicGuarded ? deterministic.next_action : nextActionForCommercialIntent(compact.intent, compact.action),
     customer_message_meaning: compact.meaning,
     reason: compact.reason,
     recommended_response: recommendedResponse,
-    next_expected_reply: nextExpectedReplyForCommercialIntent(compact.intent),
+    next_expected_reply: deterministicGuarded ? deterministic.next_expected_reply : nextExpectedReplyForCommercialIntent(compact.intent),
     install_status: deterministic.install_status,
     confidence: compact.confidence,
-    source: "ai"
+    source: usedAIReply ? "ai" : "deterministic"
   });
+}
+
+function shouldUseAIWording(decision: ContextualDecision) {
+  if (decision.action !== "reply" || !decision.should_reply || decision.should_handoff) return false;
+  if (!decision.recommended_response.trim() || decision.recommended_response === UNITV_FIXED_INITIAL_GREETING) return false;
+  if (decision.should_create_order || decision.should_generate_pix || decision.should_send_download) return false;
+  return ![
+    "send_pix",
+    "verify_payment",
+    "send_android_download",
+    "send_tvbox_download",
+    "send_firestick_guidance",
+    "human_handoff"
+  ].includes(decision.next_action);
+}
+
+function validateAIReplyAgainstGuard(reply: string, deterministic: ContextualDecision, context: CommercialContext) {
+  const requiredArtifacts = extractRequiredArtifacts(deterministic.recommended_response);
+  if (!requiredArtifacts.every((artifact) => reply.includes(artifact))) return false;
+  const directiveContract = extractDirectiveContract(deterministic.recommended_response);
+  if (directiveContract.requiredSemanticOutcome && !validateResponseAgainstDirectiveContract(reply, directiveContract)) return false;
+  if (deterministic.detected_intent === "PLAN_DURATION_REQUEST") {
+    const normalizedReply = normalize(reply);
+    if (!/\bmensal\b/.test(normalizedReply) || !/\b(anual|ano)\b/.test(normalizedReply)) return false;
+    if (/\bvitalici/.test(normalize(context.current_message)) && !/\b(nao|nunca)\b/.test(normalizedReply)) return false;
+  }
+  if (deterministic.detected_intent === "FREE_TRIAL_REQUEST" && !/\b3 dias\b/.test(normalize(reply))) return false;
+  return true;
 }
 
 function detectedIntentForCommercialIntent(intent: ContextualDecision["intent"]): ContextualDecision["detected_intent"] {
@@ -910,6 +980,11 @@ function isSimpleGreeting(normalized: string) {
 function isAllPlanPricesRequest(normalized: string) {
   return /\b(todos|todas|tabela|opcoes|quais valores|valores dos planos|quais planos)\b/.test(normalized) &&
     /\b(valor|valores|preco|precos|plano|planos|mensal|trimestral|semestral|anual)\b/.test(normalized);
+}
+
+function isPlanDurationQuestion(normalized: string) {
+  return /\bvitalici[oa]\b/.test(normalized) ||
+    (/\b(mes|mensal)\b/.test(normalized) && /\b(ano|anual)\b/.test(normalized));
 }
 
 function getRequestedPlanPrice(normalized: string): { plan: NonNullable<ContextualDecision["selected_plan"]>; reply: string } | null {
@@ -1066,12 +1141,12 @@ function toJsonSchema() {
     type: "object",
     additionalProperties: false,
     properties: {
-      action: { type: "string" },
-      intent: { type: "string" },
-      next_state: { type: "string" },
-      meaning: { type: "string" },
-      reason: { type: "string" },
-      reply: { type: "string" },
+      action: { type: "string", enum: ["reply", "silent", "wait", "handoff"] },
+      intent: { type: "string", enum: commercialIntentSchema.options },
+      next_state: { type: "string", enum: CANONICAL_CONVERSATION_STATES },
+      meaning: { type: "string", minLength: 1, maxLength: 120 },
+      reason: { type: "string", minLength: 1, maxLength: 120 },
+      reply: { type: "string", maxLength: 240 },
       confidence: { type: "number", minimum: 0, maximum: 1 }
     },
     required: ["action", "intent", "next_state", "meaning", "reason", "reply", "confidence"]

@@ -12,7 +12,7 @@ describe("OpenAI economy policy", () => {
       messageCharacters: 140,
       knowledgeArticles: 1,
       knowledgeCharacters: 240,
-      maxOutputTokens: 90
+      maxOutputTokens: 180
     });
     expect(OPENAI_ECONOMY_POLICY.contextualResponse).toMatchObject({
       recentMessages: 4,

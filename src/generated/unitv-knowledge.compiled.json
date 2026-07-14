@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_hash": "942e21c8f15624bb098234dd5ff9a06922fbb678be330b156f3cd14895dae509",
-  "generated_at": "2026-07-14T19:55:24.476Z",
+  "source_hash": "523ed595ac2e18027ae95b8a100e6ae40af7e3b1cbf821851d415e595f7f17d8",
+  "generated_at": "2026-07-14T22:20:07.041Z",
   "facts": [
     {
       "id": "13eb990749a776a19eba",
@@ -1991,6 +1991,13 @@
       "stages": []
     },
     {
+      "id": "4dba7cecec7eb5a7a9ce",
+      "text": "responder \"Pode me dizer o que voce gostaria de saber?\" quando a pergunta direta puder ser entendida pela IA;",
+      "source_file": "02_O_QUE_NUNCA_FAZER.md",
+      "heading": "Nunca Substituir Falha Da IA Por Mensagem Programada",
+      "stages": []
+    },
+    {
       "id": "f5565152bb7d9bc32d12",
       "text": "disparar menu com texto fixo;",
       "source_file": "02_O_QUE_NUNCA_FAZER.md",
@@ -3430,6 +3437,48 @@
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "O que nunca fazer",
       "stages": []
+    },
+    {
+      "id": "830a3acf30ffb1a9fea6",
+      "text": "Reutilizar a resposta da unica chamada; nunca abrir uma segunda IA apenas para reescrever.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "e93069fd2950c81ab005",
+      "text": "Nunca enviar \"Pode me dizer o que voce gostaria de saber?\" quando a pergunta direta tem sentido claro.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "5077d0f50d73a860e366",
+      "text": "Nunca substituir uma resposta contextual por fallback comercial programado.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "899c4ded851428472854",
+      "text": "Nunca deixar a protecao contra repeticao ser o primeiro componente a descobrir que o fallback estava errado.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "29a6aa9153c015b50658",
+      "text": "Nunca permitir que a IA invente preco, duracao, compatibilidade, Pix, pagamento ou codigo; esses fatos continuam validados pelas guardas.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "ea67ce68fc19609082a4",
+      "text": "Nunca confundir guarda de seguranca com texto final para o cliente.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
     }
   ],
   "handoff_conditions": [
@@ -4587,6 +4636,13 @@
       "text": "A autoridade final deve converter qualquer tentativa de saudacao com `allowInitialGreeting=false` em `silent`.",
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "O que fazer",
+      "stages": []
+    },
+    {
+      "id": "29a6aa9153c015b50658",
+      "text": "Nunca permitir que a IA invente preco, duracao, compatibilidade, Pix, pagamento ou codigo; esses fatos continuam validados pelas guardas.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
       "stages": []
     }
   ],
@@ -6566,6 +6622,7 @@
       "rule_without_test_reference:02_O_QUE_NUNCA_FAZER.md:0d6239792e2aa32931be",
       "rule_without_test_reference:02_O_QUE_NUNCA_FAZER.md:1085bb14e56a2bc54993",
       "rule_without_test_reference:02_O_QUE_NUNCA_FAZER.md:adcb40295e2023aecd29",
+      "rule_without_test_reference:02_O_QUE_NUNCA_FAZER.md:4dba7cecec7eb5a7a9ce",
       "rule_without_test_reference:02_O_QUE_NUNCA_FAZER.md:f5565152bb7d9bc32d12",
       "rule_without_test_reference:02_O_QUE_NUNCA_FAZER.md:31f043e083a5e2116917",
       "rule_without_test_reference:02_O_QUE_NUNCA_FAZER.md:c78405979b4c3a55799f",

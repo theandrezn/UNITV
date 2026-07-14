@@ -162,7 +162,7 @@ export class ChatAgentService {
     if (conversationBrainDecision?.directReply) {
       return {
         reply: conversationBrainDecision.directReply,
-        responseSource: "local_rule",
+        responseSource: input.contextualDecision?.source === "ai" ? "ai" : "local_rule",
         responseRule: conversationBrainDecision.responseRule,
         leadProfilePatch: conversationBrainDecision.leadProfilePatch
       };
@@ -185,6 +185,25 @@ export class ChatAgentService {
         ...activeDownloadReply,
         responseSource: "local_rule",
         responseRule: "active_download_flow"
+      };
+    }
+
+    if (detectUnitvDevice(message) === "hq_tv") {
+      const hqCompatibilityReply = getInstallationReply(message);
+      if (hqCompatibilityReply) {
+        return {
+          ...hqCompatibilityReply,
+          responseSource: "local_rule",
+          responseRule: "hq_android_compatibility_check"
+        };
+      }
+    }
+
+    const contextualUnderstandingReply = buildContextualUnderstandingReply(input.contextualDecision, conversationIntelligence);
+    if (input.contextualDecision?.source === "ai" && contextualUnderstandingReply) {
+      return {
+        ...contextualUnderstandingReply,
+        responseSource: "ai"
       };
     }
 
@@ -217,18 +236,6 @@ export class ChatAgentService {
       };
     }
 
-    if (detectUnitvDevice(message) === "hq_tv") {
-      const hqCompatibilityReply = getInstallationReply(message);
-      if (hqCompatibilityReply) {
-        return {
-          ...hqCompatibilityReply,
-          responseSource: "local_rule",
-          responseRule: "hq_android_compatibility_check"
-        };
-      }
-    }
-
-    const contextualUnderstandingReply = buildContextualUnderstandingReply(input.contextualDecision, conversationIntelligence);
     if (contextualUnderstandingReply) {
       return {
         ...contextualUnderstandingReply,
@@ -1413,7 +1420,7 @@ function buildContextualUnderstandingReply(
 
   if (decision.next_action === "show_monthly_plan" && decision.detected_intent === "PLAN_PRICE_REQUEST") {
     return {
-      reply: buildMonthlyPriceComparisonReply(context.leadProfile),
+      reply: decision.source === "ai" && safeResponse ? safeResponse : buildMonthlyPriceComparisonReply(context.leadProfile),
       responseRule: "contextual_understanding_generic_price_monthly",
       leadProfilePatch: buildMonthlyOfferPatch("ask_generic_price")
     };
@@ -1421,7 +1428,7 @@ function buildContextualUnderstandingReply(
 
   if (decision.next_action === "answer_screen_coverage" && decision.detected_intent === "PLAN_SCREEN_COVERAGE") {
     return {
-      reply: buildMonthlyScreenCoverageReply(),
+      reply: decision.source === "ai" && safeResponse ? safeResponse : buildMonthlyScreenCoverageReply(),
       responseRule: "contextual_understanding_monthly_screen_coverage",
       leadProfilePatch: {
         selected_plan: decision.selected_plan || "mensal",
@@ -1430,6 +1437,53 @@ function buildContextualUnderstandingReply(
         stage: "plan_selected",
         last_customer_intent: "ask_monthly_screen_coverage",
         next_expected_reply: null
+      }
+    };
+  }
+
+  if (
+    decision.source === "ai" &&
+    decision.next_action === "show_requested_prices" &&
+    decision.detected_intent === "PLAN_PRICE_REQUEST" &&
+    safeResponse
+  ) {
+    return {
+      reply: safeResponse,
+      responseRule: decision.selected_plan
+        ? `contextual_ai_plan_price_${decision.selected_plan}`
+        : "contextual_ai_all_plan_prices",
+      leadProfilePatch: {
+        selected_plan: decision.selected_plan,
+        plano_interesse: decision.selected_plan,
+        commercial_stage: decision.selected_plan ? "plan_selected" : "plan_preference",
+        stage: decision.selected_plan ? "plan_selected" : "plan_preference",
+        last_customer_intent: decision.selected_plan ? "specific_plan_price" : "all_plan_prices",
+        next_expected_reply: "plan_choice"
+      }
+    };
+  }
+
+  if (
+    decision.source === "ai" &&
+    decision.next_action === "ask_payment_method" &&
+    safeResponse &&
+    !/(R\$\s*\d|https?:\/\/|copia e cola|qr\s*code|comprovante|c[oó]digo de acesso|\bUTV-|\b862585\b)/i.test(safeResponse) &&
+    isSafeAICommercialReply(
+      safeResponse,
+      context.leadProfile,
+      context.latestBotMessage ? [{ role: "assistant", content: context.latestBotMessage }] : []
+    )
+  ) {
+    return {
+      reply: safeResponse,
+      responseRule: "contextual_ai_payment_method_question",
+      leadProfilePatch: {
+        selected_plan: decision.selected_plan || context.leadProfile.selected_plan || null,
+        plano_interesse: decision.selected_plan || context.leadProfile.plano_interesse || null,
+        commercial_stage: "plan_selected",
+        stage: "plan_selected",
+        last_customer_intent: "choose_plan",
+        next_expected_reply: "payment_method"
       }
     };
   }
@@ -1532,7 +1586,9 @@ function buildContextualUnderstandingReply(
       "ask_download_problem",
       "ask_installation_status",
       "continue_recharge_flow",
-      "clarify_intent"
+      "clarify_intent",
+      "answer_plan_duration",
+      "no_safe_action"
     ].includes(decision.next_action) &&
     !/(R\$\s*\d|https?:\/\/|pix|copia e cola|qr\s*code|pagamento|comprovante|c[oó]digo de acesso|\bUTV-|\b862585\b)/i.test(safeResponse) &&
     isSafeAICommercialReply(

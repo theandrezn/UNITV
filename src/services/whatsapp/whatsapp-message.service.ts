@@ -1098,6 +1098,7 @@ export class WhatsappMessageService {
       responseGeneratedByAI,
       intent,
       reply,
+      responseRule,
       hasMedia: Boolean(media),
       hasCopyText: Boolean(copyText),
       hasFollowUpMessages: Boolean(followUpMessages?.length),
@@ -2141,8 +2142,6 @@ export function canDeliverAuthoritativeLocalReply(input: {
 }
 
 const STATE_GUARDED_LOCAL_RESPONSE_RULES = new Set([
-  "blocked_low_risk_handoff_awaiting_customer",
-  "conversation_intelligence_low_risk_recovery",
   "active_download_flow",
   "expected_device_answer",
   "hq_android_compatibility_check"
@@ -2164,6 +2163,7 @@ export function canReuseUpstreamAIReply(input: {
   responseGeneratedByAI?: boolean;
   intent: string;
   reply: string;
+  responseRule?: string;
   hasMedia?: boolean;
   hasCopyText?: boolean;
   hasFollowUpMessages?: boolean;
@@ -2172,8 +2172,41 @@ export function canReuseUpstreamAIReply(input: {
   if (!input.responseGeneratedByAI || !input.reply.trim()) return false;
   if (input.hasMedia || input.hasCopyText || input.hasFollowUpMessages || input.hasMenu) return false;
   if (/(pix|payment|pagamento|card|cartao|receipt|comprovante|activation|ativacao|code|codigo)/i.test(input.intent)) return false;
-  if (/(R\$\s*\d|https?:\/\/|pix|copia e cola|qr\s*code|pagamento|comprovante|c[oó]digo de acesso|\bUTV-|\b862585\b)/i.test(input.reply)) return false;
+  if (input.responseRule === "contextual_ai_payment_method_question") {
+    const normalized = input.reply.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    return /\b(pix|cartao)\b/.test(normalized) &&
+      !/(R\$\s*\d|https?:\/\/|copia e cola|qr\s*code|comprovante|c[oó]digo de acesso|\bUTV-|\b862585\b)/i.test(input.reply);
+  }
+  if (/R\$\s*\d/i.test(input.reply)) {
+    return isAuthorizedAIPriceReply(input.reply, String(input.responseRule || ""));
+  }
+  if (/(https?:\/\/|pix|copia e cola|qr\s*code|pagamento|comprovante|c[oó]digo de acesso|\bUTV-|\b862585\b)/i.test(input.reply)) return false;
   return true;
+}
+
+function isAuthorizedAIPriceReply(reply: string, responseRule: string) {
+  const normalized = reply.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const amounts = [...reply.matchAll(/R\$\s*(\d+(?:[.,]\d{1,2})?)/gi)]
+    .map((match) => Number(match[1].replace(".", "").replace(",", ".")));
+  if (!amounts.length) return false;
+  if (responseRule === "contextual_understanding_generic_price_monthly") {
+    return amounts.every((amount) => amount === 20.9) && /\bmensal\b/.test(normalized) && /\binteresse\b/.test(normalized);
+  }
+  if (responseRule === "contextual_ai_all_plan_prices") {
+    return /\bmensal\b/.test(normalized) && /\btrimestral\b/.test(normalized) &&
+      /\bsemestral\b/.test(normalized) && /\banual\b/.test(normalized) &&
+      [20.9, 70, 120, 200].every((amount) => amounts.includes(amount));
+  }
+  const planAmounts: Record<string, number> = {
+    mensal: 20.9,
+    trimestral: 70,
+    semestral: 120,
+    anual: 200
+  };
+  const match = responseRule.match(/^contextual_ai_plan_price_(mensal|trimestral|semestral|anual)$/);
+  if (!match) return false;
+  const expected = planAmounts[match[1]];
+  return amounts.every((amount) => amount === expected) && normalized.includes(match[1]);
 }
 
 type ManualPaymentCommand = {

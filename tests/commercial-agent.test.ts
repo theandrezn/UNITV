@@ -1505,6 +1505,48 @@ describe("commercial WhatsApp agent", () => {
     });
   });
 
+  it("uses the contextual AI wording for a plan-duration question instead of the generic bot fallback", async () => {
+    const { service } = createChatAgent();
+    const aiReply = "Nao e vitalicio: temos planos mensal, trimestral, semestral e anual. Quer conhecer o mensal?";
+    const deterministic = extractDeterministicDecision({
+      current_message: "Esse aplicativo e vitalicio",
+      recent_messages: [{ role: "assistant", content: INITIAL_UNITV_REPLY }],
+      lead_profile: { conversation_state: "welcome_sent", saudacao_enviada: true },
+      open_order: null,
+      latest_order: null,
+      last_bot_question: "Como posso ajudar?",
+      last_bot_message_at: null,
+      last_specialist_message_at: null,
+      followup_key: null,
+      followup_due_at: null,
+      human_hold_active: false
+    });
+    const contextualDecision = {
+      ...deterministic,
+      source: "ai" as const,
+      recommended_response: aiReply,
+      confidence: 0.96
+    };
+
+    const result = await service.generateCommercialReply({
+      message: "Esse aplicativo e vitalicio",
+      classification: { intent: "unknown", confidence: 0.2, summary: "duvida de duracao", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: {
+        id: "conversation-id",
+        metadata: { lead_profile: { conversation_state: "welcome_sent", stage: "welcome_sent", saudacao_enviada: true } }
+      },
+      recentMessages: [{ role: "assistant", content: INITIAL_UNITV_REPLY }],
+      contextualDecision,
+      webhookEventId: "webhook-duration"
+    });
+
+    expect(result.reply).toBe(aiReply);
+    expect(result.responseSource).toBe("ai");
+    expect(result.responseRule).toBe("contextual_interpreter_single_ai_reply");
+    expect(result.reply).not.toBe("Pode me dizer o que voce gostaria de saber?");
+  });
+
   it("uses one contextual AI conclusion instead of paying a second model to restyle it", async () => {
     const salesResponseAIService = { generateResponse: vi.fn(async () => "nao deveria chamar") };
     const { service } = createChatAgent({ salesResponseAIService });
@@ -1600,6 +1642,18 @@ describe("commercial WhatsApp agent", () => {
       intent: "ask_price",
       reply: "O plano custa R$ 25."
     })).toBe(false);
+    expect(canReuseUpstreamAIReply({
+      responseGeneratedByAI: true,
+      intent: "unknown",
+      responseRule: "contextual_interpreter_single_ai_reply",
+      reply: "Nao e vitalicio: temos planos mensal, trimestral, semestral e anual. Quer conhecer o mensal?"
+    })).toBe(true);
+    expect(canReuseUpstreamAIReply({
+      responseGeneratedByAI: true,
+      intent: "ask_price",
+      responseRule: "contextual_understanding_generic_price_monthly",
+      reply: "O mensal sai por R$ 20,90. Voce tem interesse pra hoje?"
+    })).toBe(true);
   });
 
   it("delivers only authoritative local facts without opening a second AI writer", () => {
@@ -1635,6 +1689,11 @@ describe("commercial WhatsApp agent", () => {
       responseGeneratedByAI: true,
       responseRule: "contextual_understanding_free_trial",
       reply: "Resposta gerada pela IA"
+    })).toBe(false);
+    expect(canDeliverStateGuardedLocalReply({
+      responseGeneratedByAI: false,
+      responseRule: "blocked_low_risk_handoff_awaiting_customer",
+      reply: "Pode me dizer o que voce gostaria de saber?"
     })).toBe(false);
   });
 
@@ -4260,6 +4319,113 @@ describe("commercial WhatsApp agent", () => {
     expect(auditService.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
       action: "state_guarded_local_response_used",
       metadata: expect.objectContaining({ avoided_openai_call: true })
+    }));
+  });
+
+  it("delivers the AI-formulated duration answer after a prior generic fallback instead of repeating or going silent", async () => {
+    const aiReply = "Temos plano mensal e anual, alem do trimestral e semestral. Quer conhecer o mensal?";
+    const contextualDecision = {
+      ...extractDeterministicDecision({
+        current_message: "Esse aplicativo e por ano ou por mes",
+        recent_messages: [],
+        lead_profile: { conversation_state: "new_lead", saudacao_enviada: true },
+        open_order: null,
+        latest_order: null,
+        last_bot_question: "Pode me dizer o que voce gostaria de saber?",
+        last_bot_message_at: "2026-07-14T21:56:28.000Z",
+        last_specialist_message_at: null,
+        followup_key: null,
+        followup_due_at: null,
+        human_hold_active: false
+      }),
+      source: "ai" as const,
+      recommended_response: aiReply,
+      confidence: 0.96
+    };
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({
+        id: "conversation-duration",
+        customer_id: "customer-id",
+        conversation_state: "new_lead",
+        metadata: {
+          last_bot_message_at: "2026-07-14T21:56:28.000Z",
+          lead_profile: {
+            conversation_state: "new_lead",
+            stage: "new_lead",
+            saudacao_enviada: true,
+            last_bot_question: "Pode me dizer o que voce gostaria de saber?"
+          }
+        }
+      })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: _id, metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data })),
+      listMessagesByConversationId: vi.fn(async () => ([
+        { role: "assistant", content: INITIAL_UNITV_REPLY, external_message_id: "assistant-greeting", created_at: "2026-07-14T21:55:53.000Z" },
+        { role: "customer", content: "Esse aplicativo e vitalicio", external_message_id: "customer-duration-1", created_at: "2026-07-14T21:56:20.000Z" },
+        { role: "assistant", content: "Pode me dizer o que voce gostaria de saber?", external_message_id: "assistant-generic", created_at: "2026-07-14T21:56:28.000Z" },
+        { role: "customer", content: "Esse aplicativo e por ano ou por mes", external_message_id: "customer-duration-2", created_at: "2026-07-14T21:57:00.000Z" }
+      ]))
+    };
+    const evolutionService = { sendTextMessage: vi.fn(async () => ({ id: "provider-id" })) };
+    const auditService = { createAuditLog: vi.fn(async () => ({})) };
+    const contextualWriter = { generateResponse: vi.fn(async () => null) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", name: "Cliente" })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      { classify: vi.fn(async () => ({ intent: "unknown", confidence: 0.2, summary: "duvida de duracao", suggested_reply: "" })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({
+        reply: aiReply,
+        responseSource: "ai",
+        responseRule: "contextual_interpreter_single_ai_reply",
+        leadProfilePatch: { stage: "price_discovery", commercial_stage: "price_discovery", next_expected_reply: "plan_choice" }
+      })) } as never,
+      evolutionService as never,
+      auditService as never,
+      { findLatestOpenOrderByCustomerId: vi.fn(async () => null), findLatestOrderByCustomerId: vi.fn(async () => null) } as never,
+      {} as never,
+      {} as never,
+      undefined,
+      {} as never,
+      { safeCreateEvent: vi.fn(async () => ({})) } as never,
+      undefined,
+      { extract: vi.fn(async () => contextualDecision) } as never,
+      undefined,
+      undefined,
+      { isLatestMessageInBurst: vi.fn(async () => true) } as never,
+      contextualWriter as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-duration",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "customer-duration-2",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Esse aplicativo e por ano ou por mes",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(result).toMatchObject({ status: "processed", reply: aiReply });
+    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({ phone: "5511999998888", text: aiReply });
+    expect(contextualWriter.generateResponse).not.toHaveBeenCalled();
+    expect(auditService.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({ action: "contextual_ai_response_reused" }));
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalledWith(expect.objectContaining({
+      text: "Pode me dizer o que voce gostaria de saber?"
     }));
   });
 

@@ -11,7 +11,7 @@ export const OPENAI_ECONOMY_POLICY = Object.freeze({
     knowledgeCharacters: 420
   },
   contextualDecision: {
-    maxOutputTokens: 90,
+    maxOutputTokens: 180,
     currentMessageCharacters: 180,
     profileValueCharacters: 90,
     specialistGuidanceCharacters: 70,
