@@ -353,7 +353,8 @@ export class WhatsappFollowupService {
       const sendResult = await this.evolutionService.sendTextMessage({ phone, text: followupText });
       const leadProfile = readLeadProfile(metadata);
       const nextLeadRecoveryDueAt = leadRecovery ? getNextLeadRecoveryDueAt(leadRecovery.step, now) : null;
-      const sentSpecialOffer = promoRecovery || decision.new_followup_key === MONTHLY_PROMO_FOLLOWUP_KEY;
+      // Automatic monthly discounts are disabled; legacy accepted agreements are handled only by ChatAgentService.
+      const sentSpecialOffer = false;
       const nextMetadata = {
         ...metadata,
         followup_due_at: nextLeadRecoveryDueAt,
@@ -545,7 +546,7 @@ export class WhatsappFollowupService {
           ? "Este e um follow-up de pre-venda: o cliente disse que faria depois. Peca permissao para mandar a chave Pix, com baixa pressao, sem reiniciar saudacao, sem tabela completa e sem inventar nome."
           : "",
         input.decision.new_followup_key === MONTHLY_PROMO_FOLLOWUP_KEY
-          ? "Esta condicao foi autorizada pelo sistema: mensal por R$ 19,99. Mencione exatamente esse valor, componha uma frase nova e faca uma unica pergunta de interesse. Nao cite outro preco nem gere Pix."
+          ? "A promocao automatica antiga esta desativada. Se este caminho for alcancado, nao envie desconto e nao gere Pix."
           : "",
         "Nao invente Pix, preco, codigo, pagamento confirmado ou compatibilidade."
       ].join("\n"),
@@ -1253,9 +1254,8 @@ export function buildLeadRecoveryFollowupText(
 
   if (step === 2) {
     return [
-      firstName ? `${namePrefix}consigo uma condicao melhor pra sua primeira recarga.` : "Consigo uma condicao melhor pra sua primeira recarga.",
-      "O mensal e R$ 25, mas pra voce comecar consigo deixar por R$ 19,99.",
-      "Voce tem interesse?"
+      firstName ? `${namePrefix}o plano mensal fica em R$ 20,90.` : "O plano mensal fica em R$ 20,90.",
+      "Voce tem interesse pra hoje?"
     ].join("\n\n");
   }
 
@@ -1269,42 +1269,14 @@ export function buildLeadRecoveryFollowupText(
 
   return [
     firstName ? `Oi, ${firstName}` : "Oi",
-    "Ainda quer ver a condicao especial da UNITV?",
-    "Consigo deixar o mensal por R$ 19,99 pra voce comecar. Se fizer sentido pra voce, eu te explico o proximo passo."
+    "O plano mensal fica em R$ 20,90.",
+    "Voce tem interesse pra hoje?"
   ].join("\n\n");
 }
 
 export function shouldSendPromoRecoveryFollowup(metadata: Record<string, unknown>) {
-  const key = String(metadata.followup_key || "");
-  if (key !== "payment_choice") {
-    return false;
-  }
-
-  const profile = readLeadProfile(metadata);
-  if (metadata.promo_followup_sent_at || profile.special_promo_followup_sent) {
-    return false;
-  }
-
-  if (
-    profile.payment_status === "confirmed" ||
-    profile.payment_status === "paid" ||
-    profile.order_status === "paid" ||
-    profile.codigo_enviado === true ||
-    profile.converted === true
-  ) {
-    return false;
-  }
-
-  return Boolean(
-    profile.nivel_interesse === "quente" ||
-      profile.nivel_interesse === "muito_quente" ||
-      profile.pediu_pix ||
-      profile.wants_activation ||
-      profile.wants_recharge ||
-      profile.selected_plan ||
-      profile.plano_interesse ||
-      metadata.plan_interest
-  );
+  void metadata;
+  return false;
 }
 
 export function buildPromoRecoveryFollowupText(
@@ -1312,11 +1284,10 @@ export function buildPromoRecoveryFollowupText(
   conversation?: Pick<ConversationRow, "customers">
 ) {
   const firstName = readFirstName(conversation?.customers?.name || readLeadProfile(metadata).nome);
-  const prefix = firstName ? `${firstName}, consigo` : "Consigo";
+  const prefix = firstName ? `${firstName}, o` : "O";
   return [
-    `${prefix} uma condicao melhor pra voce comecar.`,
-    "O mensal e R$ 25, mas consigo deixar por R$ 19,99 na primeira recarga.",
-    "Voce tem interesse?"
+    `${prefix} plano mensal fica em R$ 20,90.`,
+    "Voce tem interesse pra hoje?"
   ].join("\n\n");
 }
 
@@ -1345,7 +1316,7 @@ export function buildFollowupText(metadata: Record<string, unknown>) {
   }
 
   if (key === MONTHLY_PROMO_FOLLOWUP_KEY) {
-    return "Consigo deixar o mensal por R$ 19,99 hoje. Quer aproveitar essa condicao?";
+    return "O plano mensal fica em R$ 20,90. Voce tem interesse pra hoje?";
   }
 
   if (key === "pre_sale_recharge_later_4h") {

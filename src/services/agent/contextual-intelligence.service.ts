@@ -151,7 +151,7 @@ const SYSTEM_PROMPT = [
   "Consulte a base de conhecimento recebida para fatos, fluxo e estilo, sem copiar exemplos literalmente.",
   "recommended_response deve ser uma resposta final original, curta, contextual e com no maximo uma pergunta.",
   "Voce NAO executa acoes, NAO confirma pagamento, NAO cria Pix, NAO entrega codigo.",
-  "Precos oficiais: mensal R$25, trimestral R$70, semestral R$120, anual R$200.",
+  "Precos oficiais: mensal R$20,90, trimestral R$70, semestral R$120, anual R$200.",
   "Se a mensagem curta depender da ultima pergunta, use o historico para inferir a intencao.",
   "Exemplo: bot perguntou 'teste gratis ou planos?' e cliente respondeu 'Testes' => FREE_TRIAL_REQUEST, ask_device_for_trial.",
   "Exemplo: bot perguntou aparelho e cliente respondeu 'celular' => DEVICE_ANDROID_PHONE_NEEDS_CONFIRMATION, confirm_android_phone.",

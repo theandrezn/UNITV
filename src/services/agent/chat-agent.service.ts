@@ -26,6 +26,7 @@ import { SalesResponseAIService, shouldUseAIResponse } from "@/services/agent/sa
 import { getUnitvInstallationGuidance, isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
 import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
 import { validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
+import { OFFICIAL_MONTHLY_PRICE_TEXT } from "@/lib/unitv/official-catalog";
 
 export const INITIAL_UNITV_REPLY =
   "Oi, tudo bem? Você já usa o aplicativo UNITV ou seria sua primeira vez?";
@@ -33,15 +34,14 @@ export const INITIAL_UNITV_REPLY =
 const LOW_CONFIDENCE_REPLY =
   "Claro, eu te ajudo.\n\nMe confirma uma coisa: você quer comprar um plano, renovar um acesso ou precisa de ajuda com instalação?";
 
-const PLANS_TEXT = ["Mensal — R$ 25", "3 meses — R$ 70", "6 meses — R$ 120", "Anual — R$ 200"].join("\n");
+const PLANS_TEXT = [`Mensal — ${OFFICIAL_MONTHLY_PRICE_TEXT}`, "3 meses — R$ 70", "6 meses — R$ 120", "Anual — R$ 200"].join("\n");
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
 const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mensal, trimestral, semestral ou anual?";
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
-const MONTHLY_OFFER_QUESTION = "Voce teria interesse em seguir hoje?";
+const MONTHLY_OFFER_QUESTION = "Voce tem interesse pra hoje?";
 const BROAD_PRICE_QUALIFICATION_QUESTION =
   "Claro, te explico sim.\n\n" +
-  "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?\n\n" +
-  "E seria para usar em quantas telas?";
+  "Voce tem interesse em algum plano especifico: mensal, trimestral, semestral ou anual?";
 const CURRENT_RECHARGE_PRICE_QUESTION = "Voce ja faz a recarga? Se sim, faz a quanto?";
 const TRAFFIC_RECHARGE_WELCOME =
   "Ol\u00e1! Seja bem-vindo ao melhor aplicativo de filmes e canais \u{1F9E1}. Meu nome \u00e9 Andr\u00e9.\n\n" +
@@ -61,6 +61,7 @@ const CONTEXTUAL_TRIAL_DEVICE_REPLY =
 const ANDROID_PHONE_CONFIRMATION_REPLY = "So me confirma: esse celular e Android?";
 const DOWNLOAD_PROBLEM_CONTEXT_REPLY = "Tudo bem, me fala onde travou: no link, no Downloader ou na instalacao?";
 
+// Kept only to honor payment flows that were accepted before the fixed-price change.
 const SPECIAL_PROMO_OFFER_ID = "mensal_19_99_first_2_months";
 const SPECIAL_PROMO_MONTHLY_PRICE_CENTS = 1999;
 
@@ -216,7 +217,7 @@ export class ChatAgentService {
       return {
         reply:
           "Perfeito. Como você já baixou o app, agora posso te ajudar com a ativação. " +
-          "Você quer liberar o teste grátis de 3 dias ou já ativar o mensal de R$ 25?"
+          `Você quer liberar o teste grátis de 3 dias ou já ativar o mensal de ${OFFICIAL_MONTHLY_PRICE_TEXT}?`
       };
     }
     const deterministicInstallationReply = intent === "technical_support" ? getInstallationReply(message) : null;
@@ -401,7 +402,7 @@ export class ChatAgentService {
       }
       return {
         reply: objectionReply ||
-          "O mensal fica R$ 25.\n\n" +
+          `O mensal fica ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n` +
           "Também temos planos maiores:\n" +
           "3 meses — R$ 70\n" +
           "6 meses — R$ 120\n" +
@@ -1846,7 +1847,7 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
 
   if (/\b(nao paguei|ainda nao paguei|nao fiz o pagamento|nem paguei|n paguei)\b/.test(normalized)) {
     return {
-      reply: "Sem problema. Voc\u00ea quer seguir com o mensal de R$ 25 ou prefere fazer o teste gr\u00e1tis de 3 dias primeiro?"
+      reply: `Sem problema. Voce quer seguir com o mensal de ${OFFICIAL_MONTHLY_PRICE_TEXT} ou prefere fazer o teste gratis de 3 dias primeiro?`
     };
   }
 
@@ -1913,19 +1914,19 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
     return {
       reply:
         "Perfeito. Como voc\u00ea j\u00e1 baixou o app, agora posso te ajudar com a ativa\u00e7\u00e3o. " +
-        "Voc\u00ea quer liberar o teste gr\u00e1tis de 3 dias ou j\u00e1 ativar o mensal de R$ 25?"
+        `Voce quer liberar o teste gratis de 3 dias ou ja ativar o mensal de ${OFFICIAL_MONTHLY_PRICE_TEXT}?`
     };
   }
 
   if (/\b(ja uso|ja usei|ja tenho|ja conheco|uso o app|uso unitv)\b/.test(normalized)) {
     return {
       reply: selectedPlan === "mensal"
-        ? "\u00d3timo, ent\u00e3o voc\u00ea j\u00e1 conhece o app. Quer seguir com o mensal de R$ 25 agora?"
+        ? `Otimo, entao voce ja conhece o app. Quer seguir com o mensal de ${OFFICIAL_MONTHLY_PRICE_TEXT} agora?`
         : PLAN_PREFERENCE_QUESTION
     };
   }
 
-  if (/^(sim|s|isso|ok|pode|quero|pode ser)$/.test(normalized) && /\b(interesse em seguir hoje|quer seguir com ele)\b/.test(lastBotQuestion)) {
+  if (/^(sim|s|isso|ok|pode|quero|pode ser)$/.test(normalized) && /\b(interesse (?:em seguir|pra|para) hoje|quer seguir com ele)\b/.test(lastBotQuestion)) {
     return {
       reply: PAYMENT_TEXT,
       leadProfilePatch: {
@@ -1984,28 +1985,25 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
   if (/\b(faz a quanto|recarga.*quanto|quanto voce paga|quanto vc paga)\b/.test(lastBotQuestion)) {
     if (isFirstRechargeOnlyTestMessage(normalized)) {
       return {
-        reply: buildFirstRechargePromoReply(leadProfile),
-        leadProfilePatch: buildSoftPromoOfferPatch({
-          currentRechargePriceCents: null,
-          lastCustomerIntent: "first_recharge_after_trial"
-        })
+        reply: buildMonthlyPriceComparisonReply(leadProfile),
+        leadProfilePatch: buildMonthlyOfferPatch("first_recharge_after_trial")
       };
     }
 
     const currentPriceCents = extractCurrencyCents(normalized);
     if (currentPriceCents && currentPriceCents <= 2000) {
       return {
-        reply: buildSoftPriceMatchPromoReply(currentPriceCents),
-        leadProfilePatch: buildSoftPromoOfferPatch({
-          currentRechargePriceCents: currentPriceCents,
-          lastCustomerIntent: "price_objection"
-        })
+        reply: buildMonthlyPriceComparisonReply(leadProfile),
+        leadProfilePatch: {
+          ...buildMonthlyOfferPatch("price_objection"),
+          current_recharge_price_cents: currentPriceCents
+        }
       };
     }
 
     if (currentPriceCents) {
       return {
-        reply: "Entendi. O mensal comigo fica R$ 25 e eu te ajudo na ativacao por aqui.\n\nVoce quer seguir com ele?",
+        reply: `Entendi. O mensal comigo fica ${OFFICIAL_MONTHLY_PRICE_TEXT} e eu te ajudo na ativacao por aqui.\n\n${MONTHLY_OFFER_QUESTION}`,
         leadProfilePatch: {
           selected_plan: "mensal",
           plano_interesse: "mensal",
@@ -2014,7 +2012,7 @@ function getContextualCommercialReply(message: string, leadProfile: Record<strin
           current_recharge_price_cents: currentPriceCents,
           last_customer_intent: "choose_plan",
           next_expected_reply: "plan_confirmation",
-          last_bot_question: "Voce quer seguir com ele?"
+          last_bot_question: MONTHLY_OFFER_QUESTION
         }
       };
     }
@@ -2066,52 +2064,19 @@ function buildTrafficRechargeWelcomeReply(): CommercialReplyResult {
 }
 
 function buildMonthlyPriceComparisonReply(leadProfile: Record<string, unknown>) {
-  const firstName = getLeadFirstName(leadProfile);
-  const namePart = firstName ? `, ${firstName},` : "";
-  return `O mensal${namePart} esta saindo a R$ 25.\n\n${MONTHLY_OFFER_QUESTION}`;
+  void leadProfile;
+  return `O plano mensal fica em ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n${MONTHLY_OFFER_QUESTION}`;
 }
 
-function buildFirstRechargePromoReply(leadProfile: Record<string, unknown>) {
-  const deviceLabel = getKnownDeviceLabel(leadProfile);
-  const activationQuestion = deviceLabel
-    ? `Voce tem interesse em ativar o mensal no ${deviceLabel}?`
-    : "Voce tem interesse em ativar o mensal?";
-  return [
-    "Entendi. Como voce ja fez o teste, agora seria sua primeira recarga mesmo.",
-    "Como e sua primeira vez fazendo recarga, consigo deixar o mensal por R$ 19,99 pra voce comecar.",
-    `${activationQuestion} E so pra eu te orientar certinho: voce ja tem o app instalado ai?`
-  ].join("\n\n");
-}
-
-function buildSoftPriceMatchPromoReply(currentPriceCents: number) {
-  const currentPrice = currentPriceCents <= 2000 ? "nesse valor" : "perto desse valor";
-  return [
-    `Entendi, voce ja fazia recarga ${currentPrice}.`,
-    "Consigo deixar o mensal por R$ 19,99 pra voce comecar aqui comigo.",
-    "Voce tem interesse?"
-  ].join("\n\n");
-}
-
-function buildSoftPromoOfferPatch({
-  currentRechargePriceCents,
-  lastCustomerIntent
-}: {
-  currentRechargePriceCents: number | null;
-  lastCustomerIntent: string;
-}) {
+function buildMonthlyOfferPatch(lastCustomerIntent: string) {
   return {
     selected_plan: "mensal",
     plano_interesse: "mensal",
-    commercial_stage: "special_promo_offered",
-    stage: "special_promo_offered",
-    ...(currentRechargePriceCents ? { current_recharge_price_cents: currentRechargePriceCents } : {}),
-    special_promo_followup_sent: true,
-    special_promo_offer: SPECIAL_PROMO_OFFER_ID,
-    special_promo_price_cents: SPECIAL_PROMO_MONTHLY_PRICE_CENTS,
-    original_price_cents: 2500,
+    commercial_stage: "monthly_offer_pending",
+    stage: "monthly_offer_pending",
     last_customer_intent: lastCustomerIntent,
-    next_expected_reply: "promo_confirmation",
-    last_bot_question: "Voce tem interesse?"
+    next_expected_reply: "monthly_offer_interest",
+    last_bot_question: MONTHLY_OFFER_QUESTION
   };
 }
 
@@ -2443,7 +2408,7 @@ function getSalesObjectionReply(message: string): { reply: string; menu?: WhatsA
   if (/\b(qual valor|valor|preco|preço|quanto custa|planos?)\b/.test(normalized)) {
     return {
       reply:
-        "O mensal fica R$ 25.\n\n" +
+        `O mensal fica ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\n` +
         "Também temos:\n" +
         PLANS_TEXT +
         "\n\nO mensal é uma boa opção para começar. Se você quiser economizar mais, o anual sai melhor no custo-benefício.\n\n" +
@@ -2455,7 +2420,7 @@ function getSalesObjectionReply(message: string): { reply: string; menu?: WhatsA
     return {
       reply:
         "Entendo.\n\n" +
-        "O mensal fica R$ 25, que é o valor mais baixo para começar.\n\n" +
+        `O mensal fica ${OFFICIAL_MONTHLY_PRICE_TEXT}, que é o valor mais baixo para começar.\n\n` +
         "Agora, se você pensa em usar por mais tempo, os planos maiores compensam mais:\n" +
         "3 meses — R$ 70\n" +
         "6 meses — R$ 120\n" +
@@ -2478,7 +2443,7 @@ function getSalesObjectionReply(message: string): { reply: string; menu?: WhatsA
       reply:
         "Entendo.\n\n" +
         "A diferença aqui é que você tem suporte para instalação, orientação na ativação e atendimento caso precise de ajuda.\n\n" +
-        "Se quiser começar sem compromisso alto, o mensal é R$ 25.\n\nQuer começar pelo mensal ou fazer o teste grátis primeiro?"
+        `Se quiser começar sem compromisso alto, o mensal é ${OFFICIAL_MONTHLY_PRICE_TEXT}.\n\nQuer começar pelo mensal ou fazer o teste grátis primeiro?`
     };
   }
 

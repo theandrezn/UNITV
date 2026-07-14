@@ -14,7 +14,12 @@ vi.mock("@/services/ai/openai-call-observer", () => ({
   executeObservedOpenAICall: async (_metadata: unknown, call: () => Promise<unknown>) => call()
 }));
 
-import { ContextualResponseAIService, extractRequiredArtifacts } from "@/services/agent/contextual-response-ai.service";
+import {
+  ContextualResponseAIService,
+  extractDirectiveContract,
+  extractRequiredArtifacts,
+  validateResponseAgainstDirectiveContract
+} from "@/services/agent/contextual-response-ai.service";
 
 describe("ContextualResponseAIService", () => {
   beforeEach(() => {
@@ -104,6 +109,44 @@ describe("ContextualResponseAIService", () => {
       "R$ 25"
     ]);
     expect(openAIResponsesCreate.mock.calls[0][0].max_output_tokens).toBe(190);
+  });
+
+  it("preserves interest for today and blocks screen questions in the monthly offer", async () => {
+    const directive = "O plano mensal fica em R$ 20,90.\n\nVoce tem interesse pra hoje?";
+    const contract = extractDirectiveContract(directive);
+    expect(validateResponseAgainstDirectiveContract(
+      "Boa noite! O plano mensal fica em R$ 20,90. Se quiser, me diga em quantas telas voce pretende usar?",
+      contract
+    )).toBe(false);
+    expect(validateResponseAgainstDirectiveContract(
+      "Boa noite! O plano mensal fica em R$ 20,90. Voce tem interesse pra hoje?",
+      contract
+    )).toBe(true);
+
+    openAIResponsesCreate.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        reply: "Boa noite! O plano mensal fica em R$ 20,90. Se quiser, me diga em quantas telas voce pretende usar?"
+      })
+    });
+    const service = new ContextualResponseAIService(createKnowledgeService() as never);
+    await expect(service.generateResponse({
+      currentMessage: "Quanto e o mensal?",
+      intent: "ask_price",
+      leadProfile: { stage: "monthly_offer_pending", selected_plan: "mensal" },
+      responseDirective: directive
+    })).resolves.toBeNull();
+
+    openAIResponsesCreate.mockResolvedValueOnce({
+      output_text: JSON.stringify({
+        reply: "Boa noite! O plano mensal fica em R$ 20,90. Voce tem interesse pra hoje?"
+      })
+    });
+    await expect(service.generateResponse({
+      currentMessage: "Quanto e o mensal?",
+      intent: "ask_price",
+      leadProfile: { stage: "monthly_offer_pending", selected_plan: "mensal" },
+      responseDirective: directive
+    })).resolves.toContain("interesse pra hoje");
   });
 });
 

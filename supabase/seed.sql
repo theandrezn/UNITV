@@ -10,7 +10,7 @@ select products.id, seed_plans.name, seed_plans.slug, seed_plans.duration_days, 
 from public.products
 cross join (
   values
-    ('Mensal', 'mensal', 30, 2500),
+    ('Mensal', 'mensal', 30, 2090),
     ('3 meses', 'trimestral', 90, 7000),
     ('6 meses', 'semestral', 180, 12000),
     ('Anual', 'anual', 365, 20000),

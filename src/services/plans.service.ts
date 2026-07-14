@@ -18,13 +18,17 @@ export class PlansService {
         const slug = normalize(String(plan.slug || ""));
         const duration = plan.duration_days ? String(plan.duration_days) : "";
         const price = Number(plan.price_cents || 0);
-        const priceNumber = price > 0 ? String(Math.round(price / 100)) : "";
+        const priceNumber = price > 0
+          ? price % 100 === 0
+            ? String(price / 100)
+            : `${Math.floor(price / 100)} ${String(price % 100).padStart(2, "0")}`
+          : "";
         const matchingAliases = getPlanAliases(plan).filter((alias) => containsNormalizedPhrase(normalizedText, alias));
         const aliasMatches = matchingAliases.length > 0;
         const matchedName = Boolean(name && containsNormalizedPhrase(normalizedText, name));
         const matchedSlug = Boolean(slug && containsNormalizedPhrase(normalizedText, slug));
         const matchedDuration = Boolean(duration && normalizedText.includes(duration));
-        const matchedPrice = Boolean(priceNumber && new RegExp(`\\b${priceNumber}\\b`).test(normalizedText));
+        const matchedPrice = Boolean(priceNumber && containsNormalizedPhrase(normalizedText, priceNumber));
 
         return {
           plan,
@@ -59,7 +63,7 @@ function getPlanAliases(plan: Record<string, unknown>) {
   const base = `${name} ${slug}`;
 
   if (durationDays === 30 || /\bmensal\b/.test(base)) {
-    return ["mensal", "mes", "1 mes", "30 dias", "de 25"];
+    return ["mensal", "mes", "1 mes", "30 dias"];
   }
   if (durationDays === 90 || /\b(3 meses|trimestral)\b/.test(base)) {
     return ["3 meses", "trimestral", "90 dias", "de 70"];

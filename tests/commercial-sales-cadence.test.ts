@@ -11,7 +11,7 @@ const plan = {
   name: "Plano Mensal",
   slug: "mensal",
   duration_days: 30,
-  price_cents: 2500,
+  price_cents: 2090,
   currency: "BRL"
 };
 
@@ -80,7 +80,7 @@ describe("commercial sales cadence", () => {
     ).valid).toBe(true);
   });
 
-  it("falls back to a soft first-recharge reply when AI tries to rush activation", async () => {
+  it("falls back to the fixed monthly offer when AI tries to rush activation", async () => {
     const salesResponseAIService = {
       generateResponse: vi.fn(async () => "Perfeito, entao vamos liberar no celular Android mesmo.")
     };
@@ -105,9 +105,10 @@ describe("commercial sales cadence", () => {
 
     expect(salesResponseAIService.generateResponse).toHaveBeenCalled();
     expect(result.responseRule).toBe("contextual_reply");
-    expect(result.reply).toContain("primeira recarga");
-    expect(result.reply).toContain("Voce tem interesse em ativar o mensal no celular Android?");
-    expect(result.reply).toContain("ja tem o app instalado");
+    expect(result.reply).toContain("R$ 20,90");
+    expect(result.reply).toContain("Voce tem interesse pra hoje?");
+    expect(result.reply.toLowerCase()).not.toContain("tela");
+    expect(result.reply.toLowerCase()).not.toContain("aparelho");
     expect(result.reply).not.toContain("vamos liberar");
   });
 });

@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
@@ -59,6 +60,19 @@ describe("learning quality and objection guardrails", () => {
     const result = await service.findPlanMentionedInText("Qual valor das mensalidades de 3 meses?");
 
     expect(result.plan?.id).toBe("quarterly");
+  });
+
+  it("recognizes the official decimal monthly price and ships its database migration", async () => {
+    const monthly = { id: "monthly", name: "Plano Mensal", slug: "mensal", duration_days: 30, price_cents: 2090 };
+    const quarterly = { id: "quarterly", name: "Plano Trimestral", slug: "trimestral", duration_days: 90, price_cents: 7000 };
+    const service = new PlansService({ listActivePlans: vi.fn(async () => [monthly, quarterly]) } as never);
+
+    const result = await service.findPlanMentionedInText("Quero o de R$ 20,90");
+    const migration = readFileSync("supabase/migrations/20260713205000_update_monthly_plan_price_to_2090.sql", "utf8");
+
+    expect(result.plan?.id).toBe("monthly");
+    expect(migration).toContain("price_cents = 2090");
+    expect(migration).toContain("where slug = 'mensal'");
   });
 
   it("acknowledges a known screen count instead of asking it again", () => {

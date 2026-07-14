@@ -147,7 +147,7 @@ export function classifyCustomerFacingResponseIntent(response: string) {
     return "pergunta_aparelho_teste";
   }
 
-  if (/\b(mensal).*\br\$ ?25\b/.test(normalized) && /\b(3 meses|6 meses|anual|r\$ ?70|r\$ ?120|r\$ ?200)\b/.test(normalized)) {
+  if (/\b(mensal).*\br\$ ?(?:20[,.]?90|25)\b/.test(normalized) && /\b(3 meses|6 meses|anual|r\$ ?70|r\$ ?120|r\$ ?200)\b/.test(normalized)) {
     return "valores_enviados";
   }
 

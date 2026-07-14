@@ -224,39 +224,13 @@ export function decideFollowupDeterministically(context: FollowupContext): Follo
   }
 
   if (followupKey === "monthly_promo_19_99_check") {
-    const monthlyOfferChanged = getMonthlyOfferContextChangeAfterSchedule(context);
-    if (monthlyOfferChanged) {
-      return cancelDecision(
-        monthlyOfferChanged === "human"
-          ? "Especialista assumiu a conversa depois da oferta mensal."
-          : "Cliente respondeu depois da oferta mensal.",
-        "A promocao de recuperacao so pode ser enviada enquanto o cliente permanecer em silencio.",
-        collectEvidence(context, ["mensal", "r$ 25", "pix", "pagamento"]),
-        "monthly_offer_pending",
-        0.98
-      );
-    }
-
-    if (hasPixOrPaymentInstructionContext(context)) {
-      return cancelDecision(
-        "A conversa avancou para Pix ou pagamento antes da promocao mensal.",
-        "Nao oferecer desconto depois que a etapa de pagamento foi iniciada.",
-        collectEvidence(context, ["pix", "chave", "pagamento"]),
-        "awaiting_payment",
-        0.98
-      );
-    }
-
-    return sendDecision({
-      type: "monthly_promo_check",
-      reason: "Cliente recebeu o valor mensal e permaneceu sem responder por 10 minutos.",
-      summary: "Lead interessado no mensal ainda nao respondeu a oferta de R$ 25.",
-      evidence: collectEvidence(context, ["mensal", "r$ 25", "interesse"]),
-      message: buildMonthlyPromoFollowupMessage(),
-      stage: "monthly_offer_pending",
-      key: "monthly_promo_19_99_check",
-      confidence: 0.96
-    });
+    return cancelDecision(
+      "A promocao mensal automatica antiga foi desativada.",
+      "O valor mensal oficial agora e fixo em R$ 20,90 e nao deve gerar oferta automatica de R$ 19,99.",
+      collectEvidence(context, ["mensal", "interesse"]),
+      "monthly_offer_pending",
+      1
+    );
   }
 
   if (followupKey === "download" || followupKey === "install" || followupKey === "post_download_check_10min") {
@@ -314,10 +288,6 @@ function buildPostDownloadFollowupMessage(context: FollowupContext) {
   if (/\b(android_phone|celular|telefone)\b/.test(device)) return "Voce conseguiu realizar o download no celular Android?";
   if (/\b(tvbox_android|tv box|tvbox)\b/.test(device)) return "Voce conseguiu realizar o download na TV Box?";
   return "Voce conseguiu realizar o download?";
-}
-
-function buildMonthlyPromoFollowupMessage() {
-  return "Consigo deixar o mensal por R$ 19,99 hoje. Quer aproveitar essa condicao?";
 }
 
 function sendDecision(input: {
@@ -503,19 +473,6 @@ function getPreSaleContextChangeAfterSchedule(context: FollowupContext): "custom
   const humanAt = dateValue(context.latest_human_message?.created_at || context.metadata.last_specialist_message_at);
   if (humanAt && humanAt > scheduledAt + 1000) return "human";
   if (customerAt && customerAt > scheduledAt + 1000) return "customer";
-  return null;
-}
-
-function getMonthlyOfferContextChangeAfterSchedule(context: FollowupContext): "customer" | "human" | null {
-  const offeredAt = dateValue(context.metadata.last_bot_monthly_offer_at || context.metadata.last_bot_message_at);
-  if (!offeredAt) {
-    return null;
-  }
-
-  const customerAt = dateValue(context.latest_customer_message?.created_at || context.metadata.last_customer_message_at);
-  const humanAt = dateValue(context.latest_human_message?.created_at || context.metadata.last_specialist_message_at);
-  if (humanAt && humanAt > offeredAt + 1000) return "human";
-  if (customerAt && customerAt > offeredAt + 1000) return "customer";
   return null;
 }
 

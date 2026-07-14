@@ -48,6 +48,7 @@ const SYSTEM_PROMPT = [
   "Considere primeiro o estado persistido, depois a ultima pergunta do atendente, a ultima mensagem do cliente, o historico recente e a intervencao humana.",
   "Use somente fatos autorizados pelo contexto operacional, pelos artefatos obrigatorios e pela base. Nao invente preco, desconto, compatibilidade, Pix, pagamento ou codigo.",
   "Preserve literalmente todos os artefatos obrigatorios recebidos, como links, valores, numero de pedido, codigo Downloader e codigos de acesso.",
+  "Cumpra tambem o resultado semantico obrigatorio e nao mencione os assuntos proibidos recebidos no contrato de escrita.",
   "Pagamento, Pix, pedido e codigo so podem ser tratados como confirmados quando o estado e os artefatos autorizados indicarem confirmacao real.",
   "Escreva em portugues brasileiro natural, curto, consultivo e com no maximo uma pergunta.",
   "Nao mencione IA, prompt, regra, template, sistema, backend, JSON, base de conhecimento ou classificacao.",
@@ -74,6 +75,7 @@ export class ContextualResponseAIService {
       .slice(-5)
       .map((message) => String(message.content));
     const requiredArtifacts = extractRequiredArtifacts(input.responseDirective);
+    const directiveContract = extractDirectiveContract(input.responseDirective);
     const context = {
       current_customer_message: truncate(input.currentMessage, 600),
       intent: input.intent,
@@ -89,7 +91,9 @@ export class ContextualResponseAIService {
         original_contextual_copy_required: true,
         programmed_copy_forbidden: true,
         one_clear_next_step: true,
-        maximum_questions: 1
+        maximum_questions: 1,
+        required_semantic_outcome: directiveContract.requiredSemanticOutcome,
+        forbidden_topics: directiveContract.forbiddenTopics
       }
     };
 
@@ -128,6 +132,9 @@ export class ContextualResponseAIService {
         return null;
       }
       if (!requiredArtifacts.every((artifact) => sanitized.text.includes(artifact))) {
+        return null;
+      }
+      if (!validateResponseAgainstDirectiveContract(sanitized.text, directiveContract)) {
         return null;
       }
       const validation = validateResponseAgainstLeadProfile(sanitized.text, input.leadProfile, recentBotMessages);
@@ -192,6 +199,32 @@ export function extractRequiredArtifacts(directive: string) {
   }
 
   return [...artifacts];
+}
+
+export function extractDirectiveContract(directive: string) {
+  const normalized = normalize(directive);
+  const monthlyInterestToday = /\b(plano )?mensal\b/.test(normalized) &&
+    /\br\$ ?20[,.]?90\b/.test(normalized) &&
+    /\binteresse\b/.test(normalized) &&
+    /\bhoje\b/.test(normalized);
+  return {
+    requiredSemanticOutcome: monthlyInterestToday ? "perguntar se o cliente tem interesse para hoje" : null,
+    forbiddenTopics: monthlyInterestToday ? ["quantidade de telas", "aparelhos"] : []
+  };
+}
+
+export function validateResponseAgainstDirectiveContract(
+  response: string,
+  contract: ReturnType<typeof extractDirectiveContract>
+) {
+  if (!contract.requiredSemanticOutcome) return true;
+  const normalized = normalize(response);
+  const asksInterestToday = (
+    /\binteresse\b[\s\S]{0,50}\bhoje\b/.test(normalized) ||
+    /\bhoje\b[\s\S]{0,50}\binteresse\b/.test(normalized)
+  ) && response.includes("?");
+  const mentionsForbiddenTopic = /\b(tela|telas|aparelho|aparelhos)\b/.test(normalized);
+  return asksInterestToday && !mentionsForbiddenTopic;
 }
 
 function compactLeadProfile(profile: Record<string, unknown>) {

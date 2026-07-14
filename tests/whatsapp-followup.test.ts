@@ -863,7 +863,7 @@ describe("WhatsappFollowupService", () => {
     expect(lastCall).not.toContain("comprovante");
     expect(lastCall).not.toContain("hoje");
     expect(buildLeadRecoveryFollowupText(1, { lead_profile: {} })).toContain("Voce ja usou o UNITV?");
-    expect(buildLeadRecoveryFollowupText(2, { lead_profile: {} }).startsWith("Consigo uma condicao melhor")).toBe(true);
+    expect(buildLeadRecoveryFollowupText(2, { lead_profile: {} })).toContain("R$ 20,90");
   });
 
   it("sends a one-time promotional recovery follow-up for hot leads before payment", async () => {
@@ -911,7 +911,7 @@ describe("WhatsappFollowupService", () => {
     );
   });
 
-  it("sends the R$ 19,99 monthly condition only after the customer stays silent for the scheduled offer", async () => {
+  it("cancels the legacy R$ 19,99 monthly promotion after the fixed-price change", async () => {
     const { service, evolutionService, conversationsRepository } = createService(
       [
         {
@@ -948,19 +948,13 @@ describe("WhatsappFollowupService", () => {
 
     const result = await service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"));
 
-    expect(result).toMatchObject({ sent: 1, skipped: 0 });
-    expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
-      phone: "5511999998888",
-      text: "Consegui uma condicao de R$ 19,99 no mensal para voce. Faz sentido aproveitar?"
-    });
+    expect(result).toMatchObject({ sent: 0, skipped: 1 });
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
     expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
       "conversation-id",
       expect.objectContaining({
-        lead_profile: expect.objectContaining({
-          special_promo_followup_sent: true,
-          special_promo_offer: "mensal_19_99_first_2_months",
-          special_promo_price_cents: 1999
-        })
+        followup_key: null,
+        followup_due_at: null
       })
     );
   });
@@ -1017,7 +1011,7 @@ describe("WhatsappFollowupService", () => {
       followup_key: "welcome_activation",
       lead_profile: { nivel_interesse: "frio" }
     })).toBe(false);
-    expect(buildPromoRecoveryFollowupText({ lead_profile: {} })).toContain("condi");
+    expect(buildPromoRecoveryFollowupText({ lead_profile: {} })).toContain("R$ 20,90");
   });
 
   it("uses stage-specific copy for payment choice and sent Pix follow-ups", () => {

@@ -153,6 +153,17 @@ describe("ConversationBrainService", () => {
     })).toMatchObject({ allowed: true, reason: "conversation_brain_followup_allowed" });
   });
 
+  it("blocks the legacy automatic monthly promotion after the fixed-price change", () => {
+    expect(validateFollowupWithConversationBrain({
+      stage: "monthly_offer_pending",
+      followupKey: "monthly_promo_19_99_check",
+      humanHoldActive: false,
+      lastBotMessage: "O plano mensal fica em R$ 20,90. Voce tem interesse pra hoje?",
+      customerRepliedAfterBaseMessage: false,
+      humanRepliedAfterBaseMessage: false
+    })).toEqual({ allowed: false, reason: "legacy_monthly_promotion_disabled" });
+  });
+
   it.each([
     ["Baixei", "Voce conseguiu baixar?", "awaiting_download_installation", "conversation_brain_download_confirmed"],
     ["Instalei", "Voce conseguiu instalar?", "awaiting_download_installation", "conversation_brain_download_confirmed"],
