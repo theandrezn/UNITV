@@ -30,7 +30,13 @@ export async function POST(request: NextRequest) {
     mode,
     scope: "greeting_recovery"
   });
-  return NextResponse.json({ status: "ok", mode, result });
+  return NextResponse.json({
+    status: "ok",
+    mode,
+    scope: "greeting_recovery",
+    token_usage: { openai_calls: 0, openai_tokens: 0 },
+    result
+  });
 }
 
 export async function GET(request: NextRequest) {
