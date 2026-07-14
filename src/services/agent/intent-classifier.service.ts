@@ -100,7 +100,6 @@ async function classifyWithResponsesApi(client: unknown, message: string, conver
         strict: true
       }
     },
-    reasoning: { effort: "low" },
     max_output_tokens: OPENAI_ECONOMY_POLICY.intent.maxOutputTokens
   })
   );

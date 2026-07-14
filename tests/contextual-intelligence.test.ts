@@ -81,7 +81,13 @@ describe("ContextualIntelligenceService economy path", () => {
     expect(openAIResponsesCreate).toHaveBeenCalledTimes(1);
     const request = openAIResponsesCreate.mock.calls[0][0];
     const compactContext = JSON.parse(request.input[1].content[0].text);
-    expect(compactContext.knowledge_base).toHaveLength(3);
+    expect(request.reasoning).toBeUndefined();
+    expect(request.max_output_tokens).toBe(200);
+    expect(compactContext.knowledge_base).toHaveLength(2);
+    expect(compactContext.knowledge_base.map((article: { category: string }) => article.category)).toEqual([
+      "suporte",
+      "o_que_nunca_fazer"
+    ]);
     expect(compactContext.recent_messages).toHaveLength(2);
     expect(compactContext.specialist_learning).toEqual({
       pattern: "cliente_ja_instalou_nao_repetir_download",

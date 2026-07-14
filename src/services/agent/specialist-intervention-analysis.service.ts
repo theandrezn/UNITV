@@ -87,7 +87,6 @@ export class SpecialistInterventionAnalysisService {
             strict: true
           }
         },
-        reasoning: { effort: "low" },
         max_output_tokens: OPENAI_ECONOMY_POLICY.specialistAnalysis.maxOutputTokens
       })
       );

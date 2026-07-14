@@ -31,7 +31,7 @@ describe("ContextualResponseAIService", () => {
     vi.unstubAllEnvs();
   });
 
-  it("writes the final reply with AI after consulting identity, guardrails and relevant Obsidian knowledge", async () => {
+  it("writes the final reply with AI using compact relevant knowledge and guardrails", async () => {
     const knowledgeService = createKnowledgeService();
     openAIResponsesCreate.mockResolvedValueOnce({
       output_text: JSON.stringify({
@@ -61,8 +61,8 @@ describe("ContextualResponseAIService", () => {
     const request = openAIResponsesCreate.mock.calls[0][0];
     const userContext = JSON.parse(request.input[1].content[0].text);
     expect(request.model).toBe("test-contextual-model");
-    expect(request.max_output_tokens).toBe(140);
-    expect(request.reasoning).toEqual({ effort: "low" });
+    expect(request.max_output_tokens).toBe(100);
+    expect(request.reasoning).toBeUndefined();
     expect(userContext.writing_contract.programmed_copy_forbidden).toBe(true);
     expect(userContext.operational_directive_not_customer_copy).toBeUndefined();
     expect(userContext.operational_context).toEqual(expect.objectContaining({
@@ -70,9 +70,10 @@ describe("ContextualResponseAIService", () => {
       specialist_action: "responder_duvida_especifica",
       specialist_style: "curto_e_contextual"
     }));
-    expect(userContext.knowledge_base.map((article: { category: string }) => article.category)).toEqual(
-      expect.arrayContaining(["identidade_do_agente", "o_que_nunca_fazer", "fluxo_comercial"])
-    );
+    expect(userContext.knowledge_base.map((article: { category: string }) => article.category)).toEqual([
+      "fluxo_comercial",
+      "o_que_nunca_fazer"
+    ]);
   });
 
   it("blocks the programmed directive when OpenAI is unavailable", async () => {
@@ -108,7 +109,7 @@ describe("ContextualResponseAIService", () => {
       "https://www.mercadopago.com.br/checkout/seguro",
       "R$ 25"
     ]);
-    expect(openAIResponsesCreate.mock.calls[0][0].max_output_tokens).toBe(190);
+    expect(openAIResponsesCreate.mock.calls[0][0].max_output_tokens).toBe(140);
   });
 
   it("preserves direct interest and blocks screen questions in the monthly offer", async () => {

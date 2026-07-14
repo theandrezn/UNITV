@@ -198,7 +198,6 @@ export class ContextualIntelligenceService {
             strict: true
           }
         },
-        reasoning: { effort: "low" },
         max_output_tokens: OPENAI_ECONOMY_POLICY.contextualDecision.maxOutputTokens
       })
       );
@@ -222,7 +221,9 @@ export class ContextualIntelligenceService {
       this.knowledgeService.searchKnowledge(query)
     ]);
     const unique = new Map<string, Record<string, unknown>>();
-    for (const article of [...identity, ...neverDo, ...relevant]) {
+    // Spend the compact RAG budget on the current issue first. The stable
+    // system prompt already carries identity and immutable safety rules.
+    for (const article of [...relevant, ...neverDo, ...identity]) {
       const key = String(article.id || article.title || article.category || "");
       if (key && !unique.has(key)) unique.set(key, article);
     }
@@ -564,13 +565,15 @@ function compactCommercialContextForModel(
   const leadProfile = profileKeys.reduce<Record<string, unknown>>((result, key) => {
     const value = context.lead_profile[key];
     if (value !== undefined && value !== null && typeof value !== "object") {
-      result[key] = typeof value === "string" ? value.slice(-280) : value;
+      result[key] = typeof value === "string"
+        ? value.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.profileValueCharacters)
+        : value;
     }
     return result;
   }, {});
 
   return {
-    current_message: context.current_message.slice(-450),
+    current_message: context.current_message.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.currentMessageCharacters),
     recent_messages: context.recent_messages.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.recentMessages).map((message) => ({
       role: message.role || null,
       content: typeof message.content === "string"
@@ -580,12 +583,25 @@ function compactCommercialContextForModel(
     lead_profile: leadProfile,
     open_order: context.open_order ? { id: context.open_order.id || null, status: context.open_order.status || null } : null,
     latest_order: context.latest_order ? { id: context.latest_order.id || null, status: context.latest_order.status || null } : null,
-    last_bot_question: context.last_bot_question,
+    last_bot_question: context.last_bot_question?.slice(
+      -OPENAI_ECONOMY_POLICY.contextualDecision.messageCharacters
+    ) || null,
     followup_key: context.followup_key,
     human_hold_active: context.human_hold_active,
     knowledge_base: knowledge,
-    specialist_learning: specialistLearning || null
+    specialist_learning: compactSpecialistLearning(specialistLearning)
   };
+}
+
+function compactSpecialistLearning(guidance?: SpecialistLearningGuidance | null) {
+  if (!guidance) return null;
+  const maxLength = OPENAI_ECONOMY_POLICY.contextualDecision.specialistGuidanceCharacters;
+  const compact = Object.fromEntries(
+    Object.entries(guidance)
+      .filter(([, value]) => typeof value === "string" && value.trim())
+      .map(([key, value]) => [key, String(value).slice(0, maxLength)])
+  );
+  return Object.keys(compact).length ? compact : null;
 }
 
 function selectKnowledgeExcerpt(content: string, query: string, maxLength: number) {

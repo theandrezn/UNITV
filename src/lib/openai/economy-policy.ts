@@ -1,37 +1,43 @@
 export const OPENAI_ECONOMY_POLICY = Object.freeze({
   contextualResponse: {
-    defaultOutputTokens: 140,
-    complexOutputTokens: 190,
-    recentMessages: 5,
-    messageCharacters: 360,
-    knowledgeArticles: 3,
-    knowledgeCharacters: 650
+    defaultOutputTokens: 100,
+    complexOutputTokens: 140,
+    currentMessageCharacters: 300,
+    profileValueCharacters: 180,
+    operationalValueCharacters: 180,
+    recentMessages: 4,
+    messageCharacters: 240,
+    knowledgeArticles: 2,
+    knowledgeCharacters: 420
   },
   contextualDecision: {
     maxOutputTokens: 200,
-    recentMessages: 5,
-    messageCharacters: 360,
-    knowledgeArticles: 3,
-    knowledgeCharacters: 650
+    currentMessageCharacters: 300,
+    profileValueCharacters: 180,
+    specialistGuidanceCharacters: 120,
+    recentMessages: 4,
+    messageCharacters: 240,
+    knowledgeArticles: 2,
+    knowledgeCharacters: 420
   },
   intent: {
     maxOutputTokens: 70,
     messageCharacters: 450
   },
   salesResponse: {
-    defaultOutputTokens: 70,
-    commercialOutputTokens: 100,
-    technicalOutputTokens: 130,
-    recentMessages: 5,
-    messageCharacters: 360,
-    knowledgeArticles: 3,
-    knowledgeCharacters: 650
+    defaultOutputTokens: 60,
+    commercialOutputTokens: 80,
+    technicalOutputTokens: 110,
+    recentMessages: 4,
+    messageCharacters: 240,
+    knowledgeArticles: 2,
+    knowledgeCharacters: 420
   },
   specialistAnalysis: {
-    maxOutputTokens: 160
+    maxOutputTokens: 120
   },
   dailyLearning: {
-    maxOutputTokens: 260,
+    maxOutputTokens: 220,
     maxExamples: 6,
     maxDirectives: 3
   }

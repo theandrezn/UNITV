@@ -77,14 +77,18 @@ export class ContextualResponseAIService {
     const requiredArtifacts = extractRequiredArtifacts(input.responseDirective);
     const directiveContract = extractDirectiveContract(input.responseDirective);
     const context = {
-      current_customer_message: truncate(input.currentMessage, 600),
+      current_customer_message: truncate(input.currentMessage, RESPONSE_POLICY.currentMessageCharacters),
       intent: input.intent,
       state_and_known_facts: compactLeadProfile(input.leadProfile),
       recent_conversation: (input.recentMessages || []).slice(-RESPONSE_POLICY.recentMessages).map((message) => ({
         role: message.role || "unknown",
         content: truncate(message.content || "", RESPONSE_POLICY.messageCharacters)
       })),
-      operational_context: compactRecord(input.operationalContext || {}, 12),
+      operational_context: compactRecord(
+        input.operationalContext || {},
+        12,
+        RESPONSE_POLICY.operationalValueCharacters
+      ),
       required_artifacts: requiredArtifacts,
       knowledge_base: knowledge,
       writing_contract: {
@@ -115,7 +119,6 @@ export class ContextualResponseAIService {
               strict: true
             }
           },
-          reasoning: { effort: "low" },
           max_output_tokens: getContextualResponseOutputBudget(input, requiredArtifacts)
         })
       );
@@ -154,7 +157,10 @@ export class ContextualResponseAIService {
     ]);
 
     const unique = new Map<string, KnowledgeArticle>();
-    for (const article of [...identity, ...neverDo, ...relevant] as KnowledgeArticle[]) {
+    // Relevant operational knowledge must win the small token budget. Identity
+    // is already enforced by the stable system prompt, while one guardrail
+    // article remains available for state and payment safety.
+    for (const article of [...relevant, ...neverDo, ...identity] as KnowledgeArticle[]) {
       const key = String(article.id || article.title || article.category || "");
       if (key && !unique.has(key)) {
         unique.set(key, article);
@@ -253,16 +259,16 @@ function compactLeadProfile(profile: Record<string, unknown>) {
   return allowedKeys.reduce<Record<string, unknown>>((result, key) => {
     const value = profile[key];
     if (value !== undefined && value !== null && typeof value !== "object") {
-      result[key] = typeof value === "string" ? truncate(value, 260) : value;
+      result[key] = typeof value === "string" ? truncate(value, RESPONSE_POLICY.profileValueCharacters) : value;
     }
     return result;
   }, {});
 }
 
-function compactRecord(record: Record<string, unknown>, limit: number) {
+function compactRecord(record: Record<string, unknown>, limit: number, valueCharacters: number) {
   return Object.entries(record).slice(0, limit).reduce<Record<string, unknown>>((result, [key, value]) => {
     if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
-      result[key] = typeof value === "string" ? truncate(value, 300) : value;
+      result[key] = typeof value === "string" ? truncate(value, valueCharacters) : value;
     }
     return result;
   }, {});

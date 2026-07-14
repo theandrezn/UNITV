@@ -1478,7 +1478,21 @@ function buildContextualUnderstandingReply(
     decision.source === "ai" &&
     decision.confidence >= 0.8 &&
     safeResponse &&
-    ["ask_plan_preference", "clarify_intent"].includes(decision.next_action)
+    [
+      "ask_device_for_trial",
+      "confirm_android_phone",
+      "ask_plan_preference",
+      "ask_download_problem",
+      "ask_installation_status",
+      "continue_recharge_flow",
+      "clarify_intent"
+    ].includes(decision.next_action) &&
+    !/(R\$\s*\d|https?:\/\/|pix|copia e cola|qr\s*code|pagamento|comprovante|c[oó]digo de acesso|\bUTV-|\b862585\b)/i.test(safeResponse) &&
+    isSafeAICommercialReply(
+      safeResponse,
+      context.leadProfile,
+      context.latestBotMessage ? [{ role: "assistant", content: context.latestBotMessage }] : []
+    )
   ) {
     return {
       reply: safeResponse,

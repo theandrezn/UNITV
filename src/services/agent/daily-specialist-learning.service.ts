@@ -130,7 +130,6 @@ export class DailySpecialistLearningService {
             strict: true
           }
         },
-        reasoning: { effort: "low" },
         max_output_tokens: OPENAI_ECONOMY_POLICY.dailyLearning.maxOutputTokens
       })
       );

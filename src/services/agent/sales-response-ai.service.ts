@@ -123,7 +123,6 @@ export class SalesResponseAIService {
             strict: true
           }
         },
-        reasoning: { effort: "low" },
         max_output_tokens: getSalesResponseOutputBudget(input)
       })
       );

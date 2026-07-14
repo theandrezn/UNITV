@@ -1388,6 +1388,46 @@ describe("commercial WhatsApp agent", () => {
     expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
   });
 
+  it("reuses a safe contextual recharge continuation instead of opening a second AI writer", async () => {
+    const salesResponseAIService = { generateResponse: vi.fn(async () => "nao deveria chamar") };
+    const { service } = createChatAgent({ salesResponseAIService });
+    const contextualDecision = {
+      ...extractDeterministicDecision({
+        current_message: "quero continuar",
+        recent_messages: [],
+        lead_profile: { stage: "qualified", wants_recharge: true },
+        open_order: null,
+        latest_order: null,
+        last_bot_question: "Quer continuar sua recarga?",
+        last_bot_message_at: null,
+        last_specialist_message_at: null,
+        followup_key: null,
+        followup_due_at: null,
+        human_hold_active: false
+      }),
+      source: "ai" as const,
+      intent: "renew" as const,
+      confidence: 0.9,
+      next_action: "continue_recharge_flow" as const,
+      recommended_response: "Perfeito. Qual plano voce quer renovar?"
+    };
+
+    const result = await service.generateCommercialReply({
+      message: "quero continuar",
+      classification: { intent: "renew_plan", confidence: 0.7, summary: "recarga", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: { stage: "qualified", wants_recharge: true } } },
+      recentMessages: [{ role: "assistant", content: "Quer continuar sua recarga?" }],
+      contextualDecision,
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toBe("Perfeito. Qual plano voce quer renovar?");
+    expect(result.responseRule).toBe("contextual_interpreter_single_ai_reply");
+    expect(result.responseSource).toBe("ai");
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+  });
+
   it("reuses a safe knowledge-grounded AI reply but never bypasses the protected payment writer", () => {
     expect(canReuseUpstreamAIReply({
       responseGeneratedByAI: true,
