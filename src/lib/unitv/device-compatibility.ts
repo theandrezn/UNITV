@@ -10,6 +10,7 @@ export type UnitvDeviceId =
   | "firestick"
   | "samsung_tv"
   | "lg_tv"
+  | "hq_tv"
   | "iphone"
   | "roku"
   | "computer"
@@ -56,6 +57,7 @@ export const UNITV_DEVICE_COMPATIBILITY: Record<UnitvDeviceId, UnitvDeviceCompat
   },
   samsung_tv: { compatible: "unknown", label: "Samsung TV", recommended_method: "ask_android_or_playstore" },
   lg_tv: { compatible: "unknown", label: "LG TV", recommended_method: "ask_android_or_playstore" },
+  hq_tv: { compatible: "unknown", label: "TV HQ", recommended_method: "ask_android_or_android_tv" },
   iphone: { compatible: false, label: "iPhone / iOS", recommended_method: "suggest_android_device" },
   roku: { compatible: false, label: "Roku", recommended_method: "suggest_android_device" },
   computer: { compatible: false, label: "Computador", recommended_method: "suggest_android_device" },
@@ -72,6 +74,8 @@ export function detectUnitvDevice(message: string): UnitvDeviceId {
   if (/\b(iphone|ios|apple)\b/.test(text)) return "iphone";
   if (/\broku\b/.test(text)) return "roku";
   if (/\b(samsung|lg)\b/.test(text) && /\b(android|play store)\b/.test(text)) return "android_tv_google_tv";
+  if (/\b(tv hq|hq tv|televisao hq|smart tv hq)\b/.test(text) && /\b(android|android tv|google tv)\b/.test(text)) return "android_tv_google_tv";
+  if (/\b(tv hq|hq tv|televisao hq|smart tv hq)\b/.test(text)) return "hq_tv";
   if (/\b(samsung|tv samsung)\b/.test(text)) return "samsung_tv";
   if (/\b(lg|tv lg)\b/.test(text)) return "lg_tv";
   if (/\b(fire stick|firestick|fire tv|amazon fire)\b/.test(text)) return "firestick";
@@ -90,7 +94,7 @@ export function detectUnitvDevice(message: string): UnitvDeviceId {
 export function isUnitvInstallationRequest(message: string) {
   const text = normalize(message);
   return detectUnitvDevice(message) !== "unknown" ||
-    /\b(baixar|download|dowload|apk|instalar|instalacao|link|tutorial|downloader|tv box|tvbox|xplus|android tv|google tv|fire stick|firestick|samsung|roku|iphone|ios|celular|smart tv|play store)\b/.test(text) ||
+    /\b(baixar|download|dowload|apk|instalar|instalacao|link|tutorial|downloader|tv box|tvbox|xplus|android tv|google tv|fire stick|firestick|samsung|roku|iphone|ios|celular|smart tv|play store|tv hq|hq tv|televisao hq)\b/.test(text) ||
     /\btv lg\b/.test(text) || /^lg$/.test(text);
 }
 
@@ -171,6 +175,15 @@ export function getUnitvInstallationGuidance(message: string): UnitvInstallation
       reply:
         `${brand} normalmente não usa Android.\n\nMe confirma se sua TV ${brand} tem Play Store ou sistema Android?\n\n` +
         "Se não tiver, o ideal é usar uma TV Box Android ou Fire Stick para instalar a UNITV.",
+      leadProfilePatch: basePatch
+    };
+  }
+
+  if (device === "hq_tv") {
+    return {
+      reply:
+        "Na TV HQ eu preciso confirmar o sistema antes. Ela possui Android ou Android TV?\n\n" +
+        "Se nao possuir, nao vou confirmar compatibilidade sem verificar outro aparelho compativel.",
       leadProfilePatch: basePatch
     };
   }

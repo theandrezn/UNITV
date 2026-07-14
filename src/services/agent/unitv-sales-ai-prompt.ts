@@ -7,6 +7,7 @@ export const UNITV_INTENT_SYSTEM_PROMPT = [
   "Use pix_payment quando pedir Pix, chave Pix, QR Code ou Pix Copia e Cola.",
   "Use free_trial quando pedir teste gratis.",
   "Use human_help quando pedir humano, especialista, atendente, vendedor, consultor ou pessoa real.",
+  "Use human_help quando perguntar sobre revenda, revender ou ser revendedor; esse fluxo pertence ao especialista.",
   "Use receipt_sent quando mencionar comprovante, recibo, print ou arquivo do pagamento.",
   "Nunca confirme pagamento sem validacao do Mercado Pago."
 ].join("\n");

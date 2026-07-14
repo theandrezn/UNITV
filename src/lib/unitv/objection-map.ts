@@ -9,6 +9,16 @@ export type UnitvObjectionReply = {
   needsHuman?: boolean;
 };
 
+const RESELLER_HANDOFF_REPLY =
+  "A revenda da UNITV e tratada diretamente pelo especialista. Vou direcionar seu atendimento para ele continuar com voce.";
+
+const ESPN_AVAILABILITY_REPLY =
+  "A UNITV nao possui ESPN como canal fixo. Quando houver jogos importantes exclusivos da ESPN, esses jogos tambem passam na UNITV.";
+
+const PREMIERE_AVAILABILITY_REPLY = "Tem sim. A UNITV possui Premiere.";
+
+const SPANISH_CATALOG_REPLY = "Tem sim. A UNITV possui canais e filmes em espanhol.";
+
 type ObjectionRule = {
   id: string;
   pattern: RegExp;
@@ -122,6 +132,40 @@ export function findUnitvObjectionReply(message: string): UnitvObjectionReply | 
   }
 
   return null;
+}
+
+export function findUnitvAuthoritativeKnowledgeReply(message: string): UnitvObjectionReply | null {
+  const normalized = normalize(message);
+
+  if (/\b(revenda|revender|revendedor|ser revendedor|como faco para revender)\b/.test(normalized)) {
+    return {
+      id: "reseller_handoff",
+      reply: RESELLER_HANDOFF_REPLY,
+      needsHuman: true
+    };
+  }
+
+  const replies: string[] = [];
+  const ids: string[] = [];
+  if (/\bespn\b/.test(normalized)) {
+    ids.push("espn");
+    replies.push(ESPN_AVAILABILITY_REPLY);
+  }
+  if (/\bpremiere\b/.test(normalized)) {
+    ids.push("premiere");
+    replies.push(PREMIERE_AVAILABILITY_REPLY);
+  }
+  if (/\bespanhol\b|\bem espanhol\b/.test(normalized) && /\b(canal|canais|filme|filmes|conteudo|unitv|tem|possui)\b/.test(normalized)) {
+    ids.push("spanish_catalog");
+    replies.push(SPANISH_CATALOG_REPLY);
+  }
+
+  return replies.length
+    ? {
+        id: `authoritative_${ids.join("_")}`,
+        reply: replies.join("\n\n")
+      }
+    : null;
 }
 
 function buildScreensReply(normalized: string) {

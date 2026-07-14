@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
-import { findUnitvObjectionReply } from "@/lib/unitv/objection-map";
+import { findUnitvAuthoritativeKnowledgeReply, findUnitvObjectionReply } from "@/lib/unitv/objection-map";
 import { isSafeSpecialistExampleForReuse } from "@/repositories/specialist-training-examples.repository";
 import { buildSpecialistLearningGuidance } from "@/services/agent/specialist-learning-guidance";
 import { PlansService } from "@/services/plans.service";
@@ -87,6 +87,30 @@ describe("learning quality and objection guardrails", () => {
 
     expect(result?.reply).toContain("ate 3 telas");
     expect(result?.reply.toLowerCase()).not.toContain("quantas telas voce precisa");
+  });
+
+  it("keeps catalog facts authoritative without asking the model", () => {
+    expect(findUnitvAuthoritativeKnowledgeReply("Tem canais e filmes em espanhol?")?.reply)
+      .toBe("Tem sim. A UNITV possui canais e filmes em espanhol.");
+    expect(findUnitvAuthoritativeKnowledgeReply("Tem ESPN?")?.reply)
+      .toContain("nao possui ESPN como canal fixo");
+    expect(findUnitvAuthoritativeKnowledgeReply("Tem ESPN?")?.reply)
+      .toContain("jogos importantes exclusivos da ESPN");
+    expect(findUnitvAuthoritativeKnowledgeReply("Tem Premiere?")?.reply)
+      .toBe("Tem sim. A UNITV possui Premiere.");
+
+    const combined = findUnitvAuthoritativeKnowledgeReply("Tem ESPN e Premiere?");
+    expect(combined?.reply).toContain("nao possui ESPN como canal fixo");
+    expect(combined?.reply).toContain("possui Premiere");
+  });
+
+  it("marks reseller questions for a real specialist handoff", () => {
+    for (const question of ["Como faco para revender?", "Voce tem revenda do UNITV?"]) {
+      const result = findUnitvAuthoritativeKnowledgeReply(question);
+      expect(result?.needsHuman).toBe(true);
+      expect(result?.reply).toContain("tratada diretamente pelo especialista");
+      expect(result?.reply.toLowerCase()).not.toContain("plano mensal");
+    }
   });
 
   it("treats media as receipt only inside a payment context", () => {

@@ -12,7 +12,7 @@ import { OrdersService } from "@/services/orders.service";
 import { MercadoPagoService } from "@/services/payments/mercadopago.service";
 import { PlansService } from "@/services/plans.service";
 import { buildNoAccessCodeAvailableMessage } from "@/lib/unitv/post-purchase-messages";
-import { findUnitvObjectionReply } from "@/lib/unitv/objection-map";
+import { findUnitvAuthoritativeKnowledgeReply, findUnitvObjectionReply } from "@/lib/unitv/objection-map";
 import { isWhatsAppMainMenuEnabled } from "@/lib/env";
 import {
   buildPlansMenu,
@@ -23,7 +23,7 @@ import {
   type WhatsAppMenu
 } from "@/lib/whatsapp/menus";
 import { SalesResponseAIService, shouldUseAIResponse } from "@/services/agent/sales-response-ai.service";
-import { getUnitvInstallationGuidance, isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
+import { detectUnitvDevice, getUnitvInstallationGuidance, isUnitvInstallationRequest } from "@/lib/unitv/device-compatibility";
 import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
 import { validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
 import {
@@ -184,6 +184,46 @@ export class ChatAgentService {
         responseSource: "local_rule",
         responseRule: "active_download_flow"
       };
+    }
+
+    const authoritativeKnowledgeReply = findUnitvAuthoritativeKnowledgeReply(message);
+    if (authoritativeKnowledgeReply?.needsHuman) {
+      const handoff = await this.handoffToHuman(
+        input,
+        "reseller_request",
+        knowledge,
+        authoritativeKnowledgeReply.reply,
+        { requested_flow: "reseller" }
+      );
+      return {
+        ...handoff,
+        responseSource: "local_rule",
+        responseRule: authoritativeKnowledgeReply.id,
+        leadProfilePatch: {
+          reseller_intent: true,
+          stage: "human_support_reseller",
+          commercial_stage: "human_support_reseller",
+          next_expected_reply: "specialist_response"
+        }
+      };
+    }
+    if (authoritativeKnowledgeReply) {
+      return {
+        reply: authoritativeKnowledgeReply.reply,
+        responseSource: "local_rule",
+        responseRule: authoritativeKnowledgeReply.id
+      };
+    }
+
+    if (detectUnitvDevice(message) === "hq_tv") {
+      const hqCompatibilityReply = getInstallationReply(message);
+      if (hqCompatibilityReply) {
+        return {
+          ...hqCompatibilityReply,
+          responseSource: "local_rule",
+          responseRule: "hq_android_compatibility_check"
+        };
+      }
     }
 
     const contextualUnderstandingReply = buildContextualUnderstandingReply(input.contextualDecision, conversationIntelligence);

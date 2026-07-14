@@ -21,7 +21,9 @@ describe("UNITV device compatibility", () => {
     ["minha tv é lg", "lg_tv"],
     ["minha Samsung tem Play Store", "android_tv_google_tv"],
     ["tenho iphone", "iphone"],
-    ["tenho roku", "roku"]
+    ["tenho roku", "roku"],
+    ["minha TV HQ", "hq_tv"],
+    ["minha TV HQ tem Android TV", "android_tv_google_tv"]
   ] as const)("detects %s as %s", (message, device) => {
     expect(detectUnitvDevice(message)).toBe(device);
   });
@@ -79,5 +81,17 @@ describe("UNITV device compatibility", () => {
       device_compatible: "unknown",
       download_method_sent: "none"
     });
+  });
+
+  it("does not confirm TV HQ compatibility before checking Android", () => {
+    const guidance = getUnitvInstallationGuidance("minha TV HQ funciona?");
+
+    expect(guidance?.leadProfilePatch).toMatchObject({
+      device: "hq_tv",
+      device_compatible: "unknown"
+    });
+    expect(guidance?.reply).toContain("possui Android ou Android TV?");
+    expect(guidance?.reply).not.toContain("mediafire.com");
+    expect(guidance?.reply).not.toContain(UNITV_DOWNLOADER_CODE);
   });
 });

@@ -45,6 +45,9 @@ describe("IntentClassifierService", () => {
     ["tenho LG", "technical_support"],
     ["tenho fire stick", "technical_support"],
     ["tenho roku", "technical_support"],
+    ["minha TV HQ funciona?", "technical_support"],
+    ["Como faco para revender?", "human_help"],
+    ["Voce tem revenda do UNITV?", "human_help"],
     ["ja paguei", "unknown"]
   ] as const)("classifies %s locally without calling OpenAI", async (message, intent) => {
     vi.clearAllMocks();

@@ -178,6 +178,10 @@ function classifyDeterministicIntent(message: string): IntentClassification | nu
     return fixedClassification("human_help", "Cliente pediu atendimento humano.");
   }
 
+  if (/\b(revenda|revender|revendedor|ser revendedor)\b/.test(text)) {
+    return fixedClassification("human_help", "Cliente pediu informacoes sobre revenda e deve falar com o especialista.");
+  }
+
   if (/\b(teste|gratis|gratuito|free trial)\b/.test(text)) {
     return fixedClassification("free_trial", "Cliente pediu teste grÃ¡tis.");
   }

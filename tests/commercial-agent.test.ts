@@ -145,6 +145,70 @@ function createChatAgent(overrides: Record<string, unknown> = {}) {
 }
 
 describe("commercial WhatsApp agent", () => {
+  it("hands reseller questions to the specialist without entering the customer plan flow", async () => {
+    const { service, agentActionsService, ordersService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "Como faco para revender?",
+      classification: { intent: "human_help", confidence: 0.95, summary: "revenda", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.requiresHuman).toBe(true);
+    expect(result.responseRule).toBe("reseller_handoff");
+    expect(result.reply).toContain("diretamente pelo especialista");
+    expect(result.reply.toLowerCase()).not.toContain("plano mensal");
+    expect(result.leadProfilePatch).toMatchObject({
+      reseller_intent: true,
+      stage: "human_support_reseller"
+    });
+    expect(agentActionsService.createAgentAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action_name: "handoff_to_human" })
+    );
+    expect(ordersService.createOrder).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["Tem canais e filmes em espanhol?", "canais e filmes em espanhol"],
+    ["Tem ESPN?", "nao possui ESPN como canal fixo"],
+    ["Tem Premiere?", "possui Premiere"]
+  ])("answers authoritative catalog question %s locally", async (message, expected) => {
+    const salesResponseAIService = { generateResponse: vi.fn(async () => "resposta incorreta da IA") };
+    const { service } = createChatAgent({ salesResponseAIService });
+
+    const result = await service.generateCommercialReply({
+      message,
+      classification: { intent: "unknown", confidence: 0.95, summary: "catalogo", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id", metadata: { lead_profile: { stage: "price_discovery" } } },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain(expected);
+    expect(result.responseSource).toBe("local_rule");
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+  });
+
+  it("checks Android before confirming compatibility for TV HQ", async () => {
+    const salesResponseAIService = { generateResponse: vi.fn(async () => "funciona sim") };
+    const { service } = createChatAgent({ salesResponseAIService });
+
+    const result = await service.generateCommercialReply({
+      message: "Minha TV HQ funciona?",
+      classification: { intent: "technical_support", confidence: 0.95, summary: "compatibilidade", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toContain("possui Android ou Android TV?");
+    expect(result.reply.toLowerCase()).not.toContain("funciona sim");
+    expect(result.leadProfilePatch).toMatchObject({ device: "hq_tv", device_compatible: "unknown" });
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
+  });
+
   it("blocks internal debug text before it reaches the customer", () => {
     for (const message of [
       "Resolvido por regra local sem uso de IA.",
