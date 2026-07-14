@@ -237,7 +237,8 @@ export class WhatsappMessageService {
           copyText: commercialReply.copyText,
           followUpMessages: commercialReply.followUpMessages,
           menu: commercialReply.menu,
-          sendTextBeforeMenu: commercialReply.sendTextBeforeMenu
+          sendTextBeforeMenu: commercialReply.sendTextBeforeMenu,
+          protectedOperationalReply: manualPaymentCommand.method === "pix"
         });
       }
 
@@ -783,7 +784,10 @@ export class WhatsappMessageService {
       menu: commercialReply.menu,
       sendTextBeforeMenu: commercialReply.sendTextBeforeMenu,
       responseGeneratedByAI: commercialReply.responseSource === "ai",
-      specialistLearning
+      specialistLearning,
+      protectedOperationalReply:
+        classification.intent === "pix_payment" &&
+        (Boolean(commercialReply.copyText) || commercialReply.requiresHuman === true)
     });
   }
 
@@ -800,7 +804,8 @@ export class WhatsappMessageService {
     menu,
     sendTextBeforeMenu,
     responseGeneratedByAI,
-    specialistLearning
+    specialistLearning,
+    protectedOperationalReply
   }: {
     webhookEventId: string;
     message: IncomingEvolutionMessage;
@@ -815,13 +820,15 @@ export class WhatsappMessageService {
     sendTextBeforeMenu?: boolean;
     responseGeneratedByAI?: boolean;
     specialistLearning?: SpecialistLearningGuidance | null;
+    protectedOperationalReply?: boolean;
   }) {
     const rawResponseDirective = [reply, ...(followUpMessages || [])].filter(Boolean).join("\n\n");
     const responseDirective = copyText
       ? rawResponseDirective.split(copyText).join("[dados de pagamento enviados em mensagem separada]")
       : rawResponseDirective;
-    const recentMessages = await this.listRecentConversationMessages(conversation.id);
     const intent = typeof classification.intent === "string" ? classification.intent : "unknown";
+    const useProtectedOperationalReply = protectedOperationalReply === true && intent === "pix_payment";
+    const recentMessages = useProtectedOperationalReply ? [] : await this.listRecentConversationMessages(conversation.id);
     const reuseUpstreamAIReply = canReuseUpstreamAIReply({
       responseGeneratedByAI,
       intent,
@@ -831,7 +838,9 @@ export class WhatsappMessageService {
       hasFollowUpMessages: Boolean(followUpMessages?.length),
       hasMenu: Boolean(menu)
     });
-    const contextualReply = reuseUpstreamAIReply
+    const contextualReply = useProtectedOperationalReply
+      ? reply
+      : reuseUpstreamAIReply
       ? reply
       : await this.contextualResponseAIService.generateResponse({
         currentMessage: message.text,
@@ -868,8 +877,26 @@ export class WhatsappMessageService {
       return { status: "ignored" as const };
     }
 
-    const responseSource = reuseUpstreamAIReply ? "upstream_contextual_ai_reused" : "contextual_ai";
-    if (reuseUpstreamAIReply) {
+    const responseSource = useProtectedOperationalReply
+      ? "protected_payment_backend"
+      : reuseUpstreamAIReply
+        ? "upstream_contextual_ai_reused"
+        : "contextual_ai";
+    if (useProtectedOperationalReply) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "protected_payment_delivery_used",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: {
+          webhookEventId,
+          intent,
+          avoided_openai_call: true,
+          has_copy_text: Boolean(copyText),
+          has_media: Boolean(media)
+        }
+      });
+    } else if (reuseUpstreamAIReply) {
       await this.auditService.createAuditLog({
         actor_type: "system",
         action: "contextual_ai_response_reused",
@@ -887,12 +914,14 @@ export class WhatsappMessageService {
       media = { ...media, caption: "" };
     }
 
-    const safeReply = await this.sanitizeAndValidateCustomerText({
-      text: reply,
-      conversation,
-      webhookEventId,
-      leadProfile: readLeadProfile(conversation.metadata)
-    });
+    const safeReply = useProtectedOperationalReply
+      ? sanitizeCustomerMessage(reply).text
+      : await this.sanitizeAndValidateCustomerText({
+          text: reply,
+          conversation,
+          webhookEventId,
+          leadProfile: readLeadProfile(conversation.metadata)
+        });
     if (!safeReply) {
       await this.auditService.createAuditLog({
         actor_type: "system",
@@ -959,12 +988,18 @@ export class WhatsappMessageService {
     await this.safeCreateAgentEvent({
       conversation_id: conversation.id,
       customer_phone: message.phone,
-      event_type: "ai_called",
+      event_type: useProtectedOperationalReply ? "local_rule_used" : "ai_called",
       event_source: "chat_agent",
       intent: typeof classification.intent === "string" ? classification.intent : null,
       stage: String(readLeadProfile(conversation.metadata).stage || readLeadProfile(conversation.metadata).etapa_atual || ""),
       message_id: `assistant:${message.externalMessageId}`,
-      metadata: { webhookEventId, reply: safeReply, knowledge_grounded: true }
+      metadata: {
+        webhookEventId,
+        reply: safeReply,
+        knowledge_grounded: true,
+        response_source: responseSource,
+        avoided_openai_call: useProtectedOperationalReply
+      }
     });
     await this.safeCreateAgentEvent({
       conversation_id: conversation.id,

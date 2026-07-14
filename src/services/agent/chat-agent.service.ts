@@ -931,7 +931,10 @@ export class ChatAgentService {
     const manualPixAmountCents = readManualPixAmountCents(leadProfile);
     const manualPixCommand = manualPixAmountCents !== null;
     const promoAccepted = !manualPixCommand && isSpecialPromoAccepted(leadProfile);
-    let order = manualPixCommand ? null : await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+    let order = await this.ordersService.findLatestOpenOrderByCustomerId(input.customer.id);
+    if (manualPixCommand && !isReusableManualPixOrder(order, manualPixAmountCents)) {
+      order = null;
+    }
     if (!order) {
       const plans = await this.plansService.listActivePlans();
       const selectedPlan = promoAccepted
@@ -1101,6 +1104,20 @@ export class ChatAgentService {
           error: error instanceof Error ? error.message : "unknown_error"
         }
       });
+      if (manualPixCommand) {
+        return {
+          order,
+          reply: `Nao consegui gerar o Pix de ${formatAmountInBRL(Number(order.amount_cents))} agora. Nenhuma confirmacao de pagamento foi feita. Tente novamente em instantes.`,
+          leadProfilePatch: {
+            commercial_stage: "checkout",
+            stage: "checkout",
+            payment_method: "pix",
+            payment_status: "generation_failed",
+            last_customer_intent: "request_pix",
+            next_expected_reply: "retry_pix"
+          }
+        };
+      }
       return this.handoffToHuman(
         input,
         "mercado_pago_pix_creation_failed",
@@ -2615,6 +2632,20 @@ function readManualPixAmountCents(leadProfile: Record<string, unknown>) {
 
   const amount = Number(leadProfile.manual_payment_amount_cents);
   return Number.isInteger(amount) && amount >= 1 && amount <= 99_999_999 ? amount : null;
+}
+
+function isReusableManualPixOrder(order: Record<string, unknown> | null, amountCents: number | null) {
+  if (!order || amountCents === null || Number(order.amount_cents) !== amountCents) {
+    return false;
+  }
+
+  const metadata = readOrderMetadata(order);
+  if (metadata.source !== "whatsapp_specialist_manual_pix" || !readMetadataString(metadata, "mercado_pago_pix_qr_code")) {
+    return false;
+  }
+
+  const expiresAt = readMetadataString(metadata, "mercado_pago_pix_expires_at");
+  return !expiresAt || new Date(expiresAt).getTime() > Date.now();
 }
 
 function formatAmountInBRL(amountCents: number) {
