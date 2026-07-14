@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "source_hash": "b2bea6a941d0820fd80b34ec81105bc428df96f767f860fe7f2bf3c69dc361a6",
-  "generated_at": "2026-07-14T16:50:21.161Z",
+  "source_hash": "6c26c7c0b57b0a1f5d1e7e84fb4a1ce904230c81fab9fe025c0b4686b61d374f",
+  "generated_at": "2026-07-14T17:18:50.907Z",
   "facts": [
     {
       "id": "13eb990749a776a19eba",
@@ -3088,6 +3088,41 @@
       "stages": []
     },
     {
+      "id": "e4526c0b4f923138e1d6",
+      "text": "Nunca enviar aliases duplicados de estado ao modelo.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "703905508d940ab15148",
+      "text": "Nunca carregar identidade e regras estaveis em toda chamada se ja estao no codigo.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "723d60dc093f7b92a3fc",
+      "text": "Nunca abrir uma segunda IA para reescrever uma resposta contextual valida.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "17977c1f7a40d0fd8ed0",
+      "text": "Nunca usar IA para fatos oficiais ou acoes protegidas pelo backend.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
+      "id": "e42f95fb53e83e1d0fac",
+      "text": "Nunca aumentar historico global para corrigir um caso isolado; criar regra/teste especifico.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que nunca fazer",
+      "stages": []
+    },
+    {
       "id": "545e82c55902fd7b029e",
       "text": "Nunca autoaprovar uma intervencao por um unico sinal positivo.",
       "source_file": "15_MELHORIA_CONTINUA.md",
@@ -4143,6 +4178,13 @@
       "text": "Na TV HQ eu preciso confirmar o sistema antes. Ela possui Android ou Android TV?",
       "source_file": "15_MELHORIA_CONTINUA.md",
       "heading": "Resposta correta esperada",
+      "stages": []
+    },
+    {
+      "id": "84d1aec0918d72ceb4a0",
+      "text": "Resolver por regra local agradecimento, saudacao real, preco, plano, Pix, catalogo, aparelho, compatibilidade, ativacao e recarga.",
+      "source_file": "15_MELHORIA_CONTINUA.md",
+      "heading": "O que fazer",
       "stages": []
     }
   ],

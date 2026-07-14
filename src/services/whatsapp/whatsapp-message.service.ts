@@ -639,6 +639,7 @@ export class WhatsappMessageService {
       entity_id: conversation.id,
       metadata: {
         webhookEventId,
+        decision_source: contextualDecision.source || "unknown",
         detected_intent: contextualDecision.intent,
         contextual_detected_intent: contextualDecision.detected_intent,
         next_action: contextualDecision.next_action,

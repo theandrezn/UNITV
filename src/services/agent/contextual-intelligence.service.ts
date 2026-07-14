@@ -4,11 +4,19 @@ import { z } from "zod";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
-import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import type { SpecialistLearningGuidance } from "@/services/agent/specialist-learning-guidance";
-import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_OFFER_TEXT } from "@/lib/unitv/official-catalog";
-import { CANONICAL_CONVERSATION_STATES, normalizeConversationState } from "@/lib/conversation-state";
+import { OFFICIAL_ALL_PLAN_PRICES_TEXT, OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_OFFER_TEXT } from "@/lib/unitv/official-catalog";
+import {
+  CANONICAL_CONVERSATION_STATES,
+  isAllowedConversationStateTransition,
+  normalizeConversationState,
+  resolveConversationState,
+  type ConversationState
+} from "@/lib/conversation-state";
 import { getStructuredKnowledgeContext } from "@/lib/unitv/structured-knowledge";
+import { findUnitvAuthoritativeKnowledgeReply } from "@/lib/unitv/objection-map";
+import { UNITV_FIXED_INITIAL_GREETING } from "@/lib/unitv/agent-identity";
+import { detectUnitvDevice, getUnitvInstallationGuidance, type UnitvDeviceId } from "@/lib/unitv/device-compatibility";
 
 const agentActionSchema = z.enum(["reply", "silent", "wait", "handoff", "backend_action"]);
 const canonicalConversationStateSchema = z.enum(CANONICAL_CONVERSATION_STATES);
@@ -139,6 +147,16 @@ export const contextualDecisionSchema = z.object({
 
 export type ContextualDecision = z.infer<typeof contextualDecisionSchema> & { source?: "deterministic" | "ai" };
 
+const compactAIDecisionSchema = z.object({
+  action: z.enum(["reply", "silent", "wait", "handoff"]),
+  intent: commercialIntentSchema,
+  next_state: canonicalConversationStateSchema,
+  meaning: z.string().min(1).max(120),
+  reason: z.string().min(1).max(120),
+  reply: z.string().max(240),
+  confidence: z.number().min(0).max(1)
+});
+
 export type CommercialContext = {
   conversation_id?: string | null;
   current_message: string;
@@ -154,36 +172,19 @@ export type CommercialContext = {
   human_hold_active: boolean;
 };
 
-const SYSTEM_PROMPT = [
-  "Voce e o decisor contextual do vendedor UNITV. Esta e a unica chamada de IA permitida neste turno.",
-  "Retorne somente JSON valido no schema solicitado.",
-  "PASSO 1: identifique a intencao e o significado da mensagem pela ultima pergunta e pelo estado persistido.",
-  "PASSO 2: escolha uma unica action: reply, silent, wait, handoff ou backend_action.",
-  "PASSO 3: escolha next_state sem regredir o funil.",
-  "PASSO 4: quando action=reply, escreva recommended_response curta e pronta para envio; ela nao sera reescrita por outra IA.",
-  "PASSO 5: explique reason de forma objetiva para auditoria interna.",
-  "Interprete historico, lead_profile, pedido aberto, ultima mensagem do bot e ultima pergunta do bot.",
-  "Consulte a base de conhecimento recebida para fatos, fluxo e estilo, sem copiar exemplos literalmente.",
-  "recommended_response deve ter preferencialmente 6 a 15 palavras, no maximo 22 palavras, duas frases e uma pergunta.",
-  "Voce NAO executa acoes, NAO confirma pagamento, NAO cria Pix, NAO entrega codigo.",
-  "Precos oficiais: mensal R$20,90, trimestral R$70, semestral R$120, anual R$200.",
-  "Se o cliente perguntar apenas valor, responda exatamente o mensal de R$ 20,90 e pergunte se tem interesse pra hoje; nao revele outros valores.",
-  "Se perguntar quantas telas o mensal cobre, informe ate 3 telas. Outros planos usam os fatos da base de conhecimento.",
-  "Se a mensagem curta depender da ultima pergunta, use o historico para inferir a intencao.",
-  "Exemplo: bot perguntou 'teste gratis ou planos?' e cliente respondeu 'Testes' => FREE_TRIAL_REQUEST, ask_device_for_trial.",
-  "Exemplo: bot perguntou aparelho e cliente respondeu 'celular' => DEVICE_ANDROID_PHONE_NEEDS_CONFIRMATION, confirm_android_phone.",
-  "Exemplo: bot perguntou 'Voce conseguiu baixar?' e cliente respondeu 'nao' => DOWNLOAD_HELP, ask_download_problem.",
-  "Nunca recomende saudacao inicial quando existe conversa ativa, ultima pergunta ou etapa comercial em andamento.",
-  "Nao mande humano para respostas simples de teste, aparelho, download, preco ou Pix.",
-  "Se cliente escolheu plano e pede Pix, marque request_pix, should_generate_pix=true.",
-  "Se nao houver plano selecionado para Pix, should_generate_pix=false.",
-  "Se cliente disse que baixou/conseguiu, marque already_downloaded ou installed_success.",
-  "Se cliente disse que nao deu/erro/nao conseguiu, marque download_issue."
+export const CONTEXTUAL_DECISION_PROMPT_VERSION = "unitv-decision-v3-ultra-low";
+export const CONTEXTUAL_DECISION_SYSTEM_PROMPT = [
+  "Decida um turno ambiguo da UNITV. Retorne apenas o JSON curto solicitado.",
+  "Prioridade: estado > ultima pergunta > cliente > humano > base.",
+  "Passos: interprete; escolha uma acao; mantenha ou avance o estado; responda curto.",
+  "Acoes: reply, silent, wait, handoff. Use silent em agradecimento ou encerramento.",
+  "Handoff somente quando o cliente pedir humano ou tratar de revenda.",
+  "Nunca execute Pix, pagamento, codigo ou download; o backend e a autoridade.",
+  "Nunca saude conversa ativa, repita pergunta, invente fato ou regrida estado.",
+  "Quando responder, use 6 a 15 palavras, no maximo 22, com um unico proximo passo."
 ].join("\n");
 
 export class ContextualIntelligenceService {
-  constructor(private readonly knowledgeService = new KnowledgeService()) {}
-
   async extract(input: { context: CommercialContext; useStrongModel?: boolean; specialistLearning?: SpecialistLearningGuidance | null }): Promise<ContextualDecision> {
     const deterministic = extractDeterministicDecision(input.context);
     if (deterministic.confidence >= 0.92 || !process.env.OPENAI_API_KEY) {
@@ -193,14 +194,22 @@ export class ContextualIntelligenceService {
     try {
       const client = createOpenAIClient();
       const model = input.useStrongModel ? getStrongSalesAgentOpenAIModel() : getSalesAgentOpenAIModel();
-      const knowledge = await this.loadKnowledge(input.context);
+      const knowledge = this.loadKnowledge(input.context);
+      const compactContext = compactCommercialContextForModel(input.context, knowledge, input.specialistLearning);
+      const compactContextText = JSON.stringify(compactContext);
       const response = await executeObservedOpenAICall(
-        { callType: "context_interpretation", model, conversationId: input.context.conversation_id || null },
+        {
+          callType: "context_interpretation",
+          model,
+          conversationId: input.context.conversation_id || null,
+          promptVersion: CONTEXTUAL_DECISION_PROMPT_VERSION,
+          promptCharacters: CONTEXTUAL_DECISION_SYSTEM_PROMPT.length + compactContextText.length
+        },
         () => client.responses.create({
         model,
         input: [
-          { role: "system", content: [{ type: "input_text", text: SYSTEM_PROMPT }] },
-          { role: "user", content: [{ type: "input_text", text: JSON.stringify(compactCommercialContextForModel(input.context, knowledge, input.specialistLearning)) }] }
+          { role: "system", content: [{ type: "input_text", text: CONTEXTUAL_DECISION_SYSTEM_PROMPT }] },
+          { role: "user", content: [{ type: "input_text", text: compactContextText }] }
         ],
         text: {
           format: {
@@ -217,47 +226,20 @@ export class ContextualIntelligenceService {
         return deterministic;
       }
 
-      const parsed = contextualDecisionSchema.safeParse(JSON.parse(response.output_text || "{}"));
+      const parsed = compactAIDecisionSchema.safeParse(JSON.parse(response.output_text || "{}"));
       if (!parsed.success) return { ...deterministic, source: "deterministic" };
-      const recommendedResponse = validateConciseUnitvReply(parsed.data.recommended_response).valid
-        ? parsed.data.recommended_response
-        : "";
-      return { ...parsed.data, recommended_response: recommendedResponse, source: "ai" };
+      return expandCompactAIDecision(parsed.data, deterministic, input.context);
     } catch {
       return { ...deterministic, source: "deterministic" };
     }
   }
 
-  private async loadKnowledge(context: CommercialContext) {
-    const stage = String(context.lead_profile.stage || context.lead_profile.commercial_stage || "");
+  private loadKnowledge(context: CommercialContext) {
+    const stage = String(context.lead_profile.conversation_state || context.lead_profile.stage || "");
     const query = [context.current_message, stage, context.last_bot_question].filter(Boolean).join(" ");
-    const [identity, neverDo, relevant] = await Promise.all([
-      this.knowledgeService.getKnowledgeByCategory("identidade_do_agente"),
-      this.knowledgeService.getKnowledgeByCategory("o_que_nunca_fazer"),
-      this.knowledgeService.searchKnowledge(query)
-    ]);
-    const structured = getStructuredKnowledgeContext({ query, stage, limit: 6 });
-    const unique = new Map<string, Record<string, unknown>>();
-    // Spend the compact RAG budget on the current issue first. The stable
-    // system prompt already carries identity and immutable safety rules.
-    for (const article of [...relevant, ...neverDo, ...identity]) {
-      const key = String(article.id || article.title || article.category || "");
-      if (key && !unique.has(key)) unique.set(key, article);
-    }
-
-    const markdownKnowledge = [...unique.values()].slice(0, 1).map((article) => ({
-      title: String(article.title || article.category || "Conhecimento UNITV"),
-      category: String(article.category || "geral"),
-      guidance: selectKnowledgeExcerpt(String(article.content || ""), query, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeCharacters)
-    })).filter((article) => article.guidance);
-    return [
-      ...(structured.length ? [{
-        title: "Conhecimento estruturado UNITV",
-        category: "compiled_operational_knowledge",
-        guidance: structured.map((rule) => rule.guidance).join("\n").slice(0, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeCharacters)
-      }] : []),
-      ...markdownKnowledge
-    ].slice(0, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeArticles);
+    return getStructuredKnowledgeContext({ query, stage, limit: 2 })
+      .slice(0, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeArticles)
+      .map((rule) => rule.guidance.slice(0, OPENAI_ECONOMY_POLICY.contextualDecision.knowledgeCharacters));
   }
 }
 
@@ -282,6 +264,141 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
     recommended_response: "Me confirma rapidinho: voce quer fazer teste gratis, ver os planos ou precisa de ajuda para instalar?",
     confidence: 0.45
   });
+
+  if (isClosingAcknowledgement(normalized)) {
+    return buildDecision({
+      ...base,
+      action: "silent",
+      next_state: resolveConversationState({ leadProfile }),
+      should_reply: false,
+      should_schedule_followup: false,
+      should_clarify: false,
+      customer_message_meaning: "Cliente apenas agradeceu ou encerrou o turno.",
+      reason: "Agradecimento isolado nao exige resposta nem chamada de IA.",
+      next_action: "no_safe_action",
+      recommended_response: "",
+      confidence: 0.99
+    });
+  }
+
+  if (isSimpleGreeting(normalized)) {
+    const hasActiveContext = resolveConversationState({ leadProfile }) !== "new_lead" ||
+      context.recent_messages.some((message) => message.role === "assistant" || message.role === "human_agent") ||
+      Boolean(context.last_bot_question);
+    return buildDecision({
+      ...base,
+      next_state: hasActiveContext ? resolveConversationState({ leadProfile }) : "welcome_sent",
+      stage: hasActiveContext ? normalizeStage(resolveConversationState({ leadProfile })) : "new",
+      should_schedule_followup: false,
+      should_clarify: false,
+      customer_message_meaning: hasActiveContext ? "Cliente retomou uma conversa existente." : "Novo cliente iniciou a conversa.",
+      reason: hasActiveContext ? "Retomada nao pode reiniciar o atendimento." : "Saudacao fixa e deterministica para novo lead.",
+      next_action: "clarify_intent",
+      recommended_response: hasActiveContext ? "Oi! Pode me dizer como posso continuar te ajudando?" : UNITV_FIXED_INITIAL_GREETING,
+      confidence: 0.99
+    });
+  }
+
+  const authoritativeReply = findUnitvAuthoritativeKnowledgeReply(context.current_message);
+  if (authoritativeReply) {
+    return buildDecision({
+      ...base,
+      action: authoritativeReply.needsHuman ? "handoff" : "reply",
+      intent: authoritativeReply.needsHuman ? "human_help" : "compatibility_question",
+      detected_intent: authoritativeReply.needsHuman ? "HUMAN_NEEDED" : "UNKNOWN_BUT_CLARIFIABLE",
+      stage: authoritativeReply.needsHuman ? "human_support" : base.stage,
+      should_reply: !authoritativeReply.needsHuman,
+      should_handoff: Boolean(authoritativeReply.needsHuman),
+      should_schedule_followup: false,
+      should_clarify: false,
+      customer_message_meaning: `Cliente perguntou sobre conhecimento oficial: ${authoritativeReply.id}.`,
+      reason: "Resposta oficial ja existe na base estruturada; IA nao e necessaria.",
+      next_action: authoritativeReply.needsHuman ? "human_handoff" : "no_safe_action",
+      recommended_response: authoritativeReply.reply,
+      confidence: 0.99
+    });
+  }
+
+  if (isAllPlanPricesRequest(normalized)) {
+    return buildDecision({
+      ...base,
+      intent: "ask_price",
+      detected_intent: "PLAN_PRICE_REQUEST",
+      stage: "qualified",
+      should_schedule_followup: false,
+      should_clarify: false,
+      customer_message_meaning: "Cliente pediu explicitamente os valores de todos os planos.",
+      reason: "Tabela oficial completa foi solicitada; resposta deterministica evita IA.",
+      next_action: "show_requested_prices",
+      recommended_response: OFFICIAL_ALL_PLAN_PRICES_TEXT,
+      next_expected_reply: "plan_choice",
+      confidence: 0.99
+    });
+  }
+
+  const requestedPlanPrice = getRequestedPlanPrice(normalized);
+  if (requestedPlanPrice) {
+    return buildDecision({
+      ...base,
+      intent: "ask_price",
+      detected_intent: "PLAN_PRICE_REQUEST",
+      stage: "qualified",
+      selected_plan: requestedPlanPrice.plan,
+      should_schedule_followup: false,
+      should_clarify: false,
+      customer_message_meaning: `Cliente pediu especificamente o valor do plano ${requestedPlanPrice.plan}.`,
+      reason: "Preco oficial especifico pode ser respondido sem IA.",
+      next_action: "show_requested_prices",
+      recommended_response: requestedPlanPrice.reply,
+      next_expected_reply: "plan_choice",
+      confidence: 0.99
+    });
+  }
+
+  const detectedDevice = detectUnitvDevice(context.current_message);
+  if (detectedDevice !== "unknown") {
+    if (detectedDevice === "android_phone" && !/\bandroid\b/.test(normalized)) {
+      return buildDecision({
+        ...base,
+        intent: "ask_download",
+        detected_intent: "DEVICE_ANDROID_PHONE_NEEDS_CONFIRMATION",
+        stage: "device_qualification",
+        should_schedule_followup: false,
+        should_clarify: false,
+        customer_message_meaning: "Cliente informou celular sem confirmar Android.",
+        reason: "Compatibilidade do celular exige confirmar Android, sem usar IA.",
+        next_action: "confirm_android_phone",
+        recommended_response: "So me confirma: esse celular e Android?",
+        next_expected_reply: "device",
+        confidence: 0.98
+      });
+    }
+    const guidance = getUnitvInstallationGuidance(context.current_message);
+    if (guidance) {
+      const incompatible = guidance.leadProfilePatch.compatibility_status === "incompatible";
+      return buildDecision({
+        ...base,
+        action: guidance.reply ? "reply" : "silent",
+        intent: "compatibility_question",
+        detected_intent: detectedIntentForDevice(detectedDevice),
+        stage: incompatible ? "download_support" : "device_qualification",
+        should_reply: Boolean(guidance.reply),
+        should_schedule_followup: false,
+        should_clarify: false,
+        install_status: incompatible ? "failed" : null,
+        customer_message_meaning: incompatible
+          ? "Aparelho informado e tentativa ja confirmaram incompatibilidade."
+          : `Cliente informou o aparelho ${detectedDevice}.`,
+        reason: incompatible
+          ? "Nao insistir em instalacao para aparelho incompatível."
+          : "Compatibilidade e instalacao sao regras locais; IA nao e necessaria.",
+        next_action: guidance.reply ? nextActionForDevice(detectedDevice) : "no_safe_action",
+        recommended_response: guidance.reply,
+        next_expected_reply: guidance.reply ? "download_confirmation" : null,
+        confidence: 0.98
+      });
+    }
+  }
 
   if (/\b(comprovante|recibo|print)\b/.test(normalized)) {
     return buildDecision({
@@ -532,7 +649,12 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
         selected_plan: selectedPlan,
         customer_message_meaning: "Cliente confirmou interesse em ativacao/recarga.",
         next_expected_reply: selectedPlan ? "payment_method" : "plan_choice",
-        confidence: 0.9
+        reason: "Confirmacao curta responde a pergunta anterior sobre ativacao ou recarga.",
+        next_action: selectedPlan ? "ask_payment_method" : "ask_plan_preference",
+        recommended_response: selectedPlan
+          ? "Perfeito. Voce prefere pagar com Pix ou cartao?"
+          : "Perfeito. Qual plano voce quer seguir?",
+        confidence: 0.96
       });
     }
     if (/\b(baixou|download|conseguiu|instalou)\b/.test(lastQuestion)) {
@@ -557,7 +679,12 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
       selected_plan: selectedPlan,
       customer_message_meaning: "Cliente quer ativar acesso.",
       next_expected_reply: selectedPlan ? "payment_method" : "plan_choice",
-      confidence: 0.9
+      reason: "Pedido explicito de ativacao nao precisa de interpretacao por IA.",
+      next_action: selectedPlan ? "ask_payment_method" : "ask_plan_preference",
+      recommended_response: selectedPlan
+        ? "Perfeito. Voce prefere pagar com Pix ou cartao?"
+        : "Perfeito. Qual plano voce quer seguir?",
+      confidence: 0.96
     });
   }
 
@@ -569,7 +696,12 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
       selected_plan: selectedPlan,
       customer_message_meaning: "Cliente quer renovar ou fazer recarga.",
       next_expected_reply: selectedPlan ? "payment_method" : "plan_choice",
-      confidence: 0.9
+      reason: "Pedido explicito de renovacao ou recarga nao precisa de IA.",
+      next_action: selectedPlan ? "ask_payment_method" : "ask_plan_preference",
+      recommended_response: selectedPlan
+        ? "Perfeito. Voce prefere pagar com Pix ou cartao?"
+        : "Perfeito. Qual plano voce quer seguir?",
+      confidence: 0.96
     });
   }
 
@@ -578,14 +710,12 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
 
 function compactCommercialContextForModel(
   context: CommercialContext,
-  knowledge: Array<Record<string, unknown>> = [],
+  knowledge: string[] = [],
   specialistLearning?: SpecialistLearningGuidance | null
 ) {
   const profileKeys = [
-    "stage", "etapa_atual", "commercial_stage", "ultima_intencao", "selected_plan", "plano_interesse",
-    "device", "aparelho", "download_status", "install_status", "trial_status", "payment_status",
-    "payment_method", "wants_test", "wants_recharge", "wants_activation", "pediu_pix", "codigo_enviado",
-    "last_bot_question", "next_expected_reply", "main_objection"
+    "selected_plan", "device", "operating_system", "compatibility_status", "install_status",
+    "payment_status", "payment_method", "next_expected_reply", "main_objection"
   ];
   const leadProfile = profileKeys.reduce<Record<string, unknown>>((result, key) => {
     const value = context.lead_profile[key];
@@ -598,49 +728,197 @@ function compactCommercialContextForModel(
   }, {});
 
   return {
-    current_message: context.current_message.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.currentMessageCharacters),
+    message: context.current_message.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.currentMessageCharacters),
+    state: resolveConversationState({ leadProfile: context.lead_profile }),
     recent_messages: context.recent_messages.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.recentMessages).map((message) => ({
-      role: message.role || null,
-      content: typeof message.content === "string"
+      r: message.role === "assistant" ? "a" : message.role === "human_agent" ? "h" : "c",
+      t: typeof message.content === "string"
         ? message.content.slice(-OPENAI_ECONOMY_POLICY.contextualDecision.messageCharacters)
         : null
     })),
-    lead_profile: leadProfile,
-    open_order: context.open_order ? { id: context.open_order.id || null, status: context.open_order.status || null } : null,
-    latest_order: context.latest_order ? { id: context.latest_order.id || null, status: context.latest_order.status || null } : null,
-    last_bot_question: context.last_bot_question?.slice(
+    profile: leadProfile,
+    order_status: String(context.open_order?.status || context.latest_order?.status || "") || null,
+    last_question: context.last_bot_question?.slice(
       -OPENAI_ECONOMY_POLICY.contextualDecision.messageCharacters
     ) || null,
-    followup_key: context.followup_key,
-    human_hold_active: context.human_hold_active,
-    knowledge_base: knowledge,
-    specialist_learning: compactSpecialistLearning(specialistLearning)
+    human_hold: context.human_hold_active || undefined,
+    knowledge: knowledge.length ? knowledge : undefined,
+    specialist_hint: compactSpecialistLearning(specialistLearning) || undefined
   };
 }
 
 function compactSpecialistLearning(guidance?: SpecialistLearningGuidance | null) {
   if (!guidance) return null;
   const maxLength = OPENAI_ECONOMY_POLICY.contextualDecision.specialistGuidanceCharacters;
-  const compact = Object.fromEntries(
-    Object.entries(guidance)
-      .filter(([, value]) => typeof value === "string" && value.trim())
-      .map(([key, value]) => [key, String(value).slice(0, maxLength)])
-  );
-  return Object.keys(compact).length ? compact : null;
+  const hints = Object.values(guidance)
+    .filter((value) => typeof value === "string" && value.trim())
+    .slice(0, 2)
+    .map((value) => String(value).slice(0, maxLength));
+  return hints.length ? hints.join(" | ") : null;
 }
 
-function selectKnowledgeExcerpt(content: string, query: string, maxLength: number) {
-  const terms = normalize(query).split(/\W+/).filter((term) => term.length >= 4).slice(0, 8);
-  const sections = content.split(/\n(?=##?\s)/).filter(Boolean);
-  const selected = sections
-    .map((section, index) => ({ section, index, score: terms.reduce((score, term) => score + (normalize(section).includes(term) ? 1 : 0), 0) }))
-    .sort((a, b) => b.score - a.score || a.index - b.index)
-    .slice(0, 2)
-    .map((item) => item.section)
-    .join("\n")
-    .trim();
-  const excerpt = selected || content.trim();
-  return excerpt.length > maxLength ? `${excerpt.slice(0, maxLength)}...` : excerpt;
+function expandCompactAIDecision(
+  compact: z.infer<typeof compactAIDecisionSchema>,
+  deterministic: ContextualDecision,
+  context: CommercialContext
+): ContextualDecision {
+  const currentState = resolveConversationState({ leadProfile: context.lead_profile });
+  const requestedState = compact.action === "handoff" ? "human_handoff" : compact.next_state;
+  const nextState = isAllowedConversationStateTransition(currentState, requestedState)
+    ? requestedState
+    : currentState;
+  const proposedReply = compact.action === "reply" ? compact.reply.trim() : "";
+  const fallbackReply = deterministic.recommended_response || "Me conta em uma frase o que voce precisa agora.";
+  const recommendedResponse = proposedReply && validateConciseUnitvReply(proposedReply).valid
+    ? proposedReply
+    : compact.action === "reply" ? fallbackReply : "";
+  const selectedPlan = normalizePlan(context.lead_profile.selected_plan || context.lead_profile.plano_interesse || context.current_message);
+  const paymentMethod = normalizePaymentMethod(context.lead_profile.payment_method || context.current_message);
+  const action = compact.action;
+
+  return buildDecision({
+    action,
+    next_state: nextState,
+    intent: compact.intent,
+    detected_intent: detectedIntentForCommercialIntent(compact.intent),
+    stage: stageForConversationState(nextState),
+    selected_plan: selectedPlan,
+    payment_method: paymentMethod,
+    should_create_order: false,
+    should_generate_pix: false,
+    should_send_download: false,
+    should_schedule_followup: false,
+    should_reply: action === "reply",
+    should_handoff: action === "handoff",
+    should_clarify: action === "reply" && compact.intent === "unknown",
+    next_action: nextActionForCommercialIntent(compact.intent, action),
+    customer_message_meaning: compact.meaning,
+    reason: compact.reason,
+    recommended_response: recommendedResponse,
+    next_expected_reply: nextExpectedReplyForCommercialIntent(compact.intent),
+    install_status: deterministic.install_status,
+    confidence: compact.confidence,
+    source: "ai"
+  });
+}
+
+function detectedIntentForCommercialIntent(intent: ContextualDecision["intent"]): ContextualDecision["detected_intent"] {
+  const map: Partial<Record<ContextualDecision["intent"], ContextualDecision["detected_intent"]>> = {
+    activate: "FREE_TRIAL_REQUEST",
+    renew: "RECHARGE_REQUEST",
+    ask_price: "PLAN_PRICE_REQUEST",
+    choose_plan: "PLAN_PRICE_REQUEST",
+    request_pix: "PIX_REQUEST",
+    request_card: "PAYMENT_INTENT",
+    payment_sent: "PAYMENT_PROOF_SENT",
+    receipt_sent: "PAYMENT_PROOF_SENT",
+    ask_download: "DOWNLOAD_HELP",
+    download_issue: "DOWNLOAD_HELP",
+    already_downloaded: "DOWNLOAD_CONFIRMED",
+    installed_success: "DOWNLOAD_CONFIRMED",
+    human_help: "HUMAN_NEEDED"
+  };
+  return map[intent] || "UNKNOWN_BUT_CLARIFIABLE";
+}
+
+function detectedIntentForDevice(device: UnitvDeviceId): ContextualDecision["detected_intent"] {
+  const map: Partial<Record<UnitvDeviceId, ContextualDecision["detected_intent"]>> = {
+    android_phone: "DEVICE_ANDROID_PHONE",
+    android_tv_google_tv: "DEVICE_ANDROID_TV",
+    tvbox_android: "DEVICE_TV_BOX",
+    firestick: "DEVICE_FIRE_STICK"
+  };
+  return map[device] || "DEVICE_UNSUPPORTED_OR_NEEDS_CHECK";
+}
+
+function nextActionForDevice(device: UnitvDeviceId): ContextualDecision["next_action"] {
+  if (device === "android_phone") return "send_android_download";
+  if (device === "tvbox_android" || device === "android_tv_google_tv") return "send_tvbox_download";
+  if (device === "firestick") return "send_firestick_guidance";
+  return "clarify_intent";
+}
+
+function nextActionForCommercialIntent(
+  intent: ContextualDecision["intent"],
+  action: z.infer<typeof compactAIDecisionSchema>["action"]
+): ContextualDecision["next_action"] {
+  if (action === "handoff") return "human_handoff";
+  if (action === "silent" || action === "wait") return "no_safe_action";
+  const map: Partial<Record<ContextualDecision["intent"], ContextualDecision["next_action"]>> = {
+    activate: "ask_device_for_trial",
+    renew: "ask_plan_preference",
+    ask_price: "show_monthly_plan",
+    choose_plan: "ask_payment_method",
+    request_pix: "ask_plan_preference",
+    request_card: "ask_payment_method",
+    payment_sent: "verify_payment",
+    receipt_sent: "verify_payment",
+    ask_download: "ask_installation_status",
+    download_issue: "ask_download_problem",
+    already_downloaded: "ask_installation_status",
+    installed_success: "ask_installation_status",
+    human_help: "human_handoff"
+  };
+  return map[intent] || "clarify_intent";
+}
+
+function nextExpectedReplyForCommercialIntent(intent: ContextualDecision["intent"]): ContextualDecision["next_expected_reply"] {
+  if (intent === "activate") return "device";
+  if (intent === "renew" || intent === "ask_price") return "plan_choice";
+  if (intent === "choose_plan") return "payment_method";
+  if (["request_pix", "request_card", "payment_sent", "receipt_sent"].includes(intent)) return "payment_proof";
+  if (["ask_download", "download_issue"].includes(intent)) return "download_confirmation";
+  if (["already_downloaded", "installed_success"].includes(intent)) return "install_confirmation";
+  return null;
+}
+
+function stageForConversationState(state: ConversationState): ContextualDecision["stage"] {
+  const map: Record<ConversationState, ContextualDecision["stage"]> = {
+    new_lead: "new",
+    welcome_sent: "new",
+    test_requested: "trial_selection",
+    first_time_check: "first_time_check",
+    device_qualification: "device_qualification",
+    download_link_sent: "download_instructions",
+    awaiting_download_installation: "awaiting_download_installation",
+    awaiting_test_activation: "qualified",
+    price_discovery: "qualified",
+    monthly_offer_pending: "qualified",
+    plan_preference: "qualified",
+    plan_selected: "plan_selected",
+    pre_sale_recharge_intent: "qualified",
+    pix_permission: "checkout",
+    pix_sent: "awaiting_payment",
+    payment_pending: "awaiting_payment",
+    payment_approved: "paid",
+    code_delivered: "active",
+    post_sale: "active",
+    incompatible_device: "download_support",
+    human_handoff: "human_support"
+  };
+  return map[state];
+}
+
+function isClosingAcknowledgement(normalized: string) {
+  return /^(sim[, ]+)?(obrigad[oa]|valeu|show|beleza|perfeito|ta bom|tudo bem|ok|blz)[.! ]*$/.test(normalized);
+}
+
+function isSimpleGreeting(normalized: string) {
+  return /^(oi|ola|bom dia|boa tarde|boa noite|oi tudo bem|ola tudo bem)[!,.? ]*$/.test(normalized);
+}
+
+function isAllPlanPricesRequest(normalized: string) {
+  return /\b(todos|todas|tabela|opcoes|quais valores|valores dos planos|quais planos)\b/.test(normalized) &&
+    /\b(valor|valores|preco|precos|plano|planos|mensal|trimestral|semestral|anual)\b/.test(normalized);
+}
+
+function getRequestedPlanPrice(normalized: string): { plan: NonNullable<ContextualDecision["selected_plan"]>; reply: string } | null {
+  if (!/\b(valor|preco|quanto|custa|fica|sai)\b/.test(normalized)) return null;
+  if (/\btrimestral|3 meses\b/.test(normalized)) return { plan: "trimestral", reply: "O plano trimestral fica em R$ 70. Voce tem interesse?" };
+  if (/\bsemestral|6 meses\b/.test(normalized)) return { plan: "semestral", reply: "O plano semestral fica em R$ 120. Voce tem interesse?" };
+  if (/\banual|1 ano|12 meses\b/.test(normalized)) return { plan: "anual", reply: "O plano anual fica em R$ 200. Voce tem interesse?" };
+  if (/\bmensal|1 mes|30 dias\b/.test(normalized)) return { plan: "mensal", reply: OFFICIAL_MONTHLY_OFFER_TEXT };
+  return null;
 }
 
 function isTrialSelectionAnswer(normalized: string, lastQuestion: string) {
@@ -788,50 +1066,14 @@ function toJsonSchema() {
     type: "object",
     additionalProperties: false,
     properties: {
-      action: { type: "string", enum: agentActionSchema.options },
-      next_state: { type: "string", enum: CANONICAL_CONVERSATION_STATES },
-      intent: { type: "string", enum: commercialIntentSchema.options },
-      detected_intent: { type: "string", enum: contextualDetectedIntentSchema.options },
-      stage: { type: "string", enum: commercialStageSchema.options },
-      selected_plan: { type: ["string", "null"], enum: ["mensal", "trimestral", "semestral", "anual", "teste", null] },
-      payment_method: { type: ["string", "null"], enum: ["pix", "card", null] },
-      should_create_order: { type: "boolean" },
-      should_generate_pix: { type: "boolean" },
-      should_send_download: { type: "boolean" },
-      should_schedule_followup: { type: "boolean" },
-      should_reply: { type: "boolean" },
-      should_handoff: { type: "boolean" },
-      should_clarify: { type: "boolean" },
-      next_action: { type: "string", enum: nextActionSchema.options },
-      customer_message_meaning: { type: "string" },
+      action: { type: "string" },
+      intent: { type: "string" },
+      next_state: { type: "string" },
+      meaning: { type: "string" },
       reason: { type: "string" },
-      recommended_response: { type: "string" },
-      next_expected_reply: { type: ["string", "null"], enum: ["activation_or_renewal", "plan_choice", "payment_method", "payment_proof", "download_confirmation", "device", "install_confirmation", null] },
-      install_status: { type: ["string", "null"], enum: ["not_sent", "link_sent", "downloaded", "installed", "failed", null] },
+      reply: { type: "string" },
       confidence: { type: "number", minimum: 0, maximum: 1 }
     },
-    required: [
-      "action",
-      "next_state",
-      "intent",
-      "detected_intent",
-      "stage",
-      "selected_plan",
-      "payment_method",
-      "should_create_order",
-      "should_generate_pix",
-      "should_send_download",
-      "should_schedule_followup",
-      "should_reply",
-      "should_handoff",
-      "should_clarify",
-      "next_action",
-      "customer_message_meaning",
-      "reason",
-      "recommended_response",
-      "next_expected_reply",
-      "install_status",
-      "confidence"
-    ]
+    required: ["action", "intent", "next_state", "meaning", "reason", "reply", "confidence"]
   } as const;
 }

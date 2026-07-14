@@ -11,14 +11,14 @@ export const OPENAI_ECONOMY_POLICY = Object.freeze({
     knowledgeCharacters: 420
   },
   contextualDecision: {
-    maxOutputTokens: 200,
-    currentMessageCharacters: 300,
-    profileValueCharacters: 180,
-    specialistGuidanceCharacters: 120,
-    recentMessages: 4,
-    messageCharacters: 240,
-    knowledgeArticles: 2,
-    knowledgeCharacters: 420
+    maxOutputTokens: 90,
+    currentMessageCharacters: 180,
+    profileValueCharacters: 90,
+    specialistGuidanceCharacters: 70,
+    recentMessages: 2,
+    messageCharacters: 140,
+    knowledgeArticles: 1,
+    knowledgeCharacters: 240
   },
   intent: {
     maxOutputTokens: 70,

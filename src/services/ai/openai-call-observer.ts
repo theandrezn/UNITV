@@ -14,6 +14,8 @@ type OpenAICallInput = {
   callType: string;
   model: string;
   conversationId?: string | null;
+  promptVersion?: string | null;
+  promptCharacters?: number | null;
 };
 
 const QUOTA_COOLDOWN_MS = 30 * 60 * 1000;
@@ -117,6 +119,8 @@ async function recordOpenAICall(
       metadata: {
         call_type: input.callType,
         model: input.model,
+        prompt_version: input.promptVersion || null,
+        prompt_characters: Number(input.promptCharacters || 0),
         outcome: result.outcome,
         input_tokens: Number(result.usage?.input_tokens || 0),
         cached_input_tokens: Number(result.usage?.input_tokens_details?.cached_tokens || 0),

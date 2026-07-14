@@ -3,13 +3,16 @@ import { describe, expect, it } from "vitest";
 import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
 
 describe("OpenAI economy policy", () => {
-  it("keeps customer turns compact without removing recent state or knowledge", () => {
+  it("enforces the ultra-low token budget for the only ambiguous-turn call", () => {
     expect(OPENAI_ECONOMY_POLICY.contextualDecision).toMatchObject({
-      recentMessages: 4,
-      messageCharacters: 240,
-      knowledgeArticles: 2,
-      knowledgeCharacters: 420,
-      maxOutputTokens: 200
+      currentMessageCharacters: 180,
+      profileValueCharacters: 90,
+      specialistGuidanceCharacters: 70,
+      recentMessages: 2,
+      messageCharacters: 140,
+      knowledgeArticles: 1,
+      knowledgeCharacters: 240,
+      maxOutputTokens: 90
     });
     expect(OPENAI_ECONOMY_POLICY.contextualResponse).toMatchObject({
       recentMessages: 4,

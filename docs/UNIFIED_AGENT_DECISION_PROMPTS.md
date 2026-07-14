@@ -1,64 +1,85 @@
-# Prompts Internos Do Decisor UNITV
+# Prompts internos do decisor UNITV - ultra-low token
 
-Este documento descreve a ordem operacional. Nao contem mensagens fixas para copiar; os prompts produzem decisoes estruturadas e respostas contextuais.
+Estes prompts sao instrucoes internas de decisao, nao mensagens programadas para o cliente. Fatos e acoes sensiveis continuam sob regras locais e backend.
 
-## Passo 1 - Reconstruir O Contexto
+## Prompt 0 - roteador sem IA
 
-Entrada minima:
+Execute nesta ordem e pare na primeira regra segura:
 
-- `conversation_state` oficial;
-- ultima mensagem do bot;
-- ultima mensagem do cliente;
-- intervencao recente do Andre;
-- pedido/pagamento atual;
-- capacidades conhecidas do aparelho;
-- follow-up pendente;
-- ate quatro mensagens recentes relevantes.
+1. agradecimento ou encerramento isolado -> `silent`;
+2. saudacao de lead realmente novo -> saudacao oficial local;
+3. conversa ativa -> nunca reiniciar com welcome;
+4. preco generico -> somente mensal de R$ 20,90;
+5. plano ou tabela explicitamente pedidos -> valor oficial solicitado;
+6. Pix, pagamento, comprovante e codigo -> backend protegido;
+7. aparelho, compatibilidade, download e instalacao -> matriz local;
+8. ESPN, Premiere, espanhol e revenda -> conhecimento autoritativo local;
+9. intencao clara de teste, ativacao ou recarga -> transicao local;
+10. somente se ainda houver ambiguidade -> Prompt 1.
 
-Prompt interno: determine o que a mensagem significa considerando primeiro o estado e a ultima pergunta. Nao trate mensagem curta como conversa nova.
+Esse roteador nao recebe historico longo, nao consulta OpenAI e nao cria texto por IA.
 
-## Passo 2 - Aplicar Regras Deterministicas
+## Prompt 1 - unico decisor ambiguo
 
-Resolver sem IA quando houver regra segura para preco, plano, Pix, pagamento, codigo, catalogo, download ou compatibilidade. Bloquear saudacao regressiva, pergunta repetida, falso handoff e instalacao para aparelho incompativel.
+Versao em producao: `unitv-decision-v3-ultra-low`.
 
-## Passo 3 - Chamada Unica Para Ambiguidade
+```text
+Decida um turno ambiguo da UNITV. Retorne apenas o JSON curto solicitado.
+Prioridade: estado > ultima pergunta > cliente > humano > base.
+Passos: interprete; escolha uma acao; mantenha ou avance o estado; responda curto.
+Acoes: reply, silent, wait, handoff. Use silent em agradecimento ou encerramento.
+Handoff somente quando o cliente pedir humano ou tratar de revenda.
+Nunca execute Pix, pagamento, codigo ou download; o backend e a autoridade.
+Nunca saude conversa ativa, repita pergunta, invente fato ou regrida estado.
+Quando responder, use 6 a 15 palavras, no maximo 22, com um unico proximo passo.
+```
 
-Somente quando os passos anteriores nao forem suficientes, retornar um unico JSON com:
+Saida obrigatoria de apenas sete campos:
 
 ```json
 {
-  "intent": "significado comercial",
-  "customer_message_meaning": "interpretacao contextual",
-  "action": "reply | silent | wait | handoff | backend_action",
+  "action": "reply | silent | wait | handoff",
+  "intent": "intencao comercial",
   "next_state": "estado canonico",
-  "reason": "motivo auditavel",
-  "recommended_response": "resposta curta pronta para envio"
+  "meaning": "significado curto",
+  "reason": "motivo curto",
+  "reply": "resposta final curta",
+  "confidence": 0.0
 }
 ```
 
-Essa resposta nao pode ser reescrita por uma segunda IA. O limite tecnico do turno e uma chamada entre classificacao, interpretacao e redacao.
+O backend expande localmente esses sete campos para o contrato completo. A IA nunca decide `should_generate_pix`, `should_create_order`, `should_send_download`, pagamento aprovado ou entrega de codigo.
 
-## Passo 4 - Arbitragem Final
+## Contexto maximo permitido
 
-O `ConversationBrain` recebe a decisao contextual e o candidato operacional. Ele devolve somente:
+- mensagem atual: 180 caracteres;
+- estado canonico: um campo;
+- historico: duas mensagens de ate 140 caracteres;
+- perfil: no maximo nove fatos curtos, sem aliases de estado;
+- pedido: somente status, sem payload;
+- ultima pergunta: 140 caracteres;
+- conhecimento compilado: um trecho de ate 240 caracteres;
+- aprendizado do especialista: dois sinais de ate 70 caracteres;
+- nunca enviar conversa completa, identidade repetida, regras estaveis duplicadas, telefone, chave, Pix ou segredo.
 
-- `action`;
-- `next_state`;
-- `reason`;
-- `reply`;
-- `followup_action`;
-- `backend_artifact`.
+## Prompt 2 - guardiao local depois da IA
 
-Nenhuma regra posterior pode mudar uma acao `silent` ou `wait` para `reply`.
+```text
+Valide localmente: uma unica acao; transicao permitida; resposta curta; sem saudacao regressiva;
+sem pergunta repetida; sem artefato sensivel; sem Pix/codigo/pagamento criado pela IA.
+Se falhar, use decisao deterministica segura. Nunca abra uma segunda chamada para reescrever.
+```
 
-## Passo 5 - Seguranca De Backend
+## Limites permanentes
 
-`backend_action` apenas autoriza o fluxo protegido. Pix, pagamento e codigo continuam dependendo do backend real, pedido e webhook. O artefato registrado na decisao nunca contem segredo ou payload completo.
+- no maximo uma chamada de decisao por turno;
+- `max_output_tokens = 90` no decisor ambiguo;
+- classificador separado desligado;
+- redator contextual separado bloqueado quando o decisor ja respondeu;
+- follow-ups em modo sombra e sem IA;
+- aprendizado diario por IA desligado;
+- telemetria registra `prompt_version`, `prompt_characters`, tokens e origem deterministica/IA, sem conversa bruta.
 
-## Passo 6 - Modo Sombra
+## Criterio de revisao
 
-Registrar decisao antiga e decisao unificada sem armazenar conversa bruta. Classificar divergencias e medir tokens. Follow-ups em sombra registram o candidato deterministico e nao chamam IA nem WhatsApp.
-
-## Passo 7 - Aprendizado E Conhecimento
-
-Intervencoes do Andre permanecem candidatas ate revisao e evidencia de resultado. Regras novas precisam de tres exemplos positivos distintos. O Obsidian e compilado para JSON estruturado e validado antes do deploy.
+Uma ampliacao de prompt so pode entrar se existir falha real reproduzida, teste de regressao e evidencia de que uma regra local nao resolve. Preferir sempre adicionar uma regra curta ao roteador em vez de aumentar o contexto de todos os turnos.
