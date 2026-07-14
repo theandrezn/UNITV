@@ -41,6 +41,7 @@ import {
   isUnitvInstallationRequest,
   UNITV_DEVICE_COMPATIBILITY
 } from "@/lib/unitv/device-compatibility";
+import { resolveConversationState, withCanonicalConversationState } from "@/lib/conversation-state";
 
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
@@ -979,7 +980,12 @@ export class WhatsappMessageService {
     webhookEventId: string;
     message: IncomingEvolutionMessage;
     customer: { id: string };
-    conversation: { id: string; customer_id?: string | null; metadata?: Record<string, unknown> | null };
+    conversation: {
+      id: string;
+      customer_id?: string | null;
+      conversation_state?: string | null;
+      metadata?: Record<string, unknown> | null;
+    };
     reply: string;
     classification: Record<string, unknown>;
     media?: { base64: string; mimetype: string; fileName: string; caption: string };
@@ -1357,10 +1363,21 @@ export class WhatsappMessageService {
     recentMessages
   }: {
     message: IncomingEvolutionMessage;
-    conversation: { id: string; customer_id?: string | null; metadata?: Record<string, unknown> | null };
+    conversation: {
+      id: string;
+      customer_id?: string | null;
+      conversation_state?: string | null;
+      metadata?: Record<string, unknown> | null;
+    };
     recentMessages: Array<{ role?: string; content?: string | null }>;
   }): Promise<CommercialContext> {
-    const leadProfile = readLeadProfile(conversation.metadata);
+    const rawLeadProfile = readLeadProfile(conversation.metadata);
+    const conversationState = resolveConversationState({
+      conversationState: conversation.conversation_state,
+      metadata: conversation.metadata,
+      leadProfile: rawLeadProfile
+    });
+    const leadProfile = withCanonicalConversationState(rawLeadProfile, conversationState);
     const customerId = typeof conversation.customer_id === "string" ? conversation.customer_id : "";
     const [openOrder, latestOrder] = await Promise.all([
       this.safeFindLatestOpenOrderByCustomerId(customerId),
@@ -2651,7 +2668,11 @@ function inferConversationStage(intent: string, key: string) {
 
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
   const profile = metadata?.lead_profile;
-  return profile && typeof profile === "object" && !Array.isArray(profile) ? (profile as Record<string, unknown>) : {};
+  const leadProfile = profile && typeof profile === "object" && !Array.isArray(profile)
+    ? (profile as Record<string, unknown>)
+    : {};
+  const state = resolveConversationState({ metadata, leadProfile });
+  return withCanonicalConversationState(leadProfile, state);
 }
 
 function buildMetaReferralConversationPatch(metaReferral: IncomingEvolutionMessage["metaReferral"] | null | undefined) {

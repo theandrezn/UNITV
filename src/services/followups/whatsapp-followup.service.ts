@@ -18,6 +18,7 @@ import {
   type FollowupContextMessage,
   type FollowupDecision
 } from "@/services/followups/contextual-followup-decision.service";
+import { resolveConversationState, withCanonicalConversationState } from "@/lib/conversation-state";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
 const MAX_LEAD_RECOVERY_FOLLOWUPS = 3;
@@ -36,6 +37,7 @@ type ConversationRow = {
   id: string;
   customer_id?: string | null;
   external_conversation_id?: string | null;
+  conversation_state?: string | null;
   metadata?: Record<string, unknown> | null;
   customers?: { id?: string; phone?: string | null; name?: string | null } | null;
 };
@@ -605,7 +607,13 @@ export class WhatsappFollowupService {
     const recentMessages = (await this.listRecentMessages(conversation.id) as FollowupContextMessage[])
       .slice(-12)
       .map(compactFollowupMessage);
-    const leadProfile = compactFollowupLeadProfile(readLeadProfile(metadata));
+    const rawLeadProfile = readLeadProfile(metadata);
+    const conversationState = resolveConversationState({
+      conversationState: conversation.conversation_state,
+      metadata,
+      leadProfile: rawLeadProfile
+    });
+    const leadProfile = compactFollowupLeadProfile(withCanonicalConversationState(rawLeadProfile, conversationState));
     const latestCustomerMessage = findLatestMessageByRole(recentMessages, "customer");
     const latestBotMessage = findLatestMessageByRole(recentMessages, "assistant");
     const latestHumanMessage = findLatestMessageByRole(recentMessages, "human_agent");
@@ -1551,7 +1559,11 @@ function getNextLeadRecoveryDueAt(step: number, now: Date) {
 
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
   const profile = metadata?.lead_profile;
-  return profile && typeof profile === "object" && !Array.isArray(profile) ? (profile as Record<string, unknown>) : {};
+  const leadProfile = profile && typeof profile === "object" && !Array.isArray(profile)
+    ? (profile as Record<string, unknown>)
+    : {};
+  const state = resolveConversationState({ metadata, leadProfile });
+  return withCanonicalConversationState(leadProfile, state);
 }
 
 const FOLLOWUP_METADATA_KEYS = [

@@ -1922,7 +1922,11 @@ describe("commercial WhatsApp agent", () => {
       expect.objectContaining({
         followup_due_at: null,
         response_due_at: null,
-        lead_profile: expect.objectContaining({ stage: "awaiting_payment", payment_status: "pending" })
+        lead_profile: expect.objectContaining({
+          conversation_state: "payment_pending",
+          stage: "payment_pending",
+          payment_status: "pending"
+        })
       })
     );
     expect(result).toMatchObject({ status: "processed" });

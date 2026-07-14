@@ -243,7 +243,9 @@ function areSimilar(current: string, previous: string) {
 }
 
 function hasDefinedConversationStage(profile: Record<string, unknown>) {
-  const stage = normalize(String(profile.stage || profile.commercial_stage || profile.etapa_atual || "")).replace(/\s+/g, "_");
+  const stage = normalize(String(
+    profile.conversation_state || profile.stage || profile.commercial_stage || profile.etapa_atual || ""
+  )).replace(/\s+/g, "_");
   return Boolean(stage) && !["new", "new_lead"].includes(stage);
 }
 

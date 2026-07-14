@@ -90,7 +90,9 @@ export function resolveConversationBrain(input: ConversationBrainInput): Convers
   const profile = input.context.lead_profile || {};
   const message = normalize(input.context.current_message);
   const lastQuestion = normalize(String(input.context.last_bot_question || profile.last_bot_question || lastAssistantMessage(input.context.recent_messages)));
-  const stage = normalizeStage(profile.stage || profile.commercial_stage || profile.etapa_atual || input.contextualDecision.stage);
+  const stage = normalizeStage(
+    profile.conversation_state || profile.stage || profile.commercial_stage || profile.etapa_atual || input.contextualDecision.stage
+  );
   const downloadActive = isDownloadContext(stage, profile, lastQuestion, input.context.recent_messages);
   const active = isActiveContext(stage, profile, lastQuestion, input.context.recent_messages, input.context.followup_key);
   const sensitive = SENSITIVE_STAGES.test(stage);

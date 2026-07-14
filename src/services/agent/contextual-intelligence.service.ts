@@ -250,7 +250,7 @@ export function extractDeterministicDecision(context: CommercialContext): Contex
   const base = buildDecision({
     intent: "unknown",
     detected_intent: "UNKNOWN",
-    stage: normalizeStage(leadProfile.stage || leadProfile.etapa_atual),
+    stage: normalizeStage(leadProfile.conversation_state || leadProfile.stage || leadProfile.etapa_atual),
     selected_plan: selectedPlan,
     payment_method: normalizePaymentMethod(leadProfile.payment_method),
     customer_message_meaning: "Mensagem ainda sem intencao comercial clara.",

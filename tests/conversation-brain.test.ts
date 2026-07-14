@@ -268,4 +268,21 @@ describe("ConversationBrainService", () => {
     expect(decision.allowInitialGreeting).toBe(true);
     expect(decision.directReply).toBeNull();
   });
+
+  it("uses canonical conversation_state instead of a stale legacy welcome stage", () => {
+    const decision = decide({
+      current_message: "Oi",
+      recent_messages: [{ role: "assistant", content: "Aguardando a confirmacao do pagamento." }],
+      lead_profile: {
+        conversation_state: "payment_pending",
+        stage: "welcome_activation",
+        commercial_stage: "welcome_activation"
+      }
+    }, "greeting");
+
+    expect(decision.stage).toBe("payment_pending");
+    expect(decision.allowInitialGreeting).toBe(false);
+    expect(decision.responseRule).toBe("conversation_brain_blocks_greeting_restart");
+    expect(decision.directReply).not.toContain("Seja bem-vindo");
+  });
 });

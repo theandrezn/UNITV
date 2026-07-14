@@ -33,6 +33,7 @@ import {
   OFFICIAL_MONTHLY_PRICE_TEXT
 } from "@/lib/unitv/official-catalog";
 import { UNITV_FIXED_INITIAL_GREETING } from "@/lib/unitv/agent-identity";
+import { resolveConversationState, withCanonicalConversationState } from "@/lib/conversation-state";
 
 export const INITIAL_UNITV_REPLY = UNITV_FIXED_INITIAL_GREETING;
 
@@ -1275,7 +1276,11 @@ export class ChatAgentService {
 
 function readLeadProfile(metadata: Record<string, unknown> | null | undefined) {
   const profile = metadata?.lead_profile;
-  return profile && typeof profile === "object" && !Array.isArray(profile) ? profile as Record<string, unknown> : {};
+  const leadProfile = profile && typeof profile === "object" && !Array.isArray(profile)
+    ? profile as Record<string, unknown>
+    : {};
+  const state = resolveConversationState({ metadata, leadProfile });
+  return withCanonicalConversationState(leadProfile, state);
 }
 
 type ConversationIntelligenceLayer = {
@@ -1350,16 +1355,22 @@ function shouldBlockHumanHandoff(context: ConversationIntelligenceLayer) {
   const stage = normalizeContextMessage(context.stage || "");
   const lowRiskStages = [
     "welcome",
+    "welcome_sent",
     "welcome_activation",
+    "test_requested",
     "test_offer",
+    "first_time_check",
     "first_time_qualification",
     "device_qualification",
+    "download_link_sent",
     "download_instructions",
+    "awaiting_download_installation",
     "download_support",
     "installation_tutorial",
     "install_support",
     "plan_discovery",
     "price_discovery",
+    "plan_preference",
     "qualified"
   ];
   const lastBotMessageWasQuestion =
@@ -1640,6 +1651,7 @@ function isDownloadFlowActive(context: ConversationIntelligenceLayer) {
   const latestBotMessage = normalizeContextMessage(context.latestBotMessage || "");
   const installStatus = normalizeContextMessage(String(context.leadProfile.install_status || context.leadProfile.download_status || ""));
   return (
+    stage === "download_link_sent" ||
     stage === "download_instructions" ||
     stage === "download_instructions_sent" ||
     stage === "awaiting_download_installation" ||

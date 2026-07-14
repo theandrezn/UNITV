@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createSupabaseAdminClient } from "@/lib/supabase/server";
 import { assertSupabaseSuccess } from "./errors";
+import { prepareConversationStatePersistence } from "@/lib/conversation-state";
 
 type UpsertConversationInput = {
   customer_id: string;
@@ -29,9 +30,17 @@ export class ConversationsRepository {
   }
 
   async createConversation(data: UpsertConversationInput) {
+    const statePersistence = prepareConversationStatePersistence(data.metadata || {});
+    if (data.metadata) Object.assign(data.metadata, statePersistence.metadata);
     const { data: conversation, error } = await this.supabase
       .from("conversations")
-      .insert({ ...data, ...extractAgentDueFields(data.metadata) })
+      .insert({
+        ...data,
+        metadata: statePersistence.metadata,
+        conversation_state: statePersistence.state,
+        conversation_state_changed_at: new Date().toISOString(),
+        ...extractAgentDueFields(statePersistence.metadata)
+      })
       .select("*")
       .single();
     return assertSupabaseSuccess(conversation, error);
@@ -49,14 +58,25 @@ export class ConversationsRepository {
   }
 
   async updateConversationMetadata(id: string, metadata: Record<string, unknown>) {
+    const statePersistence = prepareConversationStatePersistence(metadata);
     const { data, error } = await this.supabase
       .from("conversations")
-      .update({ metadata, ...extractAgentDueFields(metadata) })
+      .update({
+        metadata: statePersistence.metadata,
+        conversation_state: statePersistence.state,
+        ...extractAgentDueFields(statePersistence.metadata)
+      })
       .eq("id", id)
       .select("*")
       .single();
 
-    return assertSupabaseSuccess(data, error);
+    const conversation = assertSupabaseSuccess(data, error) as Record<string, unknown>;
+    const persistedMetadata = conversation?.metadata;
+    if (persistedMetadata && typeof persistedMetadata === "object" && !Array.isArray(persistedMetadata)) {
+      for (const key of Object.keys(metadata)) delete metadata[key];
+      Object.assign(metadata, persistedMetadata);
+    }
+    return conversation;
   }
 
   async listRecentConversations(limit = 50) {
