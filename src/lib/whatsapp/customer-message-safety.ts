@@ -1,3 +1,5 @@
+import { UNITV_FIXED_INITIAL_GREETING, UNITV_SPECIALIST_STYLE } from "@/lib/unitv/agent-identity";
+
 export const CUSTOMER_SAFE_FALLBACK =
   "Claro, eu te ajudo. Me confirma rapidinho: você quer ativar um plano, fazer teste grátis ou precisa de ajuda com instalação?";
 
@@ -52,6 +54,36 @@ export function sanitizeCustomerMessage(message: string): CustomerMessageSafetyR
   }
 
   return { text, blocked: false };
+}
+
+export function validateConciseUnitvReply(
+  response: string,
+  options: { allowOperationalDetail?: boolean } = {}
+) {
+  const text = String(response || "").trim();
+  if (!text) return { valid: false, reason: "empty_response" };
+  if (text === UNITV_FIXED_INITIAL_GREETING) return { valid: true };
+
+  const maximumWords = options.allowOperationalDetail
+    ? UNITV_SPECIALIST_STYLE.operationalMaximumWords
+    : UNITV_SPECIALIST_STYLE.normalMaximumWords;
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  if (wordCount > maximumWords) return { valid: false, reason: "response_too_long" };
+
+  const questionCount = (text.match(/\?/g) || []).length;
+  if (questionCount > UNITV_SPECIALIST_STYLE.maximumQuestions) {
+    return { valid: false, reason: "too_many_questions" };
+  }
+
+  const sentenceCount = text
+    .split(/(?<=[.!?])(?:\s+|\n+)|\n{2,}/)
+    .map((part) => part.trim())
+    .filter(Boolean).length;
+  if (!options.allowOperationalDetail && sentenceCount > UNITV_SPECIALIST_STYLE.maximumSentences) {
+    return { valid: false, reason: "too_many_sentences" };
+  }
+
+  return { valid: true };
 }
 
 export function validateResponseAgainstLeadProfile(

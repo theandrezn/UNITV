@@ -27,12 +27,12 @@ import { getUnitvInstallationGuidance, isUnitvInstallationRequest } from "@/lib/
 import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
 import { validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
 import { OFFICIAL_MONTHLY_MAX_SCREENS, OFFICIAL_MONTHLY_PRICE_TEXT } from "@/lib/unitv/official-catalog";
+import { UNITV_FIXED_INITIAL_GREETING } from "@/lib/unitv/agent-identity";
 
-export const INITIAL_UNITV_REPLY =
-  "Oi, tudo bem? Você já usa o aplicativo UNITV ou seria sua primeira vez?";
+export const INITIAL_UNITV_REPLY = UNITV_FIXED_INITIAL_GREETING;
 
 const LOW_CONFIDENCE_REPLY =
-  "Claro, eu te ajudo.\n\nMe confirma uma coisa: você quer comprar um plano, renovar um acesso ou precisa de ajuda com instalação?";
+  "Como posso ajudar: teste grátis, plano ou instalação?";
 
 const PLANS_TEXT = [`Mensal — ${OFFICIAL_MONTHLY_PRICE_TEXT}`, "3 meses — R$ 70", "6 meses — R$ 120", "Anual — R$ 200"].join("\n");
 const PAYMENT_TEXT = "Você prefere pagar com Pix ou cartão?";
@@ -40,21 +40,18 @@ const PLAN_PREFERENCE_QUESTION = "Boa. Voce tem preferencia por qual plano: mens
 const MONTHLY_INTEREST_QUESTION = "Voce teria interesse no mensal mesmo?";
 const MONTHLY_OFFER_QUESTION = "Voce tem interesse?";
 const CURRENT_RECHARGE_PRICE_QUESTION = "Voce ja faz a recarga? Se sim, faz a quanto?";
-const TRAFFIC_RECHARGE_WELCOME =
-  "Ol\u00e1! Seja bem-vindo ao melhor aplicativo de filmes e canais \u{1F9E1}. Meu nome \u00e9 Andr\u00e9.\n\n" +
-  "Voce ja faz o uso do app? Ou e a primeira vez?";
+const TRAFFIC_RECHARGE_WELCOME = INITIAL_UNITV_REPLY;
 const RENEWAL_CONTEXT_QUESTION = "Perfeito. Voce ja usa o UNITV e quer so renovar o codigo, ou seria sua primeira vez usando?";
 const FIRST_TIME_ACTIVATION_QUESTION =
-  "Perfeito, entao e sua primeira vez. Voce prefere fazer o teste gratis de 3 dias primeiro ou quer ver os planos?";
+  "Perfeito. Quer fazer o teste gratis de 3 dias ou ver os planos?";
 const FIRST_TIME_CLARIFICATION_QUESTION =
-  "Sem problema. Como e sua primeira vez, posso te orientar pelo teste gratis de 3 dias ou te mostrar os planos. Voce prefere comecar pelo teste?";
+  "Sem problema. Quer comecar pelo teste gratis de 3 dias?";
 const FIRST_TIME_ASK_DEVICE_FOR_TEST_REPLY =
-  "Entendi, entao seria sua primeira vez usando o UNITV. Qual aparelho voce quer baixar para fazer seu teste de 3 dias? Pode ser celular Android, TV Box, Android TV/Google TV ou Fire Stick.";
+  "Entendi. Em qual aparelho voce quer fazer o teste gratis de 3 dias?";
 const ASK_DEVICE_AGAIN_WITH_OPTIONS_REPLY =
-  "Sem problema. Voce quer testar em qual aparelho? Celular Android, TV Box, Android TV/Google TV ou Fire Stick?";
+  "Sem problema. Em qual aparelho voce quer fazer o teste?";
 const CONTEXTUAL_TRIAL_DEVICE_REPLY =
-  "Perfeito! Como e sua primeira vez, voce consegue fazer o teste gratis de 3 dias sim.\n\n" +
-  "Me fala so qual aparelho voce vai usar: celular Android, TV Box, Android TV/Google TV ou Fire Stick?";
+  "Perfeito. Em qual aparelho voce quer fazer o teste gratis de 3 dias?";
 const ANDROID_PHONE_CONFIRMATION_REPLY = "So me confirma: esse celular e Android?";
 const DOWNLOAD_PROBLEM_CONTEXT_REPLY = "Tudo bem, me fala onde travou: no link, no Downloader ou na instalacao?";
 
@@ -151,6 +148,10 @@ export class ChatAgentService {
         leadProfilePatch: conversationBrainDecision.leadProfilePatch
       };
     }
+    const leadProfile = readLeadProfile(input.conversation.metadata);
+    if (shouldSendFixedInitialGreeting(input, leadProfile, conversationBrainDecision)) {
+      return buildFixedInitialGreetingReply(message);
+    }
     if (conversationBrainDecision?.directReply) {
       return {
         reply: conversationBrainDecision.directReply,
@@ -163,11 +164,6 @@ export class ChatAgentService {
     const knowledge = await this.knowledgeService.searchKnowledge(message);
     const intent = input.classification.intent === "support" ? "technical_support" : input.classification.intent;
     const allowMenu = shouldUseMenu(message);
-    const leadProfile = readLeadProfile(input.conversation.metadata);
-
-    if (isTrafficRechargeOpener(message) && conversationBrainDecision?.allowInitialGreeting !== false) {
-      return buildTrafficRechargeWelcomeReply();
-    }
 
     const conversationIntelligence = buildConversationIntelligenceLayer({
       message,
@@ -2099,20 +2095,50 @@ function isInitialAdInformationRequest(normalized: string) {
 }
 
 function buildTrafficRechargeWelcomeReply(): CommercialReplyResult {
+  return buildFixedInitialGreetingReply("Olá! Quero fazer Recarga Codigo UNITV");
+}
+
+function buildFixedInitialGreetingReply(message: string): CommercialReplyResult {
+  const trafficSourceOpener = isTrafficRechargeOpener(message) ||
+    isInitialAdInformationRequest(normalizeContextMessage(message));
   return {
     reply: TRAFFIC_RECHARGE_WELCOME,
+    responseSource: "local_rule",
+    responseRule: "fixed_initial_greeting",
     menu: undefined,
     sendTextBeforeMenu: false,
     leadProfilePatch: {
       commercial_stage: "welcome_activation",
       stage: "welcome_activation",
-      wants_recharge: true,
-      traffic_source_opener: true,
-      last_customer_intent: "traffic_recharge_opener",
-      next_expected_reply: "activation_or_renewal",
-      last_bot_question: "Voce ja faz o uso do app? Ou e a primeira vez?"
+      traffic_source_opener: trafficSourceOpener,
+      last_customer_intent: trafficSourceOpener ? "traffic_source_opener" : "initial_contact",
+      next_expected_reply: "customer_need",
+      last_bot_question: "Como posso ajudar?"
     }
   };
+}
+
+function shouldSendFixedInitialGreeting(
+  input: CommercialReplyInput,
+  leadProfile: Record<string, unknown>,
+  conversationBrainDecision?: ConversationBrainDecision | null
+) {
+  if (leadProfile.saudacao_enviada === true || conversationBrainDecision?.allowInitialGreeting === false) {
+    return false;
+  }
+
+  if (Array.isArray(input.recentMessages)) {
+    if (input.recentMessages.some((message) => message.role === "assistant" || message.role === "human_agent")) {
+      return false;
+    }
+    if (input.recentMessages.some((message) => message.role === "customer")) {
+      return true;
+    }
+  }
+
+  return input.classification.intent === "greeting" ||
+    isTrafficRechargeOpener(input.message) ||
+    isInitialAdInformationRequest(normalizeContextMessage(input.message));
 }
 
 function buildMonthlyPriceComparisonReply(leadProfile: Record<string, unknown>) {

@@ -1,6 +1,10 @@
 import "server-only";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
-import { sanitizeCustomerMessage, validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
+import {
+  sanitizeCustomerMessage,
+  validateConciseUnitvReply,
+  validateResponseAgainstLeadProfile
+} from "@/lib/whatsapp/customer-message-safety";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import { extractRequiredArtifacts } from "@/services/agent/contextual-response-ai.service";
@@ -56,7 +60,9 @@ const SYSTEM_PROMPT = [
   "Voce e Andre, vendedor humano da UNITV no WhatsApp.",
   "Interprete o historico, o estado e a base de conhecimento antes de escrever.",
   "A base de conhecimento e a fonte dos fatos comerciais, fluxos, identidade e estilo; nao existem frases prontas para copiar.",
-  "Escreva uma resposta original, natural e curta para esta conversa, com uma unica proxima acao clara.",
+  "Escreva uma resposta original com o ritmo do especialista Andre: direta, contextual e com uma unica proxima acao.",
+  "Em respostas normais use de 6 a 15 palavras, nunca mais de 22, no maximo duas frases e uma pergunta.",
+  "So ultrapasse 22 palavras quando um passo tecnico ou artefato obrigatorio precisar ser preservado.",
   "Use exemplos do especialista como referencia de raciocinio e ritmo, nunca como texto para copiar.",
   "Preserve os artefatos obrigatorios recebidos, mas crie a mensagem a partir do contexto e da base.",
   "Nao invente preco, Pix, link, codigo, compatibilidade ou pagamento. Nao mencione IA, sistema, regra, template ou backend.",
@@ -138,6 +144,13 @@ export class SalesResponseAIService {
       if (!requiredArtifacts.every((artifact) => sanitized.text.includes(artifact))) {
         return null;
       }
+      const styleValidation = validateConciseUnitvReply(sanitized.text, {
+        allowOperationalDetail: requiredArtifacts.length > 0 ||
+          /(technical_support|support|activation_help)/.test(input.intent)
+      });
+      if (!styleValidation.valid) {
+        return null;
+      }
       const recentBotMessages = (input.recentMessages || [])
         .filter((item) => item.role === "assistant" && typeof item.content === "string")
         .slice(-5)
@@ -183,11 +196,14 @@ function buildSpecialistStyleDirectives(examples: SpecialistExample[]) {
   return {
     use_fast_learning_examples: hasFastLearning,
     preferred_style: hasShortHumanStyle ? "curto_direto_contextual" : "contextual_sem_textao",
-    max_sentences: hasShortHumanStyle ? 2 : 3,
+    preferred_words: "6-15",
+    max_words: 22,
+    max_sentences: 2,
+    max_questions: 1,
     avoid: ["template_generico", "pergunta_repetida", "resposta_longa", "listar_opcoes_sem_contexto"],
     instruction: hasShortHumanStyle
       ? "Responder como especialista: frase curta, proximo passo claro, no maximo uma pergunta."
-      : "Responder pelo contexto recente, sem alongar e sem copiar texto fixo."
+      : "Responder pelo contexto recente em ate 22 palavras, sem alongar e sem copiar texto fixo."
   };
 }
 

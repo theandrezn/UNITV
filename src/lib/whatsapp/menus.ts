@@ -1,3 +1,5 @@
+import { UNITV_FIXED_INITIAL_GREETING } from "@/lib/unitv/agent-identity";
+
 export type WhatsAppMenuRow = {
   title: string;
   description: string;
@@ -44,7 +46,7 @@ export const MAIN_MENU: WhatsAppMenu = {
   footerText: "UNiTV",
   sections: [{ title: "Atendimento", rows: mainRows }],
   fallbackText: formatFallback(
-    "Olá! Seja bem-vindo ao melhor aplicativo de filmes e canais 🧡. Meu nome é André, como posso ajudar?",
+    UNITV_FIXED_INITIAL_GREETING,
     mainRows
   )
 };

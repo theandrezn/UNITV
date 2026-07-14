@@ -20,7 +20,7 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-import { ChatAgentService } from "@/services/agent/chat-agent.service";
+import { ChatAgentService, INITIAL_UNITV_REPLY } from "@/services/agent/chat-agent.service";
 import { AudioTranscriptionError } from "@/services/audio/audio-transcription.service";
 import { extractDeterministicDecision } from "@/services/agent/contextual-intelligence.service";
 import { PlansService } from "@/services/plans.service";
@@ -29,6 +29,7 @@ import { MAIN_MENU } from "@/lib/whatsapp/menus";
 import {
   classifyCustomerFacingResponseIntent,
   sanitizeCustomerMessage,
+  validateConciseUnitvReply,
   validateResponseAgainstLeadProfile
 } from "@/lib/whatsapp/customer-message-safety";
 
@@ -487,6 +488,18 @@ describe("commercial WhatsApp agent", () => {
     expect(screenCoverageDecision.recommended_response).toContain("ate 3 telas");
   });
 
+  it("enforces Andre's concise response rhythm before an AI reply can be used", () => {
+    expect(validateConciseUnitvReply("Está saindo a R$ 20,90 o plano mensal. Você tem interesse?").valid).toBe(true);
+    expect(validateConciseUnitvReply(INITIAL_UNITV_REPLY).valid).toBe(true);
+    expect(validateConciseUnitvReply(
+      "Claro! A UNITV tem canais, filmes e séries para celular, TV Box e smart TV. Posso explicar todos os planos e depois você me diz quantas telas quer usar?"
+    )).toMatchObject({ valid: false, reason: "response_too_long" });
+    expect(validateConciseUnitvReply("Você quer testar? Quer ver planos?")).toMatchObject({
+      valid: false,
+      reason: "too_many_questions"
+    });
+  });
+
   it("replaces an unsafe agent reply in the real WhatsApp send path", async () => {
     const evolutionService = { sendTextMessage: vi.fn(async () => ({ sent: true })) };
     const auditService = { createAuditLog: vi.fn(async () => ({})) };
@@ -941,9 +954,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("Seja bem-vindo ao melhor aplicativo de filmes e canais");
-    expect(result.reply).toContain("Meu nome");
-    expect(result.reply).toContain("Voce ja faz o uso do app? Ou e a primeira vez?");
+    expect(result.reply).toBe(INITIAL_UNITV_REPLY);
     expect(result.reply).not.toContain("renovação de qual plano");
     expect(result.reply).not.toContain("mensal, 3 meses");
     expect(result.reply).not.toContain("R$ 25");
@@ -953,7 +964,7 @@ describe("commercial WhatsApp agent", () => {
     expect(result.leadProfilePatch).toMatchObject({
       traffic_source_opener: true,
       stage: "welcome_activation",
-      next_expected_reply: "activation_or_renewal"
+      next_expected_reply: "customer_need"
     });
   });
 
@@ -969,14 +980,13 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
-    expect(result.reply).toContain("Seja bem-vindo ao melhor aplicativo de filmes e canais");
-    expect(result.reply).toContain("Voce ja faz o uso do app? Ou e a primeira vez?");
+    expect(result.reply).toBe(INITIAL_UNITV_REPLY);
     expect(result.responseSource).toBe("local_rule");
-    expect(result.responseRule).toBe("contextual_reply");
+    expect(result.responseRule).toBe("fixed_initial_greeting");
     expect(result.leadProfilePatch).toMatchObject({
       traffic_source_opener: true,
       stage: "welcome_activation",
-      next_expected_reply: "activation_or_renewal"
+      next_expected_reply: "customer_need"
     });
   });
 
@@ -995,8 +1005,7 @@ describe("commercial WhatsApp agent", () => {
 
       expect(ordersService.createOrder).not.toHaveBeenCalled();
       expect(mercadoPagoService.createPixPayment).not.toHaveBeenCalled();
-      expect(result.reply).toContain("Seja bem-vindo ao melhor aplicativo de filmes e canais");
-      expect(result.reply).toContain("Voce ja faz o uso do app? Ou e a primeira vez?");
+      expect(result.reply).toBe(INITIAL_UNITV_REPLY);
       expect(result.reply).not.toContain("Qual plano");
       expect(result.reply).not.toContain("mensal, 3 meses");
       expect(result.reply).not.toContain("R$ 25");
@@ -1004,7 +1013,7 @@ describe("commercial WhatsApp agent", () => {
       expect(result.leadProfilePatch).toMatchObject({
         traffic_source_opener: true,
         stage: "welcome_activation",
-        next_expected_reply: "activation_or_renewal"
+        next_expected_reply: "customer_need"
       });
     }
   );
@@ -1076,9 +1085,7 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("Oi, tudo bem?");
-    expect(result.reply).toContain("Você já usa o aplicativo UNITV");
-    expect(result.reply).toContain("seria sua primeira vez?");
+    expect(result.reply).toBe(INITIAL_UNITV_REPLY);
     expect(result.reply.trim().endsWith("?")).toBe(true);
     expect(result.menu).toBeUndefined();
     expect(result.sendTextBeforeMenu).toBe(false);
@@ -1101,10 +1108,31 @@ describe("commercial WhatsApp agent", () => {
       webhookEventId: "webhook-id"
     });
 
-    expect(result.reply).toContain("Você já usa o aplicativo UNITV");
-    expect(result.reply).toContain("seria sua primeira vez?");
+    expect(result.reply).toBe(INITIAL_UNITV_REPLY);
     expect(result.reply.trim().endsWith("?")).toBe(true);
     expect(result.menu).toBeUndefined();
+  });
+
+  it("uses the exact fixed greeting for the first agent reply even when the lead asks a price", async () => {
+    const { service, salesResponseAIService } = createChatAgent();
+
+    const result = await service.generateCommercialReply({
+      message: "qual o valor?",
+      classification: { intent: "ask_price", confidence: 0.99, summary: "preco", suggested_reply: "" },
+      customer: { id: "customer-id" },
+      conversation: { id: "conversation-id" },
+      recentMessages: [{ role: "customer", content: "qual o valor?" }],
+      webhookEventId: "webhook-id"
+    });
+
+    expect(result.reply).toBe(INITIAL_UNITV_REPLY);
+    expect(result.responseRule).toBe("fixed_initial_greeting");
+    expect(result.leadProfilePatch).toMatchObject({
+      stage: "welcome_activation",
+      next_expected_reply: "customer_need",
+      last_bot_question: "Como posso ajudar?"
+    });
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
   });
 
   it.each(["Oi", "Olá", "Bom dia", "Tenho interesse"] as const)(
@@ -1126,8 +1154,8 @@ describe("commercial WhatsApp agent", () => {
       });
 
       expect(result.requiresHuman).not.toBe(true);
-      expect(result.reply).toContain("Você já usa o aplicativo UNITV");
-      expect(result.responseRule).toBe("conversation_intelligence_greeting");
+      expect(result.reply).toBe(INITIAL_UNITV_REPLY);
+      expect(result.responseRule).toBe("fixed_initial_greeting");
       expect(agentActionsService.createAgentAction).not.toHaveBeenCalledWith(
         expect.objectContaining({ action_name: "handoff_to_human" })
       );
@@ -1211,7 +1239,6 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.requiresHuman).not.toBe(true);
-    expect(result.reply).toContain("sua primeira vez");
     expect(result.reply).toContain("teste gratis");
     expect(result.reply).toContain("planos");
     expect(result.reply).not.toContain("Voce ja faz o uso do app");
@@ -1243,9 +1270,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.requiresHuman).not.toBe(true);
-    expect(result.reply).toBe(
-      "Entendi, entao seria sua primeira vez usando o UNITV. Qual aparelho voce quer baixar para fazer seu teste de 3 dias? Pode ser celular Android, TV Box, Android TV/Google TV ou Fire Stick."
-    );
+    expect(result.reply).toBe("Entendi. Em qual aparelho voce quer fazer o teste gratis de 3 dias?");
     expect(result.reply).not.toContain("Oi, tudo bem?");
     expect(result.reply).not.toContain("Voce ja usa o aplicativo UNITV");
     expect(result.leadProfilePatch).toMatchObject({
@@ -1284,7 +1309,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.requiresHuman).not.toBe(true);
-    expect(result.reply).toBe("Sem problema. Voce quer testar em qual aparelho? Celular Android, TV Box, Android TV/Google TV ou Fire Stick?");
+    expect(result.reply).toBe("Sem problema. Em qual aparelho voce quer fazer o teste?");
     expect(result.reply).not.toContain("Oi, tudo bem?");
     expect(result.reply).not.toContain("Voce ja usa o aplicativo UNITV");
     expect(result.leadProfilePatch).toMatchObject({
@@ -1854,7 +1879,6 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(result.requiresHuman).not.toBe(true);
-    expect(result.reply).toContain("Como e sua primeira vez");
     expect(result.reply).toContain("comecar pelo teste");
     expect(result.reply).not.toContain("Voce ja faz o uso do app");
   });
@@ -1907,9 +1931,7 @@ describe("commercial WhatsApp agent", () => {
     });
 
     expect(ordersService.createOrder).not.toHaveBeenCalled();
-    expect(result.reply).toContain("Seja bem-vindo ao melhor aplicativo de filmes e canais");
-    expect(result.reply).toContain("Meu nome");
-    expect(result.reply).toContain("Voce ja faz o uso do app? Ou e a primeira vez?");
+    expect(result.reply).toBe(INITIAL_UNITV_REPLY);
     expect(result.reply).not.toContain("renovação de qual plano");
     expect(result.reply).not.toContain("R$ 25");
     expect(result.reply).not.toContain("R$ 70");
@@ -3723,8 +3745,8 @@ describe("commercial WhatsApp agent", () => {
     );
   });
 
-  it("does not send a programmed numbered menu", async () => {
-    contextualResponseGenerate.mockResolvedValueOnce("Oi! Me conta se voce quer conhecer o app, testar ou renovar seu acesso.");
+  it("sends the fixed initial greeting exactly without an OpenAI rewrite or menu", async () => {
+    contextualResponseGenerate.mockClear();
     const conversationsRepository = {
       findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
       createConversation: vi.fn(),
@@ -3748,7 +3770,7 @@ describe("commercial WhatsApp agent", () => {
         createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
       } as never,
       { classify: vi.fn(async () => ({ intent: "greeting", confidence: 1, summary: "oi", suggested_reply: "" })) } as never,
-      { generateCommercialReply: vi.fn(async () => ({ reply: MAIN_MENU.fallbackText, menu: MAIN_MENU })) } as never,
+      { generateCommercialReply: vi.fn(async () => ({ reply: INITIAL_UNITV_REPLY, responseRule: "fixed_initial_greeting" })) } as never,
       evolutionService as never,
       { createAuditLog: vi.fn(async () => ({})) } as never,
       {} as never,
@@ -3777,7 +3799,7 @@ describe("commercial WhatsApp agent", () => {
 
     expect(evolutionService.sendTextMessage).toHaveBeenCalledWith({
       phone: "5511999998888",
-      text: "Oi! Me conta se voce quer conhecer o app, testar ou renovar seu acesso."
+      text: INITIAL_UNITV_REPLY
     });
     expect(evolutionService.sendTextMessage).not.toHaveBeenCalledWith({
       phone: "5511999998888",
@@ -3785,6 +3807,7 @@ describe("commercial WhatsApp agent", () => {
     });
     expect(evolutionService.sendButtonMessage).not.toHaveBeenCalled();
     expect(evolutionService.sendListMessage).not.toHaveBeenCalled();
+    expect(contextualResponseGenerate).not.toHaveBeenCalled();
   });
 
   it("schedules welcome activation follow-up after the initial greeting", async () => {

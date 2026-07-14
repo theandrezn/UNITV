@@ -1,4 +1,5 @@
 import "server-only";
+import { validateConciseUnitvReply } from "@/lib/whatsapp/customer-message-safety";
 import { z } from "zod";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
@@ -152,7 +153,7 @@ const SYSTEM_PROMPT = [
   "Pergunta central: o que essa pessoa quis dizer considerando o que o bot acabou de perguntar?",
   "Interprete historico, lead_profile, pedido aberto, ultima mensagem do bot e ultima pergunta do bot.",
   "Consulte a base de conhecimento recebida para fatos, fluxo e estilo, sem copiar exemplos literalmente.",
-  "recommended_response deve ser uma resposta final original, curta, contextual e com no maximo uma pergunta.",
+  "recommended_response deve ter preferencialmente 6 a 15 palavras, no maximo 22 palavras, duas frases e uma pergunta.",
   "Voce NAO executa acoes, NAO confirma pagamento, NAO cria Pix, NAO entrega codigo.",
   "Precos oficiais: mensal R$20,90, trimestral R$70, semestral R$120, anual R$200.",
   "Se o cliente perguntar apenas valor, apresente direto o mensal de R$20,90 e pergunte se tem interesse; nao pergunte plano nem telas.",
@@ -206,7 +207,11 @@ export class ContextualIntelligenceService {
       }
 
       const parsed = contextualDecisionSchema.safeParse(JSON.parse(response.output_text || "{}"));
-      return parsed.success ? { ...parsed.data, source: "ai" } : { ...deterministic, source: "deterministic" };
+      if (!parsed.success) return { ...deterministic, source: "deterministic" };
+      const recommendedResponse = validateConciseUnitvReply(parsed.data.recommended_response).valid
+        ? parsed.data.recommended_response
+        : "";
+      return { ...parsed.data, recommended_response: recommendedResponse, source: "ai" };
     } catch {
       return { ...deterministic, source: "deterministic" };
     }

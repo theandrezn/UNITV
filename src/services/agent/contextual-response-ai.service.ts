@@ -1,7 +1,11 @@
 import "server-only";
 import { z } from "zod";
 import { createOpenAIClient, getSalesAgentOpenAIModel, getStrongSalesAgentOpenAIModel } from "@/lib/openai/client";
-import { sanitizeCustomerMessage, validateResponseAgainstLeadProfile } from "@/lib/whatsapp/customer-message-safety";
+import {
+  sanitizeCustomerMessage,
+  validateConciseUnitvReply,
+  validateResponseAgainstLeadProfile
+} from "@/lib/whatsapp/customer-message-safety";
 import { KnowledgeService } from "@/services/knowledge/knowledge.service";
 import { executeObservedOpenAICall } from "@/services/ai/openai-call-observer";
 import { OPENAI_ECONOMY_POLICY } from "@/lib/openai/economy-policy";
@@ -50,7 +54,9 @@ const SYSTEM_PROMPT = [
   "Preserve literalmente todos os artefatos obrigatorios recebidos, como links, valores, numero de pedido, codigo Downloader e codigos de acesso.",
   "Cumpra tambem o resultado semantico obrigatorio e nao mencione os assuntos proibidos recebidos no contrato de escrita.",
   "Pagamento, Pix, pedido e codigo so podem ser tratados como confirmados quando o estado e os artefatos autorizados indicarem confirmacao real.",
-  "Escreva em portugues brasileiro natural, curto, consultivo e com no maximo uma pergunta.",
+  "Imite o ritmo do especialista Andre: responda primeiro ao ponto exato e indique apenas o proximo passo.",
+  "Em respostas normais use de 6 a 15 palavras, nunca mais de 22, no maximo duas frases e uma pergunta.",
+  "So ultrapasse 22 palavras quando links, codigos, Pix ou um passo tecnico obrigatorio precisarem ser preservados.",
   "Nao mencione IA, prompt, regra, template, sistema, backend, JSON, base de conhecimento ou classificacao.",
   "Retorne somente JSON valido no schema solicitado."
 ].join("\n");
@@ -95,6 +101,9 @@ export class ContextualResponseAIService {
         original_contextual_copy_required: true,
         programmed_copy_forbidden: true,
         one_clear_next_step: true,
+        preferred_words: "6-15",
+        normal_maximum_words: 22,
+        maximum_sentences: 2,
         maximum_questions: 1,
         required_semantic_outcome: directiveContract.requiredSemanticOutcome,
         forbidden_topics: directiveContract.forbiddenTopics
@@ -138,6 +147,13 @@ export class ContextualResponseAIService {
         return null;
       }
       if (!validateResponseAgainstDirectiveContract(sanitized.text, directiveContract)) {
+        return null;
+      }
+      const styleValidation = validateConciseUnitvReply(sanitized.text, {
+        allowOperationalDetail: requiredArtifacts.length > 0 ||
+          /(technical_support|support|activation_help|card_payment|pix_payment|receipt_sent)/.test(input.intent)
+      });
+      if (!styleValidation.valid) {
         return null;
       }
       const validation = validateResponseAgainstLeadProfile(sanitized.text, input.leadProfile, recentBotMessages);

@@ -3,7 +3,7 @@ import { CustomersRepository } from "@/repositories/customers.repository";
 import { ConversationsRepository } from "@/repositories/conversations.repository";
 import { MessagesRepository } from "@/repositories/messages.repository";
 import { AuditService } from "@/services/audit.service";
-import { ChatAgentService } from "@/services/agent/chat-agent.service";
+import { ChatAgentService, INITIAL_UNITV_REPLY } from "@/services/agent/chat-agent.service";
 import { IntentClassifierService, type IntentClassification } from "@/services/agent/intent-classifier.service";
 import { AgentActionsService } from "@/services/agent-actions.service";
 import { EvolutionService } from "@/services/evolution/evolution.service";
@@ -990,7 +990,9 @@ export class WhatsappMessageService {
       ? rawResponseDirective.split(copyText).join("[dados de pagamento enviados em mensagem separada]")
       : rawResponseDirective;
     const intent = typeof classification.intent === "string" ? classification.intent : "unknown";
-    const useProtectedOperationalReply = protectedOperationalReply === true && intent === "pix_payment";
+    const useFixedInitialGreeting = reply.trim() === INITIAL_UNITV_REPLY;
+    const useProtectedOperationalReply =
+      (protectedOperationalReply === true && intent === "pix_payment") || useFixedInitialGreeting;
     const recentMessages = useProtectedOperationalReply ? [] : await this.listRecentConversationMessages(conversation.id);
     const reuseUpstreamAIReply = canReuseUpstreamAIReply({
       responseGeneratedByAI,
@@ -1040,12 +1042,22 @@ export class WhatsappMessageService {
       return { status: "ignored" as const };
     }
 
-    const responseSource = useProtectedOperationalReply
+    const responseSource = useFixedInitialGreeting
+      ? "fixed_initial_greeting"
+      : useProtectedOperationalReply
       ? "protected_payment_backend"
       : reuseUpstreamAIReply
         ? "upstream_contextual_ai_reused"
         : "contextual_ai";
-    if (useProtectedOperationalReply) {
+    if (useFixedInitialGreeting) {
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "fixed_initial_greeting_sent_without_ai",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: { webhookEventId, intent, avoided_openai_call: true }
+      });
+    } else if (useProtectedOperationalReply) {
       await this.auditService.createAuditLog({
         actor_type: "system",
         action: "protected_payment_delivery_used",
