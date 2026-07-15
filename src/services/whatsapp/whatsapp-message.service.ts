@@ -58,6 +58,7 @@ import {
   GREETING_FOLLOWUP_POLICY_VERSION
 } from "@/lib/greeting-followup-policy";
 import { ShadowDecisionService } from "@/services/agent/shadow-decision.service";
+import { isUnitvPixOnlyMode } from "@/lib/unitv/agent-runtime-mode";
 
 const HUMAN_NOTIFICATION_PHONE = "558699802602";
 const HUMAN_HANDOFF_TIMEOUT_MS = 5 * 60 * 1000;
@@ -139,6 +140,68 @@ export class WhatsappMessageService {
         metadata: { instance: message.instance, ...metaReferralPatch }
       }));
 
+    if (!message.fromMe && isUnitvPixOnlyMode()) {
+      const customerMessageAt = getMessageDate(message).toISOString();
+      await this.messagesRepository.createMessage({
+        conversation_id: conversation.id,
+        customer_id: customer.id,
+        role: "customer",
+        content: message.text || null,
+        content_type: message.messageType,
+        external_message_id: message.externalMessageId,
+        metadata: {
+          remoteJid: message.remoteJid,
+          media: message.media,
+          metaReferral: message.metaReferral || null,
+          hasMedia: message.hasMedia,
+          timestamp: message.timestamp,
+          webhookEventId,
+          agent_runtime_mode: "pix_only",
+          automated_processing_skipped: true
+        }
+      });
+      const pausedMetadata = {
+        ...(conversation.metadata || {}),
+        ...metaReferralPatch,
+        last_customer_message_at: customerMessageAt,
+        last_customer_message_id: message.externalMessageId,
+        followup_due_at: null,
+        response_due_at: null,
+        awaiting_customer_action: null,
+        agent_runtime_mode: "pix_only",
+        agent_automatic_replies_paused: true
+      };
+      await this.conversationsRepository.updateConversationMetadata(conversation.id, pausedMetadata);
+      await this.conversationsRepository.touchConversation(conversation.id, customerMessageAt);
+      await this.safeCreateAgentEvent({
+        conversation_id: conversation.id,
+        customer_phone: message.phone,
+        event_type: "customer_message",
+        event_source: "webhook",
+        message_id: message.externalMessageId,
+        metadata: {
+          webhookEventId,
+          messageType: message.messageType,
+          agent_runtime_mode: "pix_only",
+          openai_calls: 0,
+          response_sent: false
+        }
+      });
+      await this.auditService.createAuditLog({
+        actor_type: "system",
+        action: "agent_pix_only_customer_message_recorded_without_reply",
+        entity_type: "conversations",
+        entity_id: conversation.id,
+        metadata: {
+          webhookEventId,
+          externalMessageId: message.externalMessageId,
+          openai_calls: 0,
+          audio_transcription_skipped: isIncomingAudioMessage(message)
+        }
+      });
+      return { status: "ignored" as const };
+    }
+
     let audioTranscription: AudioTranscriptionResult | null = null;
     if (!message.fromMe && isIncomingAudioMessage(message)) {
       try {
@@ -216,7 +279,7 @@ export class WhatsappMessageService {
 
       const existingLeadProfile = readLeadProfile(conversation.metadata);
       const manualPaymentCommand = parseManualPaymentCommand(message.text);
-      if (manualPaymentCommand) {
+      if (manualPaymentCommand && (!isUnitvPixOnlyMode() || manualPaymentCommand.method === "pix")) {
         const hasPlanAlreadySelected = Boolean(
           extractManualPaymentPlan(
             normalizeCommandText(String(existingLeadProfile.selected_plan || existingLeadProfile.plano_interesse || "")),
@@ -301,6 +364,38 @@ export class WhatsappMessageService {
           sendTextBeforeMenu: commercialReply.sendTextBeforeMenu,
           protectedOperationalReply: manualPaymentCommand.method === "pix"
         });
+      }
+
+      if (isUnitvPixOnlyMode()) {
+        const pausedMetadata = {
+          ...(conversation.metadata || {}),
+          followup_due_at: null,
+          response_due_at: null,
+          awaiting_customer_action: null,
+          agent_runtime_mode: "pix_only",
+          agent_automatic_replies_paused: true,
+          last_specialist_message_at: messageAt,
+          lead_profile: {
+            ...existingLeadProfile,
+            last_specialist_message_at: messageAt,
+            updated_at: messageAt
+          }
+        };
+        await this.conversationsRepository.updateConversationMetadata(conversation.id, pausedMetadata);
+        await this.conversationsRepository.touchConversation(conversation.id, messageAt);
+        await this.auditService.createAuditLog({
+          actor_type: "human_admin",
+          action: "agent_pix_only_non_pix_specialist_message_recorded",
+          entity_type: "conversations",
+          entity_id: conversation.id,
+          metadata: {
+            webhookEventId,
+            externalMessageId: message.externalMessageId,
+            openai_calls: 0,
+            automated_action: false
+          }
+        });
+        return { status: "ignored" as const };
       }
 
       const manualFollowupState = buildManualOutboundFollowupState(message.text, conversation.metadata, new Date(messageAt));

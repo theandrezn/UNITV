@@ -28,6 +28,7 @@ import {
   getNextGreetingRecoveryDueAt,
   isGreetingBusinessHours
 } from "@/lib/greeting-followup-policy";
+import { isUnitvPixOnlyMode } from "@/lib/unitv/agent-runtime-mode";
 
 const MAX_FOLLOWUP_COUNT_PER_STAGE = 1;
 const MAX_LEAD_RECOVERY_FOLLOWUPS = GREETING_MAX_FOLLOWUPS;
@@ -74,6 +75,10 @@ export class WhatsappFollowupService {
     now = new Date(),
     options: { mode?: "send" | "shadow"; scope?: "all" | "greeting_recovery" } = {}
   ): Promise<FollowupResult> {
+    if (isUnitvPixOnlyMode()) {
+      return { checked: 0, sent: 0, skipped: 0 };
+    }
+
     const repository = this.conversationsRepository as ConversationsRepository & {
       listFollowupCandidates?: (now: Date, limit?: number) => Promise<ConversationRow[]>;
       listGreetingRecoveryCandidates?: (now: Date, policyVersion: string, limit?: number) => Promise<ConversationRow[]>;

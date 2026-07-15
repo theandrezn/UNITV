@@ -18,6 +18,7 @@ const serverEnvSchema = z.object({
   UNITV_AUDIO_MAX_BYTES: z.string().optional(),
   UNITV_AUDIO_TRANSCRIPT_MAX_CHARS: z.string().optional(),
   UNITV_AI_INTENT_CLASSIFIER_ENABLED: z.string().optional(),
+  UNITV_AGENT_MODE: z.enum(["active", "pix_only"]).optional(),
   WHATSAPP_ENABLE_MAIN_MENU: z.string().optional(),
   APP_ENV: appEnvSchema.default("development"),
   APP_BASE_URL: z.string().url("APP_BASE_URL must be a valid URL").optional().or(z.literal("")),

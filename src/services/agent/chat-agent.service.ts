@@ -34,6 +34,7 @@ import {
 } from "@/lib/unitv/official-catalog";
 import { UNITV_FIXED_INITIAL_GREETING } from "@/lib/unitv/agent-identity";
 import { resolveConversationState, withCanonicalConversationState } from "@/lib/conversation-state";
+import { isUnitvPixOnlyMode } from "@/lib/unitv/agent-runtime-mode";
 
 export const INITIAL_UNITV_REPLY = UNITV_FIXED_INITIAL_GREETING;
 
@@ -146,6 +147,15 @@ export class ChatAgentService {
       return { reply: "" };
     }
 
+    const leadProfile = readLeadProfile(input.conversation.metadata);
+    if (isUnitvPixOnlyMode() && !isAuthorizedManualPixGeneration(input.classification.intent, leadProfile)) {
+      return {
+        reply: "",
+        responseSource: "local_rule",
+        responseRule: "agent_runtime_pix_only"
+      };
+    }
+
     const conversationBrainDecision = input.conversationBrainDecision;
     if (conversationBrainDecision && !conversationBrainDecision.shouldReply) {
       return {
@@ -155,7 +165,6 @@ export class ChatAgentService {
         leadProfilePatch: conversationBrainDecision.leadProfilePatch
       };
     }
-    const leadProfile = readLeadProfile(input.conversation.metadata);
     if (shouldSendFixedInitialGreeting(input, leadProfile, conversationBrainDecision)) {
       return buildFixedInitialGreetingReply(message);
     }
@@ -2825,6 +2834,13 @@ function readManualPixAmountCents(leadProfile: Record<string, unknown>) {
 
   const amount = Number(leadProfile.manual_payment_amount_cents);
   return Number.isInteger(amount) && amount >= 1 && amount <= 99_999_999 ? amount : null;
+}
+
+function isAuthorizedManualPixGeneration(intent: string, leadProfile: Record<string, unknown>) {
+  return intent === "pix_payment" &&
+    leadProfile.manual_payment_command === true &&
+    leadProfile.payment_method === "pix" &&
+    Number(leadProfile.manual_payment_amount_cents) > 0;
 }
 
 function isReusableManualPixOrder(order: Record<string, unknown> | null, amountCents: number | null) {

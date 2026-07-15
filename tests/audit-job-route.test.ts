@@ -12,6 +12,23 @@ describe("daily agent audit job route", () => {
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service";
     process.env.ADMIN_API_KEY = "secret";
     process.env.UNITV_DAILY_AUDIT_ENABLED = "true";
+    process.env.UNITV_AGENT_MODE = "active";
+  });
+
+  it("skips the daily audit entirely while Pix-only mode is active", async () => {
+    process.env.UNITV_AGENT_MODE = "pix_only";
+    const service = {
+      buildDailyAgentAudit: vi.fn(),
+      sendAuditRecordToAdmin: vi.fn()
+    };
+    const request = new NextRequest("https://unitv.test/api/jobs/daily-agent-audit?send=true", {
+      headers: { authorization: "Bearer secret" }
+    });
+
+    const response = await handleDailyAgentAuditJob(request, { service });
+    await expect(response.json()).resolves.toEqual({ ok: true, skipped: true, reason: "agent_runtime_pix_only" });
+    expect(service.buildDailyAgentAudit).not.toHaveBeenCalled();
+    expect(service.sendAuditRecordToAdmin).not.toHaveBeenCalled();
   });
 
   it("requires CRON/admin secret", async () => {

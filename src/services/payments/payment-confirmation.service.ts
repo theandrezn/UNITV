@@ -10,6 +10,7 @@ import { MercadoPagoService } from "./mercadopago.service";
 import { AgentEventLogService } from "@/services/audit/agent-event-log.service";
 import { getPlanCodeAllocation } from "@/lib/activation-codes/plan-code-allocation";
 import { MetaConversionsService } from "@/services/marketing/meta-conversions.service";
+import { isUnitvPixOnlyMode } from "@/lib/unitv/agent-runtime-mode";
 
 const ADMIN_WHATSAPP_PHONE = "558699802602";
 
@@ -133,7 +134,22 @@ export class PaymentConfirmationService {
         }
       });
       await this.safeTrackPurchase(transitioned as Record<string, unknown>, payment);
-      await this.sendConfirmation(transitioned as Record<string, unknown>);
+      if (isUnitvPixOnlyMode()) {
+        await this.auditService.createAuditLog({
+          actor_type: "system",
+          action: "payment_confirmation_delivery_paused_pix_only",
+          entity_type: "orders",
+          entity_id: orderId,
+          metadata: {
+            payment_id: payment.id,
+            payment_recorded: true,
+            activation_code_released: false,
+            whatsapp_messages_sent: 0
+          }
+        });
+      } else {
+        await this.sendConfirmation(transitioned as Record<string, unknown>);
+      }
       return { status: "paid" as const, orderId };
     }
 

@@ -4891,6 +4891,7 @@ describe("commercial WhatsApp agent", () => {
 
   it("executes a specialist manual Pix command and sends copy-paste plus QR code", async () => {
     vi.clearAllMocks();
+    vi.stubEnv("UNITV_AGENT_MODE", "pix_only");
     const conversationsRepository = {
       findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
       createConversation: vi.fn(),
@@ -4996,6 +4997,138 @@ describe("commercial WhatsApp agent", () => {
       })
     );
     expect(result.status).toBe("processed");
+  });
+
+  it("keeps customer messages silent and avoids every AI path while Pix-only mode is active", async () => {
+    vi.stubEnv("UNITV_AGENT_MODE", "pix_only");
+    const conversationsRepository = {
+      findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: { followup_due_at: "2026-07-15T12:00:00.000Z" } })),
+      createConversation: vi.fn(),
+      updateConversationMetadata: vi.fn(async (_id, metadata) => ({ id: "conversation-id", metadata })),
+      touchConversation: vi.fn(async () => ({}))
+    };
+    const messagesRepository = {
+      findByExternalMessageId: vi.fn(async () => null),
+      createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+    };
+    const intentClassifier = { classify: vi.fn() };
+    const chatAgent = { generateCommercialReply: vi.fn() };
+    const evolutionService = { sendTextMessage: vi.fn(), sendMediaMessage: vi.fn() };
+    const audioTranscriptionService = { transcribeWhatsAppAudio: vi.fn() };
+    const auditService = { createAuditLog: vi.fn(async () => ({})) };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id", email: null })) } as never,
+      conversationsRepository as never,
+      messagesRepository as never,
+      intentClassifier as never,
+      chatAgent as never,
+      evolutionService as never,
+      auditService as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      audioTranscriptionService as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-pix-only",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "customer-pix-only-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "Quero fazer um teste",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: false,
+        isGroup: false
+      }
+    });
+
+    expect(result).toEqual({ status: "ignored" });
+    expect(messagesRepository.createMessage).toHaveBeenCalledWith(expect.objectContaining({
+      role: "customer",
+      content: "Quero fazer um teste",
+      metadata: expect.objectContaining({ agent_runtime_mode: "pix_only", automated_processing_skipped: true })
+    }));
+    expect(conversationsRepository.updateConversationMetadata).toHaveBeenCalledWith(
+      "conversation-id",
+      expect.objectContaining({
+        followup_due_at: null,
+        response_due_at: null,
+        agent_runtime_mode: "pix_only",
+        agent_automatic_replies_paused: true
+      })
+    );
+    expect(intentClassifier.classify).not.toHaveBeenCalled();
+    expect(chatAgent.generateCommercialReply).not.toHaveBeenCalled();
+    expect(audioTranscriptionService.transcribeWhatsAppAudio).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(contextualResponseGenerate).not.toHaveBeenCalled();
+    expect(auditService.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "agent_pix_only_customer_message_recorded_without_reply",
+      metadata: expect.objectContaining({ openai_calls: 0 })
+    }));
+  });
+
+  it("blocks a card command while temporary Pix-only mode is active", async () => {
+    vi.stubEnv("UNITV_AGENT_MODE", "pix_only");
+    const chatAgent = { generateCommercialReply: vi.fn() };
+    const evolutionService = { sendTextMessage: vi.fn() };
+    const service = new WhatsappMessageService(
+      { upsertCustomerByPhone: vi.fn(async () => ({ id: "customer-id" })) } as never,
+      {
+        findByExternalConversationId: vi.fn(async () => ({ id: "conversation-id", metadata: {} })),
+        createConversation: vi.fn(),
+        updateConversationMetadata: vi.fn(async () => ({})),
+        touchConversation: vi.fn(async () => ({}))
+      } as never,
+      {
+        findByExternalMessageId: vi.fn(async () => null),
+        createMessage: vi.fn(async (data) => ({ id: "message-id", ...data }))
+      } as never,
+      { classify: vi.fn() } as never,
+      chatAgent as never,
+      evolutionService as never,
+      { createAuditLog: vi.fn(async () => ({})) } as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const result = await service.processIncomingMessage({
+      webhookEventId: "webhook-card-paused",
+      message: {
+        event: "messages.upsert",
+        instance: "unitv",
+        externalMessageId: "manual-card-paused-id",
+        remoteJid: "5511999998888@s.whatsapp.net",
+        phone: "5511999998888",
+        contactName: "Cliente",
+        text: "gerar cartao mensal 20,90",
+        messageType: "conversation",
+        hasMedia: false,
+        media: {},
+        timestamp: 1,
+        fromMe: true,
+        isGroup: false
+      }
+    });
+
+    expect(result).toEqual({ status: "ignored" });
+    expect(chatAgent.generateCommercialReply).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
   });
 
   it("accepts a specialist Pix command with no plan and preserves its exact amount for review", async () => {

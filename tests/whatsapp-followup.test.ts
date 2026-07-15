@@ -88,14 +88,32 @@ function createService(
 
 describe("WhatsappFollowupService", () => {
   const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  const originalAgentMode = process.env.UNITV_AGENT_MODE;
 
   beforeEach(() => {
     openAIResponsesCreate.mockReset();
     process.env.OPENAI_API_KEY = originalOpenAiKey;
+    process.env.UNITV_AGENT_MODE = "active";
   });
 
   afterEach(() => {
     process.env.OPENAI_API_KEY = originalOpenAiKey;
+    if (originalAgentMode === undefined) delete process.env.UNITV_AGENT_MODE;
+    else process.env.UNITV_AGENT_MODE = originalAgentMode;
+  });
+
+  it("does not inspect or send any follow-up while Pix-only mode is active", async () => {
+    process.env.UNITV_AGENT_MODE = "pix_only";
+    const { service, conversationsRepository, evolutionService, salesResponseAIService } = createService([{
+      id: "conversation-paused",
+      metadata: { followup_due_at: "2026-07-06T11:00:00.000Z" }
+    }]);
+
+    await expect(service.processDueFollowups(new Date("2026-07-06T12:00:00.000Z"), { mode: "send" }))
+      .resolves.toEqual({ checked: 0, sent: 0, skipped: 0 });
+    expect(conversationsRepository.listFollowupCandidates).not.toHaveBeenCalled();
+    expect(evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(salesResponseAIService.generateResponse).not.toHaveBeenCalled();
   });
 
   it("builds human commercial follow-up text", () => {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDailyAuditConfig, getServerEnv } from "@/lib/env";
 import { DailyAgentAuditService } from "@/services/audit/daily-agent-audit.service";
+import { isUnitvPixOnlyMode } from "@/lib/unitv/agent-runtime-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,10 @@ export async function handleDailyAgentAuditJob(
 ) {
   if (!isAuthorized(request)) {
     return NextResponse.json({ ok: false, message: "unauthorized" }, { status: 401 });
+  }
+
+  if (isUnitvPixOnlyMode()) {
+    return NextResponse.json({ ok: true, skipped: true, reason: "agent_runtime_pix_only" });
   }
 
   const config = getDailyAuditConfig();

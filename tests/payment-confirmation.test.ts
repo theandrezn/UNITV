@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("server-only", () => ({}));
 
@@ -101,7 +101,38 @@ function createHarness() {
 }
 
 describe("PaymentConfirmationService", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.stubEnv("UNITV_AGENT_MODE", "active");
+  });
+
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("records an approved payment but does not send or release a code in Pix-only mode", async () => {
+    vi.stubEnv("UNITV_AGENT_MODE", "pix_only");
+    const harness = createHarness();
+    harness.activationCodesService.findAvailableCodes.mockResolvedValueOnce([{
+      id: "code-id",
+      code: "UNITV-CODE-001"
+    }]);
+
+    const result = await harness.service.process({ webhookEventId: "webhook-id", paymentId: "987654" });
+
+    expect(result).toEqual({ status: "paid", orderId: baseOrder.id });
+    expect(harness.paymentsService.upsertProviderPayment).toHaveBeenCalled();
+    expect(harness.ordersService.transitionToPaid).toHaveBeenCalled();
+    expect(harness.activationCodesService.findAvailableCodes).not.toHaveBeenCalled();
+    expect(harness.activationCodesService.reserveCode).not.toHaveBeenCalled();
+    expect(harness.evolutionService.sendTextMessage).not.toHaveBeenCalled();
+    expect(harness.auditService.createAuditLog).toHaveBeenCalledWith(expect.objectContaining({
+      action: "payment_confirmation_delivery_paused_pix_only",
+      metadata: expect.objectContaining({
+        payment_recorded: true,
+        activation_code_released: false,
+        whatsapp_messages_sent: 0
+      })
+    }));
+  });
 
   it("marks an exact approved payment paid and notifies stock is missing", async () => {
     const harness = createHarness();
